@@ -33,12 +33,12 @@ Legend: ✅ done and tested here · 🟡 implemented, not verified on target har
 
 ## Milestone 7 — installer
 - ✅ PyInstaller spec (GUI + CLI exes, bundled ffmpeg/uv), Inno Setup per-user installer, portable ZIP, checksums, release manifest
-- ✅ Linux frozen build smoke-tested; 🟡 Windows build runs in CI (`.github/workflows/build.yml`)
-- ⬜ Clean Windows VM install test
+- ✅ Windows CI (`.github/workflows/build.yml`): tests, PyInstaller build, frozen acceptance, installer + ZIP, silent install / run without Python / uninstall
+- ⬜ Clean Windows 11 VM install test with interactive GUI launch
 
 ## Milestones 8–9 — generative repair, specialists
 - ⛔ GSFixer / GSFix3D / One2Scene evaluated and registered as unsupported with reasons (licence / toolchain / VRAM)
 
 ## Release
-Blocked by mandatory gates A, B, C-photo-inference-gpu, G (see `docs/status/gates.json`).
+Blocked by mandatory gates A (clean VM), B, C-photo-inference-gpu, G (see `docs/status/gates.json`).
 No GitHub Release has been published.
