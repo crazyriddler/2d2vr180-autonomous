@@ -49,7 +49,7 @@ def open_path(p: str | Path) -> None:
 
 
 VR_HELP = ("<h3>View the 3D splat in VR</h3>"
-           "<p>The scene opens in a WebXR viewer in <b>Microsoft Edge</b> (or Chrome) on this PC. "
+           "<p>The scene opens in a WebXR viewer in <b>Google Chrome</b> or <b>Microsoft Edge</b> on this PC. "
            "Nothing is uploaded: the page is served only to this computer (127.0.0.1).</p>"
            "<ol><li>Connect your headset to this PC: <b>Quest Link</b> (cable), <b>Air Link</b>, "
            "<b>Virtual Desktop</b> or <b>SteamVR</b>.</li>"
@@ -63,9 +63,6 @@ VR_HELP = ("<h3>View the 3D splat in VR</h3>"
 
 def open_in_vr(parent, ply: Path, scene=None) -> None:
     """Serve the scene to the bundled WebXR viewer and open it in a WebXR-capable browser."""
-    import subprocess
-    import sys
-
     from ..scene import load_scene
     from ..vr_server import get_server, scene_depth
 
@@ -87,13 +84,21 @@ def open_in_vr(parent, ply: Path, scene=None) -> None:
     except Exception as e:  # noqa: BLE001 - surfaced to the user
         QMessageBox.warning(parent, APP_NAME, f"Cannot open the VR viewer: {e}")
         return
-    if sys.platform == "win32":  # Edge ships with Windows and supports WebXR (OpenXR runtimes)
-        try:
-            subprocess.Popen(["cmd", "/c", "start", "", "msedge", url], creationflags=0x08000000)
-            return
-        except OSError:
-            pass
-    QDesktopServices.openUrl(QUrl(url))
+    from ..vr_server import open_in_browser
+
+    used = open_in_browser(url)
+    if used == "default":
+        box = QMessageBox(parent)
+        box.setWindowTitle("View in VR")
+        box.setTextFormat(Qt.RichText)
+        box.setText("Chrome or Edge was not found, so the viewer opened in your default browser. "
+                    "VR (ENTER VR) needs <b>Google Chrome</b> or <b>Microsoft Edge</b>: if the button says "
+                    f"'VR not supported', paste this address into Chrome or Edge:<br><br><code>{url}</code>")
+        copy = box.addButton("Copy address", QMessageBox.ActionRole)
+        box.addButton(QMessageBox.Ok)
+        box.exec()
+        if box.clickedButton() is copy:
+            QGuiApplication.clipboard().setText(url)
 
 
 # ============================================================ Create

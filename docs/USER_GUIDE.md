@@ -92,7 +92,7 @@ picture. The app says so in the Results page and in `run_report.json` instead of
 
 **1. Walk around the 3D splat (6DoF) — PC-connected headset.** Connect the headset to this PC
 (Quest Link cable, Air Link, Virtual Desktop or SteamVR). In **Results** (or the 3D viewer) press
-**View in VR**: the scene opens in a WebXR viewer in Microsoft Edge, served only to this computer
+**View in VR**: the scene opens in a WebXR viewer in Google Chrome or Microsoft Edge, served only to this computer
 (`127.0.0.1`). Press **ENTER VR** at the bottom of the page. You start where the camera stood; move your
 head to look around. From a single photo you will see empty space behind objects — nothing is invented.
 Command line: `2d2vr180-cli view-vr path\to\scene.ply`.

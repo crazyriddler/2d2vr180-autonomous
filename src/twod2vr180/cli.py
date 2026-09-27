@@ -195,8 +195,6 @@ def cmd_view_vr(a) -> int:
     """Serve a splat to the bundled WebXR viewer on 127.0.0.1 and open it."""
     import time
     import urllib.request
-    import webbrowser
-
     from .scene import load_scene
     from .vr_server import get_server, scene_depth
 
@@ -214,7 +212,9 @@ def cmd_view_vr(a) -> int:
         print("VR viewer OK")
         return 0
     if not a.no_browser:
-        webbrowser.open(url)
+        from .vr_server import open_in_browser
+
+        print(f"opened in: {open_in_browser(url)}")
     print("Serving on this computer only. Press Ctrl+C to stop.")
     try:
         while True:

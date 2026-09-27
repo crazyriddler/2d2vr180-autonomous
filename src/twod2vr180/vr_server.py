@@ -103,3 +103,58 @@ def scene_depth(scene) -> float | None:
     z = ((scene.means.astype(np.float64) - c2w[:3, 3]) @ np.asarray(c2w)[:3, :3])[:, 2]
     z = z[z > 0]
     return float(np.median(z)) if len(z) else None
+
+
+# ------------------------------------------------------------------ browser
+def _windows_candidates() -> list[Path]:
+    import os
+
+    roots = [os.environ.get(k) for k in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "ProgramW6432")]
+    rel = [r"Google\Chrome\Application\chrome.exe", r"Microsoft\Edge\Application\msedge.exe",
+           r"BraveSoftware\Brave-Browser\Application\brave.exe"]
+    out = [Path(r) / p for p in rel for r in roots if r]
+    try:  # installers register their executables under App Paths
+        import winreg
+
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            for exe in ("chrome.exe", "msedge.exe", "brave.exe"):
+                try:
+                    with winreg.OpenKey(hive, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}") as k:
+                        out.append(Path(winreg.QueryValue(k, None)))
+                except OSError:
+                    pass
+    except ImportError:
+        pass
+    return out
+
+
+def find_webxr_browser(candidates: list[Path] | None = None) -> Path | None:
+    """First installed Chromium-based browser (Chrome, Edge, Brave): these support WebXR with
+    OpenXR runtimes (Quest Link / Air Link / SteamVR). Firefox does not."""
+    import shutil
+    import sys
+
+    if candidates is None:
+        if sys.platform == "win32":
+            candidates = _windows_candidates()
+        else:
+            candidates = [Path(p) for p in (shutil.which("google-chrome"), shutil.which("chromium"),
+                                            shutil.which("microsoft-edge")) if p]
+    return next((c for c in candidates if c and Path(c).is_file()), None)
+
+
+def open_in_browser(url: str) -> str:
+    """Open the viewer; returns the browser used ('default' when no Chromium browser was found)."""
+    import subprocess
+    import sys
+    import webbrowser
+
+    exe = find_webxr_browser()
+    if exe is not None:
+        try:
+            subprocess.Popen([str(exe), url], creationflags=0x08000000 if sys.platform == "win32" else 0)
+            return exe.stem
+        except OSError:
+            pass
+    webbrowser.open(url)
+    return "default"

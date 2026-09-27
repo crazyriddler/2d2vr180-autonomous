@@ -1,4 +1,12 @@
-# 2D2VR180 1.0.0-rc2 — release candidate for RTX 4080 testing
+# 2D2VR180 1.0.0-rc3 — release candidate for RTX 4080 testing
+
+## What's new in rc3
+
+- **Fix: "View in VR" failed when Microsoft Edge is not installed.** The app now finds Google Chrome, Edge or
+  Brave (install folders and Windows *App Paths* registry) and opens the viewer there; if none is found it uses
+  the default browser and shows the address with a *Copy address* button (VR needs Chrome or Edge).
+
+## rc2
 
 ## What's new in rc2 (from RTX 4080 feedback on rc1)
 
@@ -7,7 +15,7 @@
   RTX GPU). A splat-size slider was added. Without OpenGL the viewer falls back to the CPU preview, which now
   renders a lighter preview while dragging (~9× faster) and full quality on release.
 - **View in VR (6DoF)**: new button on Results and the 3D viewer. Opens the splat in a bundled WebXR viewer
-  (three.js + GaussianSplats3D, MIT; served only to 127.0.0.1) in Microsoft Edge — press ENTER VR with a
+  (three.js + GaussianSplats3D, MIT; served only to 127.0.0.1) in Chrome or Edge — press ENTER VR with a
   Quest Link / Air Link / Virtual Desktop / SteamVR headset. CLI: `2d2vr180-cli view-vr scene.ply`.
 - **Clearer output folder**: a `README.txt` explains every file; app metadata moved into `_2d2vr180\`.
   The VR180 videos for standalone headsets are in `export\vr180\`.
@@ -29,8 +37,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc2-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc2-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc3-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc3-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 
