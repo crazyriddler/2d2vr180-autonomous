@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "generated": "2026-09-27",
+  "installer": "Bundled uv (Astral, MIT/Apache-2.0) creates each runtime under <app-data>/runtimes/<id>: 'uv python install' fetches a python-build-standalone interpreter, then 'uv pip install --no-deps -r <lock>' installs the exact Windows lock (config/locks/<id>.txt, generated with 'uv pip compile --python-platform x86_64-pc-windows-msvc' from <id>.in). Local-version suffixes select CUDA builds (e.g. torch==2.8.0+cu128). Git dependencies come from GitHub commit archives; no system Python, Git, compiler or CUDA toolkit is used.",
+  "runtimes": [
+    {
+      "id": "photo-cu128",
+      "description": "Single-image backends: MoGe-2, Depth-Anything-V2 (RGB-D splats) and Apple SHARP",
+      "python": "3.12",
+      "torch_index": "https://download.pytorch.org/whl/cu128",
+      "min_driver": "570.00",
+      "approx_size_gb": 5.5,
+      "status": "unverified: install and GPU smoke test not yet run on Windows/RTX 4080",
+      "archives_no_deps": [
+        {
+          "name": "moge",
+          "url": "https://github.com/microsoft/MoGe/archive/74fbce054ebed49800de42d0ad0e83495065719a.zip"
+        },
+        {
+          "name": "utils3d_moge",
+          "url": "https://github.com/EasternJournalist/utils3d-moge/archive/62f09d58509485564e24d5d9f6aac9ee9ebc0c37.zip"
+        },
+        {
+          "name": "pipeline",
+          "url": "https://github.com/EasternJournalist/pipeline/archive/1c511390d90226c00c101f34b84df26a0f8789b4.zip"
+        },
+        {
+          "name": "sharp",
+          "url": "https://github.com/apple/ml-sharp/archive/aed6527499ef91cba3b54c18d49a870f25947190.zip"
+        }
+      ],
+      "smoke_test": "import torch, transformers, moge.model.v2, sharp; print('cuda', torch.cuda.is_available())",
+      "lock": "locks/photo-cu128.txt",
+      "local_versions": {
+        "torch": "+cu128",
+        "torchvision": "+cu128"
+      }
+    },
+    {
+      "id": "recon3d-cu124",
+      "description": "Video backend: recon3d (VGGT poses + MoGe-2 metric alignment + gsplat training + TSDF mesh)",
+      "python": "3.10",
+      "torch_index": "https://download.pytorch.org/whl/cu124",
+      "extra_index": "https://docs.gsplat.studio/whl/pt24cu124",
+      "min_driver": "551.61",
+      "approx_size_gb": 7.0,
+      "status": "unverified: needs the prebuilt gsplat 1.5.3+pt24cu124 Windows wheel from docs.gsplat.studio; gtsam has no Windows wheels, so long-video factor-graph refinement is skipped (Sim(3) chunk stitching only)",
+      "archives_no_deps": [
+        {
+          "name": "recon3d",
+          "url": "https://github.com/jashshah999/recon3d/archive/e40cd91de0d379a4d87110f824054c75393bc1ca.zip"
+        },
+        {
+          "name": "vggt",
+          "url": "https://github.com/facebookresearch/vggt/archive/a288dd0f14786c93483e45524328726ab7b1b4ce.zip"
+        },
+        {
+          "name": "moge",
+          "url": "https://github.com/microsoft/MoGe/archive/74fbce054ebed49800de42d0ad0e83495065719a.zip"
+        },
+        {
+          "name": "utils3d_moge",
+          "url": "https://github.com/EasternJournalist/utils3d-moge/archive/62f09d58509485564e24d5d9f6aac9ee9ebc0c37.zip"
+        },
+        {
+          "name": "pipeline",
+          "url": "https://github.com/EasternJournalist/pipeline/archive/1c511390d90226c00c101f34b84df26a0f8789b4.zip"
+        }
+      ],
+      "smoke_test": "import torch, gsplat, vggt, recon3d.pipeline; print('cuda', torch.cuda.is_available())",
+      "network_at_inference": true,
+      "lock": "locks/recon3d-cu124.txt",
+      "local_versions": {
+        "torch": "+cu124",
+        "torchvision": "+cu124",
+        "gsplat": "+pt24cu124"
+      }
+    }
+  ]
+}

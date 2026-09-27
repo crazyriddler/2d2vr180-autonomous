@@ -1,0 +1,90 @@
+{
+  "updated": "2026-09-27",
+  "evidence_environment": "Linux x86_64 container, 4 CPU, no GPU; network limited to GitHub git + PyPI (Hugging Face, Apple CDN, download.pytorch.org blocked)",
+  "gates": [
+    {
+      "id": "A-clean-windows-install",
+      "mandatory": true,
+      "status": "partial",
+      "evidence": "CI https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36345572713: Inno Setup installer built on windows-latest, silent per-user install (no admin), installed CLI runs with Python/Git removed from PATH, 7/7 acceptance checks, clean uninstall (scripts/install-test.ps1). Still required: a clean Windows 11 VM and the GUI launched interactively."
+    },
+    {
+      "id": "A-windows-build-and-tests",
+      "mandatory": true,
+      "status": "pass",
+      "evidence": "CI https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36345572713: pytest 50/50 on Windows, PyInstaller build, frozen-exe acceptance 7/7, ZIP 116 MB + setup.exe 74 MB, checksums + release manifest."
+    },
+    {
+      "id": "B-rtx4080-detected",
+      "mandatory": true,
+      "status": "not_run",
+      "evidence": "nvidia-smi parser unit-tested with an RTX 4080 line; needs a real RTX 4080."
+    },
+    {
+      "id": "B-runtime-install-photo-cu128",
+      "mandatory": true,
+      "status": "not_run",
+      "evidence": "uv-based installer implemented; pinned wheels not installed yet (download.pytorch.org blocked in sandbox)."
+    },
+    {
+      "id": "C-photo-inference-gpu",
+      "mandatory": true,
+      "status": "not_run",
+      "evidence": "MoGe-2 worker written against moge@74fbce0 API; never executed with real weights."
+    },
+    {
+      "id": "C-pipeline-plumbing",
+      "mandatory": true,
+      "status": "pass",
+      "evidence": "tests/integration/test_jobs.py: photo, static video, fixed-camera dynamic video, fallback, cancel, OOM, missing model, corrupted input (test-only fake geometry worker)."
+    },
+    {
+      "id": "C-video-inference-gpu",
+      "mandatory": false,
+      "status": "not_run",
+      "evidence": "recon3d worker unverified; Windows gsplat wheel availability unknown."
+    },
+    {
+      "id": "D-novel-views",
+      "mandatory": false,
+      "status": "not_run",
+      "evidence": "Orbit renders tested on synthetic scenes only."
+    },
+    {
+      "id": "E-vr180-geometry",
+      "mandatory": true,
+      "status": "pass",
+      "evidence": "tests/unit/test_render_vr180.py: eye order, no flips, equirect angle mapping, SBS/TB layout, dimensions, FOV metadata, honesty note."
+    },
+    {
+      "id": "E-quest-playback",
+      "mandatory": false,
+      "status": "not_run",
+      "evidence": "H.264 yuv420p MP4 with _180_LR/_180_TB naming and Spherical Video V2 st3d/sv3d boxes (FFmpeg reports stereo3d + tiled equirectangular). Headset playback not tested."
+    },
+    {
+      "id": "F-generated-content-honesty",
+      "mandatory": true,
+      "status": "pass",
+      "evidence": "Per-splat provenance, per-eye coverage stats, is_full_vr180 flag and warnings in run_report.json; no generative backend enabled."
+    },
+    {
+      "id": "G-licensing",
+      "mandatory": true,
+      "status": "fail",
+      "evidence": "MoGe-2 weight license unverified (HF unreachable). SHARP/VGGT-1B are research-only (handled by license profile). FFmpeg GPLv3 source offer in THIRD_PARTY_NOTICES.md. Resolve MoGe-2 license before release."
+    },
+    {
+      "id": "H-reproducibility",
+      "mandatory": true,
+      "status": "partial",
+      "evidence": "Upstream commits pinned, build tools SHA256-pinned, release-manifest.json generator; model SHA256 values pending scripts/resolve_models.py."
+    },
+    {
+      "id": "I-recovery",
+      "mandatory": true,
+      "status": "pass",
+      "evidence": "Interrupted/resumed download, corrupted model, pinned-hash mismatch, missing model, low disk (model manager), no GPU, invalid media, cancelled job: automated tests + scripts/acceptance.py."
+    }
+  ]
+}

@@ -120,3 +120,24 @@ The final user-facing package should contain:
 - runtime files required by the selected backends.
 
 Large ML models are downloaded by the model manager.
+
+## Decisions taken in the first implementation pass (2026-09-27)
+
+- **GUI: PySide6 + PyInstaller (one folder) + Inno Setup.** The application process only
+  needs numpy/Pillow/Qt (≈ 300 MB frozen with the bundled tools); ML code never loads in it.
+  Tauri/Electron would add a Node toolchain without simplifying GPU process management.
+- **Runtimes: bundled `uv`.** Each backend family gets a separate environment under
+  `%LOCALAPPDATA%\2D2VR180\runtimes`, installed from pinned wheels (PyTorch CUDA wheels
+  carry the CUDA runtime). Git dependencies are installed from GitHub commit archives, so
+  neither Git nor a compiler is needed. Backends requiring compiled CUDA extensions are
+  excluded until prebuilt wheels exist.
+- **Worker protocol:** `worker.py request.json`, JSON lines prefixed `@@2D2VR180 ` on stdout
+  (`progress`, `log`, `env`, `result`, `error{code}`); cancellation kills the process tree.
+- **Scene convention:** OpenCV camera frame of the reference camera, metres when metric.
+  Per-splat provenance (observed / inferred / generative / unknown) is kept in a sidecar so the
+  exported PLY stays compatible with third-party viewers.
+- **Reference renderer:** numpy z-buffered isotropic splats for preview, validation and VR180.
+  It is an approximation of 3DGS alpha compositing and is labelled as such in reports; a gsplat
+  path inside runtimes is the planned quality renderer.
+- **License profiles:** "personal/research" (default) and "commercial" — the latter disables
+  every backend whose weights are not licensed for commercial use.

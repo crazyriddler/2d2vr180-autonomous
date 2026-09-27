@@ -2,44 +2,157 @@ name: Build
 
 on:
   workflow_dispatch:
+    inputs:
+      integration:
+        description: "Also run the real-model integration jobs (runtime install, model download, CPU inference)"
+        type: boolean
+        default: false
+  pull_request:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    # The final implementation must choose a runner that actually provides
-    # the CUDA/GPU environment needed for the selected backend.
-    # Do not pretend ubuntu-latest can validate an RTX-specific pipeline.
-    runs-on: windows-latest
-
+  test-linux:
+    # GPU-free tests: scene I/O, VR180 geometry, media analysis, model manager,
+    # job pipeline with a test-only fake worker, GUI offscreen.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: System libraries for Qt offscreen
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1
+      - run: pip install -r requirements-dev.txt
+      - run: QT_QPA_PLATFORM=offscreen python -m pytest -q
 
-      - name: Show environment
-        shell: pwsh
-        run: |
-          $PSVersionTable
-          git --version
-
+  build-windows:
+    # Hosted runners have no NVIDIA GPU: this job proves packaging, launch and
+    # error paths only. RTX 4080 gates are recorded in docs/status/gates.json.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: Bootstrap
         shell: pwsh
         run: ./scripts/bootstrap.ps1
-
       - name: Build
         shell: pwsh
         run: ./scripts/build.ps1
-
       - name: Test
         shell: pwsh
         run: ./scripts/test.ps1
-
       - name: Package
         shell: pwsh
         run: ./scripts/package.ps1
-
+      - name: Installer smoke test
+        shell: pwsh
+        run: ./scripts/install-test.ps1
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: 2d2vr180-build
+          name: 2d2vr180-windows
           path: release/*
+          if-no-files-found: error
+
+  release:
+    # v*-rc* tags publish a GitHub PRE-release (for owner testing on the target GPU);
+    # any other v* tag creates a DRAFT release. Both require docs/status/gates.json:
+    # every mandatory gate must pass, or (release candidates only) carry an explicit waiver.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Acceptance gates
+        id: gates
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          rc = "-rc" in os.environ["GITHUB_REF_NAME"]
+          g = json.load(open("docs/status/gates.json"))
+          bad = [f"{x['id']}: {x['status']}" for x in g["gates"]
+                 if x["mandatory"] and x["status"] != "pass" and not (rc and x.get("waived_for_rc"))]
+          if bad:
+              print("Release blocked by gates:\n  " + "\n  ".join(bad)); sys.exit(1)
+          waived = [x["id"] for x in g["gates"] if x["mandatory"] and x["status"] != "pass"]
+          print("waived for this release candidate:", waived)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"prerelease={'true' if rc else 'false'}\n")
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: 2d2vr180-windows
+          path: release
+      - uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ steps.gates.outputs.prerelease == 'true' }}
+          draft: ${{ steps.gates.outputs.prerelease != 'true' }}
+          files: release/*
+          body_path: docs/RELEASE_NOTES.md
+
+  # Real-model verification on GitHub's Windows runners (internet, no GPU): the packaged
+  # app installs its runtimes with the bundled uv, downloads the models through the model
+  # manager and runs real inference on the CPU.
+  integration-photo:
+    if: github.event_name == 'workflow_dispatch' && inputs.integration
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Bootstrap and build
+        shell: pwsh
+        run: |
+          ./scripts/bootstrap.ps1
+          ./scripts/build.ps1
+          .venv\Scripts\python.exe -m pip install scikit-image==0.25.2
+      - name: Real-model integration (photo runtime)
+        shell: pwsh
+        env:
+          TWOD2VR180_HOME: D:\2d2vr180-home
+        run: .venv\Scripts\python.exe scripts\ci_integration.py --app dist\2D2VR180\2d2vr180-cli.exe --runtime photo-cu128 --out D:\ci-out
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-photo
+          path: D:\ci-out\
+          if-no-files-found: warn
+
+  integration-video:
+    if: github.event_name == 'workflow_dispatch' && inputs.integration
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Bootstrap and build
+        shell: pwsh
+        run: |
+          ./scripts/bootstrap.ps1
+          ./scripts/build.ps1
+      - name: Install recon3d runtime (install + import smoke only; training needs CUDA)
+        shell: pwsh
+        env:
+          TWOD2VR180_HOME: D:\2d2vr180-home
+        run: .venv\Scripts\python.exe scripts\ci_integration.py --app dist\2D2VR180\2d2vr180-cli.exe --runtime recon3d-cu124 --out D:\ci-out
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-video
+          path: D:\ci-out\*
+          if-no-files-found: warn

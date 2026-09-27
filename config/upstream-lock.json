@@ -1,58 +1,202 @@
 {
-  "schema_version": 1,
-  "status": "bootstrap-unresolved",
-  "policy": "Claude must resolve and pin exact commits before implementation.",
+  "schema_version": 2,
+  "status": "resolved-2026-09-27",
+  "policy": "Exact commits resolved with 'git ls-remote' and shallow clones on 2026-09-27. Inference has NOT been run for any backend yet: the reconnaissance sandbox had no GPU and its network policy blocked huggingface.co, ml-site.cdn-apple.com and download.pytorch.org. 'gpu_smoke_test' records that honestly.",
+  "license_categories": ["reference-only", "local-user-only", "redistributable", "redistributable-code-restricted-model", "blocked"],
   "repositories": [
     {
       "name": "splatline",
       "url": "https://github.com/jaskirat1616/Splatline",
-      "role": "integration_reference"
+      "role": "integration_reference",
+      "commit": "09030e331c8d2ab5333fb2c1da912ce666a6e74f",
+      "commit_date": "2026-07-09",
+      "code_license": "MIT",
+      "model_license": "n/a (wraps SHARP, TripoSplat, VGGT, DepthSplat, LongSplat)",
+      "category": "reference-only",
+      "windows": "not targeted (macOS-first, Electron player needs Node)",
+      "vram": "n/a",
+      "gpu_smoke_test": "not run",
+      "integration": "Architecture reference only: pluggable --splat-backend design and per-backend license table informed our Backend contract. No code copied.",
+      "findings": "README lists TripoSplat (MIT) as a commercial-safe single-image 3DGS option — candidate for a future photo backend."
     },
     {
       "name": "recon3d",
       "url": "https://github.com/jashshah999/recon3d",
-      "role": "video_pipeline_reference"
+      "role": "video_pipeline",
+      "commit": "e40cd91de0d379a4d87110f824054c75393bc1ca",
+      "commit_date": "2026-09-26",
+      "code_license": "MIT",
+      "model_license": "loads facebook/VGGT-1B (non-commercial) and Ruicheng/moge-2-vitl (unverified)",
+      "category": "local-user-only",
+      "windows": "plausible: pure-Python + torch; depends on gsplat (prebuilt Windows wheels only for some torch/CUDA combos), gtsam and open3d wheels",
+      "vram": "README: 'works on 8GB GPUs' via chunking; VGGT ~40 frames/batch on 24 GB; we use chunk 20 on 16 GB",
+      "install": "pip install recon3d[all] + vggt + MoGe from source (we install from GitHub commit archives with --no-deps)",
+      "entry_point": "recon3d.pipeline.reconstruct(input_path, output_dir, PipelineConfig)",
+      "outputs": "scene.ply, scene.splat, scene.obj (TSDF), transforms.json (OpenGL c2w), COLMAP sparse",
+      "gpu_smoke_test": "not run",
+      "integration": "backend 'recon3d_video' via workers/recon3d_worker.py in runtime 'recon3d-cu124' (experimental)"
     },
     {
       "name": "vggt",
       "url": "https://github.com/facebookresearch/vggt",
-      "role": "geometry"
+      "role": "geometry",
+      "commit": "a288dd0f14786c93483e45524328726ab7b1b4ce",
+      "commit_date": "2026-05-18",
+      "code_license": "VGGT License v1 (2025-07-29, commercial use permitted except military)",
+      "model_license": "facebook/VGGT-1B: non-commercial; facebook/VGGT-1B-Commercial: commercial, gated (application form)",
+      "category": "redistributable-code-restricted-model",
+      "windows": "plausible (pure PyTorch)",
+      "vram": "1B params; ~40 frames per batch on 24 GB (recon3d README)",
+      "gpu_smoke_test": "not run",
+      "integration": "used through recon3d"
+    },
+    {
+      "name": "moge",
+      "url": "https://github.com/microsoft/MoGe",
+      "role": "monocular_metric_geometry",
+      "commit": "74fbce054ebed49800de42d0ad0e83495065719a",
+      "commit_date": "2026-08-19",
+      "code_license": "MIT (DINOv2 module Apache-2.0)",
+      "model_license": "UNVERIFIED — HF model cards unreachable from the sandbox; treated as non-commercial until verified",
+      "category": "local-user-only",
+      "windows": "plausible: v2 inference path needs torch, utils3d_moge, pipeline (pure Python); flex_gemm is only needed for v3 sparse modules",
+      "vram": "ViT-S/ViT-L single image well under 8 GB (to be measured)",
+      "entry_point": "moge.model.v2.MoGeModel.from_pretrained(path).infer(image) -> points, depth, mask, intrinsics (normalised)",
+      "gpu_smoke_test": "not run",
+      "integration": "backend 'moge_rgbd' via workers/moge_worker.py in runtime 'photo-cu128' (experimental); newly added to the matrix during reconnaissance"
     },
     {
       "name": "one2scene",
       "url": "https://github.com/Wang-pengfei/One2Scene",
-      "role": "single_image_explorable_scene"
+      "role": "single_image_explorable_scene",
+      "commit": "111670609465d43a9731290a755ebca18bbcaebd",
+      "commit_date": "2026-05-25",
+      "code_license": "NONE (no LICENSE file: all rights reserved by default)",
+      "model_license": "unspecified (HF dataset mutou0308/One2Scene)",
+      "category": "blocked",
+      "windows": "no (Linux CUDA scripts, several source installs)",
+      "vram": "denoise checkpoint alone ~19 GB on disk; exceeds a comfortable 16 GB VRAM budget without offload work",
+      "gpu_smoke_test": "not run",
+      "integration": "registered as unsupported with reason"
     },
     {
       "name": "sharp",
       "url": "https://github.com/apple/ml-sharp",
-      "role": "single_image_3dgs"
+      "role": "single_image_3dgs",
+      "commit": "aed6527499ef91cba3b54c18d49a870f25947190",
+      "commit_date": "2026-09-11",
+      "code_license": "Apple Sample Code License (LICENSE)",
+      "model_license": "Apple Machine Learning Research Model License — research purposes only, non-commercial (LICENSE_MODEL)",
+      "category": "local-user-only",
+      "windows": "plausible: pure PyTorch prediction (CPU/CUDA/MPS); gsplat only for its own video rendering",
+      "vram": "to be measured; Splatline reports ~2.5 GB checkpoint",
+      "entry_point": "sharp predict -i DIR -o DIR -c sharp_2572gikvuh.pt -> <stem>.ply (OpenCV convention, sRGB SH DC)",
+      "model_url": "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt",
+      "gpu_smoke_test": "not run",
+      "integration": "backend 'sharp' (research profile only; user downloads weights after accepting the Apple license)"
     },
     {
       "name": "longsplat",
       "url": "https://github.com/NVlabs/LongSplat",
-      "role": "long_video_3dgs"
+      "role": "long_video_3dgs",
+      "commit": "19750775a9d19f30aa05a8333c4c6c231b2d5f4a",
+      "commit_date": "2026-01-19",
+      "code_license": "NVIDIA Source Code License (non-commercial) + Inria Gaussian-Splatting License",
+      "model_license": "uses MASt3R checkpoints (CC-BY-NC)",
+      "category": "local-user-only",
+      "windows": "requires compiling simple-knn, diff-gaussian-rasterization, fused-ssim, optional RoPE kernels (MSVC + CUDA toolkit)",
+      "vram": "not measured",
+      "gpu_smoke_test": "not run",
+      "integration": "registered as unsupported with reason"
     },
     {
       "name": "depthsplat",
-      "url": "https://github.com/DongLiangSXU/DepthSplat",
-      "role": "depth_conditioned_3dgs"
+      "url": "https://github.com/cvg/depthsplat",
+      "role": "depth_conditioned_3dgs",
+      "commit": "2dad25a7b9ba7c5537aba08463ef88d8511a06be",
+      "commit_date": "2026-04-01",
+      "code_license": "MIT",
+      "model_license": "haofeixu/depthsplat on HF (to verify); uses Depth-Anything-V2 (Small Apache-2.0, Base/Large CC-BY-NC-4.0)",
+      "category": "local-user-only",
+      "windows": "unknown (PyTorch 2.4 / CUDA 12.4; dataset-oriented CLI via hydra)",
+      "vram": "training on 4x RTX 4090 documented; inference not measured",
+      "gpu_smoke_test": "not run",
+      "integration": "not integrated; needs posed views",
+      "note": "The URL in the original plan (DongLiangSXU/DepthSplat) does not resolve; the official repository is cvg/depthsplat."
     },
     {
       "name": "gsfixer",
       "url": "https://github.com/GVCLab/GSFixer",
-      "role": "generative_novel_view_repair"
+      "role": "generative_novel_view_repair",
+      "commit": "19e0216934b60cb167a3ddb3c16ba1b95fe68ff4",
+      "commit_date": "2026-05-07",
+      "code_license": "NONE (no LICENSE file)",
+      "model_license": "unspecified (HF flow666/GSFixer)",
+      "category": "blocked",
+      "windows": "no (tested CUDA 12.1 on H20/H100; compiled rasteriser extensions)",
+      "vram": "datacenter GPUs only documented",
+      "gpu_smoke_test": "not run",
+      "integration": "registered as unsupported with reason"
     },
     {
       "name": "gsfix3d",
       "url": "https://github.com/GSFix3D/GSFix3D",
-      "role": "novel_view_repair"
+      "role": "novel_view_repair",
+      "commit": "6c8ac95c0eba448e4002461b7c96966d1acd4c04",
+      "commit_date": "2026-09-09",
+      "code_license": "Apache-2.0 + Inria Gaussian-Splatting License (non-commercial for the whole project)",
+      "model_license": "OpenRAIL++-M",
+      "category": "local-user-only",
+      "windows": "no (tested Ubuntu 22.04, CUDA 12.1)",
+      "vram": "tested on RTX 4500 Ada (24 GB); per-scene diffusion fine-tuning",
+      "gpu_smoke_test": "not run",
+      "integration": "registered as unsupported with reason"
     },
     {
       "name": "gsplat",
       "url": "https://github.com/nerfstudio-project/gsplat",
-      "role": "gaussian_renderer"
+      "role": "gaussian_renderer",
+      "commit": "512d366b67073d77ca099ede742683c165dfc23b",
+      "commit_date": "2026-09-19",
+      "code_license": "Apache-2.0",
+      "model_license": "n/a",
+      "category": "redistributable",
+      "windows": "prebuilt wheels for some torch/CUDA combos at https://docs.gsplat.studio/whl; otherwise JIT compile (needs MSVC + CUDA toolkit)",
+      "vram": "n/a",
+      "gpu_smoke_test": "not run",
+      "integration": "inside runtimes (SHARP dependency, recon3d training). The application's own preview/VR180 renderer is a numpy reference renderer."
+    },
+    {
+      "name": "depth-anything-v2",
+      "url": "https://github.com/DepthAnything/Depth-Anything-V2",
+      "role": "monocular_depth_candidate",
+      "commit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+      "commit_date": "2026-03-24",
+      "code_license": "Apache-2.0",
+      "model_license": "Small: Apache-2.0; Base/Large/Giant: CC-BY-NC-4.0",
+      "category": "redistributable",
+      "windows": "yes (pure PyTorch; also ONNX exports exist)",
+      "vram": "Small 24.8M params",
+      "gpu_smoke_test": "not run",
+      "integration": "candidate commercial-safe fallback (relative depth only, needs FOV assumption); newly added"
+    },
+    {
+      "name": "depth-pro",
+      "url": "https://github.com/apple/ml-depth-pro",
+      "role": "monocular_metric_depth_candidate",
+      "commit": "9e65e4dbe9568d23c546fcec53302b10445e109e",
+      "commit_date": "2026-09-11",
+      "code_license": "Apple Sample Code License",
+      "model_license": "Apple license (same LICENSE file) — verify commercial terms",
+      "category": "local-user-only",
+      "windows": "plausible",
+      "vram": "not measured",
+      "gpu_smoke_test": "not run",
+      "integration": "candidate only; newly added"
     }
   ],
-  "resolved": {}
+  "auxiliary_archives": [
+    {"name": "utils3d-moge", "url": "https://github.com/EasternJournalist/utils3d-moge", "commit": "62f09d58509485564e24d5d9f6aac9ee9ebc0c37"},
+    {"name": "pipeline", "url": "https://github.com/EasternJournalist/pipeline", "commit": "1c511390d90226c00c101f34b84df26a0f8789b4"}
+  ]
 }
