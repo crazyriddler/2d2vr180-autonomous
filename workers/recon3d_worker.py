@@ -51,7 +51,10 @@ def main(req):
         p = os.path.join(out, name)
         if os.path.exists(p):
             outputs[k] = p
-    emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), metric=bool(req.get("metric", True)))
+    import importlib.util
+
+    emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), metric=bool(req.get("metric", True)),
+         factor_graph=importlib.util.find_spec("gtsam") is not None)
 
 
 if __name__ == "__main__":

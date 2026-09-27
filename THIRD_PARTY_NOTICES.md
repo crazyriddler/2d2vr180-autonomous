@@ -18,16 +18,18 @@ downloads the components below. **No model weights are bundled.**
 
 Runtimes (config/runtime-manifest.json): PyTorch (BSD-3-Clause, bundles NVIDIA CUDA
 runtime libraries under the NVIDIA EULA), torchvision, gsplat (Apache-2.0), MoGe
-(MIT), utils3d-moge, pipeline, Apple ml-sharp (Apple Sample Code License), recon3d
+(MIT), utils3d-moge, pipeline, transformers (Apache-2.0), Apple ml-sharp (Apple Sample Code License), recon3d
 (MIT), VGGT (VGGT License v1), GTSAM (BSD), Open3D (MIT) and their dependencies.
 
 Models (config/model-manifest.json) — shown with their license before download:
 
 | Model | License | Commercial use |
 |---|---|---|
-| MoGe-2 ViT-S / ViT-L (normal) | UNVERIFIED (see HF model card) — treated as non-commercial | no (until verified) |
+| MoGe-2 ViT-S / ViT-L (normal) | MIT (Hugging Face model cards, verified 2026-09-27) | yes |
+| Depth-Anything-V2 Small | Apache-2.0 (Hugging Face model card) | yes |
 | Apple SHARP | Apple ML Research Model License — research only | **no** |
 | VGGT-1B (fetched by recon3d) | non-commercial | **no** |
 
 The default license profile is "Personal / research use". The "Commercial use"
-profile disables every backend whose model license does not permit commercial use.
+profile disables every backend whose model license does not permit commercial use
+(SHARP and the recon3d/VGGT video engine); MoGe-2 and Depth-Anything-V2 Small remain available.

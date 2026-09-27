@@ -76,6 +76,9 @@ class Recon3DBackend(Backend):
             provenance_note=("Splats optimised against multiple frames (OBSERVED). Surfaces seen from a single "
                              "frame are included without separate labelling; unseen regions are empty."),
             vram_peak_mib=out["result"].get("vram_peak_mib"), worker_env=out["env"],
+            warnings=([] if out["result"].get("factor_graph", True) else
+                      ["GTSAM is not available on Windows: long videos are aligned by chunk stitching only "
+                       "(no factor-graph/loop-closure refinement); expect more drift on long camera paths."]),
             models_used=[{"id": "vggt-1b", "revision": "fetched by upstream", "license": "non-commercial"},
                          {"id": "moge-2-vitl", "revision": "fetched by upstream", "license": "UNVERIFIED"}],
             extra={"gaussians": len(scene)})
