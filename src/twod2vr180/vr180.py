@@ -178,9 +178,15 @@ def encode_video(frames_iter, width: int, height: int, fps: float, out_path: Pat
     rc = proc.wait()
     if rc != 0 or not out_path.exists():
         raise RuntimeError(f"FFmpeg encode failed ({rc}): {err[-500:]}")
+    from .spatial import SpatialError, inject
+
+    try:
+        spherical = inject(out_path, opts.layout,
+                           "equirect180" if opts.projection == "equirect180" else "none")
+    except SpatialError as e:
+        spherical = {"error": str(e), "fallback": "filename tag only"}
     return {"path": str(out_path), "frames": n, "fps": fps, "codec": "h264", "pix_fmt": "yuv420p",
-            "width": width, "height": height, "stereo_mode": stereo_mode,
-            "spherical_metadata": "filename-tag only (Google spatial-media boxes not injected yet)"}
+            "width": width, "height": height, "stereo_mode": stereo_mode, "spherical_metadata": spherical}
 
 
 def still_to_video(frame: StereoFrame, opts: StereoOptions, out_dir: Path, stem: str, ffmpeg: str,

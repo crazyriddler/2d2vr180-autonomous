@@ -10,7 +10,7 @@
     {"id": "C-video-inference-gpu", "mandatory": false, "status": "not_run", "evidence": "recon3d worker unverified; Windows gsplat wheel availability unknown."},
     {"id": "D-novel-views", "mandatory": false, "status": "not_run", "evidence": "Orbit renders tested on synthetic scenes only."},
     {"id": "E-vr180-geometry", "mandatory": true, "status": "pass", "evidence": "tests/unit/test_render_vr180.py: eye order, no flips, equirect angle mapping, SBS/TB layout, dimensions, FOV metadata, honesty note."},
-    {"id": "E-quest-playback", "mandatory": false, "status": "not_run", "evidence": "H.264 yuv420p MP4 with _180_LR/_180_TB naming; spatial-media boxes not injected yet."},
+    {"id": "E-quest-playback", "mandatory": false, "status": "not_run", "evidence": "H.264 yuv420p MP4 with _180_LR/_180_TB naming and Spherical Video V2 st3d/sv3d boxes (FFmpeg reports stereo3d + tiled equirectangular). Headset playback not tested."},
     {"id": "F-generated-content-honesty", "mandatory": true, "status": "pass", "evidence": "Per-splat provenance, per-eye coverage stats, is_full_vr180 flag and warnings in run_report.json; no generative backend enabled."},
     {"id": "G-licensing", "mandatory": true, "status": "fail", "evidence": "MoGe-2 weight license unverified (HF unreachable). SHARP/VGGT-1B are research-only (handled by license profile). FFmpeg GPLv3 source offer in THIRD_PARTY_NOTICES.md. Resolve MoGe-2 license before release."},
     {"id": "H-reproducibility", "mandatory": true, "status": "partial", "evidence": "Upstream commits pinned, build tools SHA256-pinned, release-manifest.json generator; model SHA256 values pending scripts/resolve_models.py."},

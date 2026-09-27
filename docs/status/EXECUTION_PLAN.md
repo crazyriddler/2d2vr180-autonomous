@@ -25,7 +25,7 @@ Legend: ✅ done and tested here · 🟡 implemented, not verified on target har
 ## Milestone 5 — VR180
 - ✅ Stereo from the 3D scene (never pixel shifting): parallel eyes, half-equirect VR180 and flat 3D, SBS/TB
 - ✅ Coverage masks, content-FOV measurement, `is_full_vr180` + honesty note
-- ✅ H.264/yuv420p MP4 encode with `_180_LR`/`_180_TB` naming — ⬜ Google spatial-media (st3d/sv3d) box injection
+- ✅ H.264/yuv420p MP4 encode with `_180_LR`/`_180_TB` naming and Spherical Video V2 `st3d`/`sv3d` metadata (VR180 equi bounds), verified by FFmpeg
 
 ## Milestone 6 — model manager
 - ✅ Manifest, license acceptance, resumable `.part` downloads, SHA256 pin or TOFU, verify, delete, disk check
