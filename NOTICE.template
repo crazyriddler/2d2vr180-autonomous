@@ -1,0 +1,8 @@
+Third-party software and model notices will be generated during the release build.
+
+Do not hand-edit this file to claim licenses that have not been verified.
+
+The release builder must generate:
+- THIRD_PARTY_NOTICES.txt
+- MODEL_LICENSES.txt
+- source/commit manifest

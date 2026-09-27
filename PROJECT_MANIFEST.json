@@ -1,0 +1,8 @@
+{
+  "project": "2D2VR180",
+  "generated_by": "ChatGPT",
+  "purpose": "Autonomous Claude Code blueprint for local RTX 4080 2D photo/video to 3D/VR180 application",
+  "contains_model_weights": false,
+  "contains_upstream_sources": false,
+  "file_count": 39
+}

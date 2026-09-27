@@ -1,0 +1,32 @@
+app:
+  name: 2D2VR180
+  version: 0.1.0
+  language: en
+
+hardware:
+  target_gpu: "NVIDIA GeForce RTX 4080"
+  target_vram_gb: 16
+  minimum_vram_gb: 8
+
+storage:
+  models_dir: "%LOCALAPPDATA%/2D2VR180/models"
+  jobs_dir: "%LOCALAPPDATA%/2D2VR180/jobs"
+  cache_dir: "%LOCALAPPDATA%/2D2VR180/cache"
+  logs_dir: "%LOCALAPPDATA%/2D2VR180/logs"
+
+pipeline:
+  photo_default: auto
+  video_default: auto
+  prefer_quality_over_speed: true
+
+vr180:
+  formats:
+    - sbs
+    - top_bottom
+  default_eye_separation_m: 0.064
+  default_horizontal_fov_deg: 100
+  allow_hemisphere_completion: false
+
+privacy:
+  upload_media: false
+  telemetry: false

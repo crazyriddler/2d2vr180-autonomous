@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(python:*)",
+      "Bash(pip:*)",
+      "Bash(python -m pip:*)",
+      "Bash(uv:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(cmake:*)",
+      "Bash(ninja:*)",
+      "Bash(node:*)",
+      "Bash(npm:*)",
+      "Bash(powershell:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /:*)",
+      "Bash(git push --force:*)"
+    ]
+  }
+}

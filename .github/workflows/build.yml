@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    # The final implementation must choose a runner that actually provides
+    # the CUDA/GPU environment needed for the selected backend.
+    # Do not pretend ubuntu-latest can validate an RTX-specific pipeline.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show environment
+        shell: pwsh
+        run: |
+          $PSVersionTable
+          git --version
+
+      - name: Bootstrap
+        shell: pwsh
+        run: ./scripts/bootstrap.ps1
+
+      - name: Build
+        shell: pwsh
+        run: ./scripts/build.ps1
+
+      - name: Test
+        shell: pwsh
+        run: ./scripts/test.ps1
+
+      - name: Package
+        shell: pwsh
+        run: ./scripts/package.ps1
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 2d2vr180-build
+          path: release/*

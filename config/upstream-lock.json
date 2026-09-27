@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "status": "bootstrap-unresolved",
+  "policy": "Claude must resolve and pin exact commits before implementation.",
+  "repositories": [
+    {
+      "name": "splatline",
+      "url": "https://github.com/jaskirat1616/Splatline",
+      "role": "integration_reference"
+    },
+    {
+      "name": "recon3d",
+      "url": "https://github.com/jashshah999/recon3d",
+      "role": "video_pipeline_reference"
+    },
+    {
+      "name": "vggt",
+      "url": "https://github.com/facebookresearch/vggt",
+      "role": "geometry"
+    },
+    {
+      "name": "one2scene",
+      "url": "https://github.com/Wang-pengfei/One2Scene",
+      "role": "single_image_explorable_scene"
+    },
+    {
+      "name": "sharp",
+      "url": "https://github.com/apple/ml-sharp",
+      "role": "single_image_3dgs"
+    },
+    {
+      "name": "longsplat",
+      "url": "https://github.com/NVlabs/LongSplat",
+      "role": "long_video_3dgs"
+    },
+    {
+      "name": "depthsplat",
+      "url": "https://github.com/DongLiangSXU/DepthSplat",
+      "role": "depth_conditioned_3dgs"
+    },
+    {
+      "name": "gsfixer",
+      "url": "https://github.com/GVCLab/GSFixer",
+      "role": "generative_novel_view_repair"
+    },
+    {
+      "name": "gsfix3d",
+      "url": "https://github.com/GSFix3D/GSFix3D",
+      "role": "novel_view_repair"
+    },
+    {
+      "name": "gsplat",
+      "url": "https://github.com/nerfstudio-project/gsplat",
+      "role": "gaussian_renderer"
+    }
+  ],
+  "resolved": {}
+}

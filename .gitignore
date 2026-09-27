@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Build
+build/
+dist/
+release/
+*.exe
+*.msi
+*.zip
+*.7z
+
+# ML
+models/*
+!models/README.md
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.bin
+
+# Generated
+outputs/
+cache/
+artifacts/
+recon3d_output/
+runs/
+logs/
+*.ply
+*.splat
+*.obj
+*.mp4
+*.mov
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
