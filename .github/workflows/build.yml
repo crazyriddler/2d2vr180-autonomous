@@ -46,6 +46,9 @@ jobs:
       - name: Package
         shell: pwsh
         run: ./scripts/package.ps1
+      - name: Installer smoke test
+        shell: pwsh
+        run: ./scripts/install-test.ps1
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
