@@ -94,7 +94,9 @@ picture. The app says so in the Results page and in `run_report.json` instead of
 (Quest Link cable, Air Link, Virtual Desktop or SteamVR). In **Results** (or the 3D viewer) press
 **View in VR**: the scene opens in a WebXR viewer in Google Chrome or Microsoft Edge, served only to this computer
 (`127.0.0.1`). Press **ENTER VR** at the bottom of the page. You start where the camera stood; move your
-head to look around. From a single photo you will see empty space behind objects — nothing is invented.
+head to look around, or use the controllers: left stick = move, right stick = turn (left/right) and
+rise/sink (up/down), A/X = back to the start. On the desktop: drag = orbit, right-drag = pan, wheel = zoom,
+R = reset. From a single photo you will see empty space behind objects — nothing is invented.
 Command line: `2d2vr180-cli view-vr path\to\scene.ply`.
 
 **2. Watch VR180 stereo — any headset, including standalone Quest.** Copy

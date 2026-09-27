@@ -19,9 +19,11 @@
 <body>
 <div id="help">
   <b id="title">2D2VR180 splat viewer</b><br>
-  Mouse: drag = orbit · right-drag = pan · wheel = zoom.<br>
+  Mouse: drag = orbit · right-drag = pan · wheel = zoom · arrow keys = pan · R = reset view.<br>
   <b>VR</b>: connect your headset to this PC (Quest Link / Air Link / Virtual Desktop / SteamVR), then press
   <b>ENTER VR</b> at the bottom of the page. You start where the original camera stood.<br>
+  <b>Controllers</b>: left stick = move · right stick left/right = turn 30° · right stick up/down = rise/sink ·
+  A or X = back to the start.<br>
   Only what the camera saw exists in 3D — you will see empty space behind objects and outside the photo.
   <div id="err"></div>
   <button onclick="this.parentElement.style.display='none'">Hide</button>
@@ -48,6 +50,102 @@ const viewer = window.viewer = new GaussianSplats3D.Viewer({
   sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
   logLevel: q.get('debug') ? GaussianSplats3D.LogLevel.Debug : GaussianSplats3D.LogLevel.None,
 });
+// The library disables its own mouse controls whenever WebXR is enabled, so attach
+// orbit controls ourselves (its update loop calls viewer.controls.update()).
+const controls = new GaussianSplats3D.OrbitControls(viewer.camera, viewer.renderer.domElement);
+controls.target.set(0, 0, -depth);
+controls.rotateSpeed = 0.5;
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.screenSpacePanning = true;
+controls.listenToKeyEvents(window);
+controls.update();
+viewer.controls = window.controls = controls;
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'r' || e.key === 'R') {
+    viewer.camera.position.set(0, 0, 0.001);
+    controls.target.set(0, 0, -depth);
+    controls.update();
+  }
+});
+
+// ---------------------------------------------------------------- VR locomotion
+// Moves the user by offsetting the XR reference space (the scene itself never moves).
+const UP = new THREE.Vector3(0, 1, 0);
+const SPEED = Math.min(Math.max(depth * 0.6, 0.5), 5);   // metres per second
+const rig = { pos: new THREE.Vector3(), yaw: 0 };
+let baseSpace = null, lastT = 0, snapReady = true, resetHeld = false;
+
+// Rig pose T(pos)·R(yaw) → the XRRigidTransform that offsets the base space by its inverse.
+function rigToOffset(pos, yaw) {
+  const qi = new THREE.Quaternion().setFromAxisAngle(UP, -yaw);
+  const p = pos.clone().negate().applyQuaternion(qi);
+  return { position: { x: p.x, y: p.y, z: p.z, w: 1 }, orientation: { x: qi.x, y: qi.y, z: qi.z, w: qi.w } };
+}
+window.rigToOffset = rigToOffset;
+
+function applyRig(renderer) {
+  const o = rigToOffset(rig.pos, rig.yaw);
+  renderer.xr.setReferenceSpace(baseSpace.getOffsetReferenceSpace(new XRRigidTransform(o.position, o.orientation)));
+}
+
+function dz(v) { return Math.abs(v) < 0.15 ? 0 : v; }
+
+function xrFrame(t, frame) {
+  const session = frame.session;
+  session.requestAnimationFrame(xrFrame);
+  const renderer = viewer.renderer;
+  if (!baseSpace) return;
+  const dt = lastT ? Math.min((t - lastT) / 1000, 0.1) : 0;
+  lastT = t;
+  let mx = 0, mz = 0, my = 0, turn = 0, reset = false;
+  for (const src of session.inputSources) {
+    const gp = src.gamepad;
+    if (!gp) continue;
+    const ax = dz(gp.axes.length >= 4 ? gp.axes[2] : (gp.axes[0] || 0));
+    const ay = dz(gp.axes.length >= 4 ? gp.axes[3] : (gp.axes[1] || 0));
+    if (src.handedness === 'left') { mx += ax; mz += ay; } else { turn = ax; my -= ay; }
+    if (gp.buttons[4] && gp.buttons[4].pressed) reset = true;   // A / X
+  }
+  let changed = false;
+  if (reset && !resetHeld) { rig.pos.set(0, 0, 0); rig.yaw = 0; changed = true; }
+  resetHeld = reset;
+  if (mx || mz || my) {
+    const fwd = new THREE.Vector3();
+    renderer.xr.getCamera().getWorldDirection(fwd);
+    fwd.y = 0;
+    if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
+    fwd.normalize();
+    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+    rig.pos.addScaledVector(fwd, -mz * SPEED * dt).addScaledVector(right, mx * SPEED * dt);
+    rig.pos.y += my * SPEED * 0.5 * dt;
+    changed = true;
+  }
+  if (Math.abs(turn) > 0.7 && snapReady) {
+    // turn around the head, not around the rig origin
+    const pose = frame.getViewerPose(baseSpace);
+    const hp = pose ? pose.transform.position : { x: 0, y: 0, z: 0 };
+    const head = new THREE.Vector3(hp.x, hp.y, hp.z);
+    const before = head.clone().applyAxisAngle(UP, rig.yaw).add(rig.pos);
+    rig.yaw += (turn > 0 ? -1 : 1) * Math.PI / 6;
+    rig.pos.copy(before.sub(head.applyAxisAngle(UP, rig.yaw)));
+    snapReady = false;
+    changed = true;
+  } else if (Math.abs(turn) < 0.3) {
+    snapReady = true;
+  }
+  if (changed) applyRig(renderer);
+}
+
+viewer.renderer.xr.addEventListener('sessionstart', () => {
+  const renderer = viewer.renderer;
+  baseSpace = renderer.xr.getReferenceSpace();
+  rig.pos.set(0, 0, 0); rig.yaw = 0; lastT = 0;
+  controls.enabled = false;
+  renderer.xr.getSession().requestAnimationFrame(xrFrame);
+});
+viewer.renderer.xr.addEventListener('sessionend', () => { baseSpace = null; controls.enabled = true; });
+
 viewer.addSplatScene(scene, {
   rotation: [1, 0, 0, 0],
   splatAlphaRemovalThreshold: 5,

@@ -38,6 +38,10 @@ jobs:
       - run: QT_QPA_PLATFORM=offscreen python -m pytest -q
       - name: GUI tests with real OpenGL (Mesa llvmpipe on Xvfb)
         run: QT_QPA_PLATFORM=xcb xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q tests/integration/test_gui.py
+      - name: WebXR viewer browser tests (Chrome on Mesa OpenGL)
+        run: |
+          pip install playwright==1.55.0
+          CHROME_PATH=$(which google-chrome) xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q tests/integration/test_webxr_viewer.py
 
   build-windows:
     # Hosted runners have no NVIDIA GPU: this job proves packaging, launch and
