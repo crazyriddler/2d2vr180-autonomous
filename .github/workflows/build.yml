@@ -29,10 +29,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: System libraries for Qt offscreen
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1
+      - name: System libraries for Qt (offscreen + Xvfb/Mesa OpenGL)
+        run: >
+          sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 xvfb
+          libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0
+          libxcb-xinerama0 libxcb-shape0 libgl1-mesa-dri
       - run: pip install -r requirements-dev.txt
       - run: QT_QPA_PLATFORM=offscreen python -m pytest -q
+      - name: GUI tests with real OpenGL (Mesa llvmpipe on Xvfb)
+        run: QT_QPA_PLATFORM=xcb xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q tests/integration/test_gui.py
 
   build-windows:
     # Hosted runners have no NVIDIA GPU: this job proves packaging, launch and

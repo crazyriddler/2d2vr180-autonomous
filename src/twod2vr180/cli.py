@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import urllib.parse
 import json
 import sys
 from pathlib import Path
@@ -190,6 +191,38 @@ def cmd_vr180(a) -> int:
     return 0
 
 
+def cmd_view_vr(a) -> int:
+    """Serve a splat to the bundled WebXR viewer on 127.0.0.1 and open it."""
+    import time
+    import urllib.request
+    import webbrowser
+
+    from .scene import load_scene
+    from .vr_server import get_server, scene_depth
+
+    ply = Path(a.scene)
+    scene = load_scene(ply)
+    url = get_server().share(ply, scene_depth(scene), ply.stem)
+    print(url, flush=True)
+    if a.check:  # self-test: viewer page, modules and the scene itself are served
+        base = url.split("/viewer.html")[0]
+        scene_path = urllib.parse.unquote(url.split("scene=")[1].split("&")[0])
+        for part in ("/viewer.html", "/three.module.js", "/gaussian-splats-3d.module.js", scene_path):
+            with urllib.request.urlopen(base + part, timeout=10) as r:
+                if r.status != 200:
+                    return 1
+        print("VR viewer OK")
+        return 0
+    if not a.no_browser:
+        webbrowser.open(url)
+    print("Serving on this computer only. Press Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        return 0
+
+
 def cmd_gui(a) -> int:
     from .gui.app import main as gui_main
 
@@ -248,6 +281,12 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--metric", action="store_true", help="scene units are metres")
     v.add_argument("--out")
     v.set_defaults(fn=cmd_vr180)
+
+    x = sub.add_parser("view-vr", help="open a .ply/.splat in the WebXR viewer (PC-VR headsets via Link/SteamVR)")
+    x.add_argument("scene")
+    x.add_argument("--no-browser", action="store_true")
+    x.add_argument("--check", action="store_true", help="self-test the viewer server and exit")
+    x.set_defaults(fn=cmd_view_vr)
 
     g = sub.add_parser("gui", help="launch the desktop application")
     g.add_argument("open", nargs="?")

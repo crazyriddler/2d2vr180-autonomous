@@ -98,6 +98,37 @@ def upstream_commits(names: list[str]) -> dict:
     return out
 
 
+def write_export_readme(export: Path, report: dict) -> None:
+    """Plain-language guide to the files a job produced (README.txt in the export folder)."""
+    out = report.get("outputs") or {}
+    vr = out.get("vr180") or {}
+    lines = [f"2D2VR180 results for {Path((report.get('input') or {}).get('path', '')).name}", "",
+             "3D SCENE (explore it in the app's 3D viewer, or with 'View in VR')",
+             "  scene.ply    Gaussian splat, standard 3DGS format. Opens in SuperSplat (superspl.at/editor),",
+             "               Postshot, Polycam, Luma, Blender (3DGS add-ons) and most splat viewers.",
+             "  scene.splat  Same splat in the compact web format (antimatter15 / many web viewers)."]
+    if out.get("obj"):
+        lines += ["  scene.obj    Triangle mesh with scene.mtl + scene_texture.png (Blender, MeshLab, 3D printing…)."]
+    lines += ["  _2d2vr180\\   Metadata the app uses (cameras, which parts are observed/inferred). Keep it next to",
+              "               scene.ply if you want to reopen the scene in 2D2VR180; other programs ignore it.", ""]
+    if vr.get("stills") or vr.get("videos"):
+        lines += ["VR180 (watch in a headset: vr180 folder)",
+                  "  *_180_LR.jpg / .mp4   left-right (side-by-side) VR180 stereo",
+                  "  *_180_TB.jpg / .mp4   top-bottom VR180 stereo",
+                  "  *_coverage.png        white = seen, grey = interpolated, black = unknown",
+                  "  Quest: connect by USB, copy the .mp4 into the 'Movies' folder, open it in the Files/Media",
+                  "  app or any VR player (DeoVR, Skybox, Pigasus). The files carry VR180 metadata; if a player",
+                  "  asks, choose 180° and side-by-side (LR) or top-bottom (TB).", ""]
+    lines += ["WALK AROUND THE SPLAT IN VR (6DoF)",
+              "  In the app: Results → 'View in VR'. Connect the headset to this PC first (Quest Link,",
+              "  Air Link, Virtual Desktop or SteamVR), then press ENTER VR in the page that opens.", "",
+              "Details of this run: ../run_report.json"]
+    try:
+        (export / "README.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 class JobRunner:
     def __init__(self, ctx: BackendContext, hardware: HardwareReport | None = None):
         self.ctx = ctx
@@ -276,6 +307,7 @@ class JobRunner:
                                               check_cancel)
                 stage("vr180")
             report["outputs"] = outputs
+            write_export_readme(job.dir / "export", report)
             if opts.output_dir:
                 dest = Path(opts.output_dir) / f"{job.input.stem}_{job.id}"
                 shutil.copytree(job.dir / "export", dest, dirs_exist_ok=True)

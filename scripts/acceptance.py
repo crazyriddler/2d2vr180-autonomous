@@ -92,6 +92,9 @@ def main() -> int:
         ok = ok and md["eye_order"] == "left_first" and md["is_full_vr180"] is False
     check("VR180 SBS/TB from splat file", ok, out)
 
+    rc, out = run("view-vr", str(ply), "--check")
+    check("WebXR splat viewer serves page, modules and scene", rc == 0 and "VR viewer OK" in out, out)
+
     (tmp / "acceptance.json").write_text(json.dumps(results, indent=2))
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed; details in {tmp / 'acceptance.json'}")

@@ -28,6 +28,7 @@ class Settings:
     output_dir: str = ""                         # also copy results here ("" = keep in jobs folder)
     hf_token: str = ""                           # only for gated models; stored locally, never uploaded
     setup_completed: bool = False
+    vr_help_seen: bool = False
     check_updates: bool = False                  # no network access unless the user enables it
 
     @classmethod

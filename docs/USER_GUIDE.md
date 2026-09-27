@@ -47,13 +47,16 @@ verified (SHA256) before use.
 4. Click **Generate**. Jobs run one after another; you can cancel any of them.
 
 When a job finishes, **Results** shows it. From there you can:
-- **Explore in 3D** — orbit (drag), pan (right-drag), zoom (wheel); colour by provenance.
+- **Explore in 3D** — GPU viewer: orbit (drag), pan (right-drag), zoom (wheel), splat size, colour by provenance.
+- **View in VR (6DoF)** — look around the 3D splat in a headset connected to this PC (see below).
 - **Open VR180 image / Play VR180 video**.
 - **Open folder** — the `export` folder contains:
   - `scene.ply` / `scene.splat` — Gaussian splat (opens in SuperSplat, Postshot, etc.)
   - `scene.obj` (+ `.mtl`, texture) — mesh, when the backend provides one
   - `vr180/…_180_LR.jpg|mp4`, `…_180_TB.jpg|mp4` — VR180 stereo, with spherical metadata
   - `vr180/…_coverage.png` — white = seen, grey = interpolated, black = unknown
+  - `README.txt` — explains every file
+  - `_2d2vr180/` — metadata the app uses to reopen the scene (other programs ignore it)
   - `run_report.json` (one level up) — everything about the run
 
 ## How inputs are handled
@@ -85,11 +88,22 @@ picture. The app says so in the Results page and in `run_report.json` instead of
   without NVIDIA GPU), **copy results to** a folder, **Hugging Face token** (only for gated models).
 - Data lives in `%LOCALAPPDATA%\2D2VR180`. Set `TWOD2VR180_HOME` to move it to another drive.
 
-## Watching VR180 on a headset
+## VR: two ways to use a headset
 
-Copy the `_180_LR.mp4` (or `_180_TB.mp4`) to the headset (Quest: connect by USB → `Movies`).
-Players that read VR180 metadata switch to 180° stereo automatically; otherwise choose
-*180°* and *side-by-side* (or *top/bottom*) in the player.
+**1. Walk around the 3D splat (6DoF) — PC-connected headset.** Connect the headset to this PC
+(Quest Link cable, Air Link, Virtual Desktop or SteamVR). In **Results** (or the 3D viewer) press
+**View in VR**: the scene opens in a WebXR viewer in Microsoft Edge, served only to this computer
+(`127.0.0.1`). Press **ENTER VR** at the bottom of the page. You start where the camera stood; move your
+head to look around. From a single photo you will see empty space behind objects — nothing is invented.
+Command line: `2d2vr180-cli view-vr path\to\scene.ply`.
+
+**2. Watch VR180 stereo — any headset, including standalone Quest.** Copy
+`export\vr180\…_180_LR.mp4` (or `_180_TB.mp4`) to the headset (Quest: connect by USB → `Movies`) and play
+it in the Files/Media app or any VR player (DeoVR, Skybox, Pigasus). The files carry VR180 metadata;
+if the player asks, choose *180°* and *side-by-side* (or *top/bottom*).
+
+**Other splat apps.** `scene.ply` is a standard 3D Gaussian Splatting file: it also opens in SuperSplat,
+Postshot, Polycam, Luma and other splat viewers, some of which run on headsets.
 
 ## Troubleshooting
 

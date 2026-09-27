@@ -224,7 +224,7 @@ def read_gaussian_ply(path: Path) -> GaussianScene:
     else:
         q = np.tile(np.array([1, 0, 0, 0], np.float32), (n, 1))
     prov = v["provenance"].astype(np.uint8) if "provenance" in names else None
-    side = Path(path).with_suffix(".provenance.npy")
+    side = _sidecar(path, ".provenance.npy")
     if prov is None and side.exists():
         arr = np.load(side)
         if arr.shape == (n,):
@@ -235,7 +235,7 @@ def read_gaussian_ply(path: Path) -> GaussianScene:
         k = np.asarray(els["intrinsic"]["intrinsic"], np.float64).reshape(3, 3)
         wh = np.asarray(els["image_size"]["image_size"]).astype(int)
         scene.cameras.append(Camera(int(wh[0]), int(wh[1]), k[0, 0], k[1, 1], k[0, 2], k[1, 2]))
-    meta = Path(path).with_suffix(".meta.json")
+    meta = _sidecar(path, ".meta.json")
     if meta.exists():
         m = json.loads(meta.read_text())
         scene.cameras = [Camera.from_dict(c) for c in m.get("cameras", [])] or scene.cameras
@@ -243,9 +243,19 @@ def read_gaussian_ply(path: Path) -> GaussianScene:
     return scene
 
 
+SIDECAR_DIR = "_2d2vr180"  # app metadata kept out of the way of the user-facing files
+
+
+def _sidecar(ply: Path, suffix: str) -> Path:
+    """Sidecar location: <dir>/_2d2vr180/<stem><suffix>; older builds wrote <stem><suffix> next to the PLY."""
+    ply = Path(ply)
+    new = ply.parent / SIDECAR_DIR / (ply.stem + suffix)
+    return new if new.exists() else ply.with_suffix(suffix)
+
+
 def write_gaussian_ply(scene: GaussianScene, path: Path, include_provenance: bool = False) -> Path:
     """Write the de-facto standard 3DGS PLY (INRIA layout, binary LE) plus a
-    ``.meta.json`` sidecar with cameras and provenance summary."""
+    ``_2d2vr180/<stem>.meta.json`` sidecar with cameras and provenance summary."""
     path = Path(path)
     n = len(scene)
     props = ["x", "y", "z", "nx", "ny", "nz", "f_dc_0", "f_dc_1", "f_dc_2"]
@@ -276,8 +286,10 @@ def write_gaussian_ply(scene: GaussianScene, path: Path, include_provenance: boo
     with open(path, "wb") as f:
         f.write(("\n".join(header) + "\n").encode("ascii"))
         f.write(arr.tobytes())
-    write_scene_meta(scene, path.with_suffix(".meta.json"))
-    np.save(path.with_suffix(".provenance.npy"), scene.provenance)
+    side_dir = path.parent / SIDECAR_DIR
+    side_dir.mkdir(exist_ok=True)
+    write_scene_meta(scene, side_dir / (path.stem + ".meta.json"))
+    np.save(side_dir / (path.stem + ".provenance.npy"), scene.provenance)
     return path
 
 

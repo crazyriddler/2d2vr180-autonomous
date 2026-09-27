@@ -103,3 +103,44 @@ def test_queue_and_results_with_fake_backend(window, qapp, ctx, rtx4080, photo):
     w.results.list.setCurrentRow(0)
     assert w.results.btn["explore"].isEnabled() and w.results.btn["vrvid"].isEnabled()
     assert "photo.jpg" in w.results.details.toPlainText()
+
+
+def test_gpu_view_falls_back_to_cpu_when_opengl_is_unavailable(window, qapp, tmp_path):
+    """Offscreen Qt has no OpenGL: the viewer must switch to the CPU preview, not stay black."""
+    import time
+
+    w = window
+    w.open_scene(_scene_ply(tmp_path))
+    t0 = time.time()
+    while time.time() - t0 < 1.0:
+        qapp.processEvents()
+        time.sleep(0.02)
+    v = w.viewer_page.viewer
+    if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+        assert not v.using_gl and "CPU" in v.info.text()
+    assert w.viewer_page.xr_btn.isEnabled()
+
+
+@pytest.mark.skipif(os.environ.get("QT_QPA_PLATFORM") == "offscreen" or not os.environ.get("DISPLAY"),
+                    reason="needs a display with OpenGL (e.g. xvfb-run)")
+def test_gpu_view_renders_with_real_opengl(qapp, tmp_path):
+    import time
+
+    from twod2vr180.gui.viewer import SceneViewer
+    from twod2vr180.scene import load_scene
+
+    v = SceneViewer()
+    v.resize(400, 300)
+    v.show()
+    v.set_scene(load_scene(_scene_ply(tmp_path)))
+    t0 = time.time()
+    while time.time() - t0 < 1.0:
+        qapp.processEvents()
+        time.sleep(0.02)
+    assert v.using_gl and v.gl.ok
+    img = v.gl.grabFramebuffer()
+    bg = (24, 24, 28)
+    px = [img.pixelColor(x, y) for x in range(0, 400, 10) for y in range(0, 300, 10)]
+    drawn = sum(abs(c.red() - bg[0]) + abs(c.green() - bg[1]) + abs(c.blue() - bg[2]) > 30 for c in px)
+    assert drawn > 0.3 * len(px)  # the scene fills a large part of the view
+    v.close()
