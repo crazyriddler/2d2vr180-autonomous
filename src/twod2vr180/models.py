@@ -15,6 +15,7 @@ such a model ``hash_status: tofu``.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import shutil
@@ -300,7 +301,11 @@ class ModelManager:
                 while True:
                     if cancel and cancel():
                         raise ModelError("Download cancelled; partial data kept for resume.")
-                    b = resp.read(1 << 20)
+                    try:
+                        b = resp.read(1 << 20)
+                    except (http.client.HTTPException, OSError) as ex:
+                        raise ModelError(f"Connection lost after {have} bytes ({type(ex).__name__}); "
+                                         "partial data kept, the next attempt resumes.") from ex
                     if not b:
                         break
                     out.write(b)
