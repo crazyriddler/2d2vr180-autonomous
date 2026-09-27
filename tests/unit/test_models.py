@@ -119,6 +119,9 @@ def test_shipped_manifest_is_consistent():
     assert len(ids) == len(set(ids))
     for m in ms:
         assert m.license and m.license_url.startswith("https://")
-        assert m.redistributable is False or m.license.startswith("Apache-2.0")
+        assert m.redistributable is False or m.license.startswith(("Apache-2.0", "MIT"))
+        if "huggingface.co" in m.source and m.files:
+            assert len(m.revision) == 40, f"{m.id} must pin a revision"
+            assert all(f.size_bytes for f in m.files) and all(m.revision in f.url for f in m.files)
         for f in m.files:
             assert f.url.startswith("https://")

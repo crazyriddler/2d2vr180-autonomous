@@ -116,12 +116,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: integration-photo
-          path: |
-            D:\ci-out\*.json
-            D:\ci-out\*.log
-            D:\2d2vr180-home\jobs\*\run_report.json
-            D:\2d2vr180-home\jobs\*\export\vr180\*.jpg
-            D:\2d2vr180-home\jobs\*\export\vr180\*.png
+          path: D:\ci-out\
           if-no-files-found: warn
 
   integration-video:

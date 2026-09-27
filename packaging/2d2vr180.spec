@@ -9,7 +9,9 @@ datas = [
     (str(REPO / "config" / "runtime-manifest.json"), "config"),
     (str(REPO / "config" / "upstream-lock.json"), "config"),
     (str(REPO / "config" / "build-tools.lock.json"), "config"),
+    (str(REPO / "config" / "locks"), "config/locks"),
     (str(REPO / "workers"), "workers"),
+    (str(REPO / "assets"), "assets"),
     (str(REPO / "LICENSE"), "."),
     (str(REPO / "THIRD_PARTY_NOTICES.md"), "."),
 ]
@@ -26,7 +28,8 @@ a_cli = Analysis([str(REPO / "packaging" / "launcher_cli.py")], **common)
 pyz_gui = PYZ(a_gui.pure)
 pyz_cli = PYZ(a_cli.pure)
 exe_gui = EXE(pyz_gui, a_gui.scripts, [], exclude_binaries=True, name="2D2VR180", console=False,
-              upx=False, version=None)
-exe_cli = EXE(pyz_cli, a_cli.scripts, [], exclude_binaries=True, name="2d2vr180-cli", console=True, upx=False)
+              upx=False, version=None, icon=str(REPO / "assets" / "icon.ico"))
+exe_cli = EXE(pyz_cli, a_cli.scripts, [], exclude_binaries=True, name="2d2vr180-cli", console=True, upx=False,
+              icon=str(REPO / "assets" / "icon.ico"))
 coll = COLLECT(exe_gui, a_gui.binaries, a_gui.datas, exe_cli, a_cli.binaries, a_cli.datas,
                strip=False, upx=False, name="2D2VR180")

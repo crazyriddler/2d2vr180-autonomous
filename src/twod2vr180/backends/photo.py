@@ -88,7 +88,7 @@ class MoGeRGBDBackend(_RGBDBackend):
     display_name = "MoGe-2 (metric depth → splats + mesh)"
     maturity = "experimental"
     upstream = ["moge"]
-    commercial_use = False  # until the MoGe-2 weight license is verified
+    commercial_use = True   # MoGe code MIT; MoGe-2 weights MIT (HF model card, verified 2026-09-27)
     worker_script = "moge_worker.py"
     description = ("Monocular metric point map (MoGe-2) turned into surface-aligned Gaussians and a "
                    "textured mesh. Visible surfaces only: depth is INFERRED, nothing behind occluders "

@@ -17,14 +17,21 @@ from .backends.base import BackendError, run_worker
 from .scene import GaussianScene
 from .vr180 import StereoFrame, StereoOptions, assemble_gpu, finalize_stereo, gpu_views, plan_stereo
 
-RUNTIME = "photo-cu128"
+# The video runtime ships gsplat's prebuilt CUDA wheel; the photo runtime's gsplat
+# is the pure-Python PyPI build that JIT-compiles (needs MSVC + CUDA toolkit),
+# so it is only a fallback.
+RUNTIMES = ("recon3d-cu124", "photo-cu128")
+
+
+def pick_runtime(ctx) -> str | None:
+    return next((r for r in RUNTIMES if ctx.runtimes.is_installed(r)), None)
 
 
 def gpu_renderer_available(ctx, hw) -> tuple[bool, str]:
     if hw is None or not hw.gpus:
         return False, "no NVIDIA GPU detected"
-    if not ctx.runtimes.is_installed(RUNTIME):
-        return False, f"runtime '{RUNTIME}' (contains gsplat) is not installed"
+    if pick_runtime(ctx) is None:
+        return False, "no runtime with gsplat is installed"
     return True, ""
 
 
@@ -51,9 +58,10 @@ class GpuSplatRenderer:
             req = {"ply": str(scene_ply), "out_dir": str(out_dir),
                    "views": [{**v, "c2w": np.asarray(v["c2w"]).tolist()} for v in views]}
             lo, hi = c0 / n, min(1.0, (c0 + len(plans)) / n)
-            run_worker(self.ctx.runtimes.python(RUNTIME), "render_worker.py", req, self.work_dir / "worker",
+            rt = pick_runtime(self.ctx)
+            run_worker(self.ctx.runtimes.python(rt), "render_worker.py", req, self.work_dir / "worker",
                        lambda v, m: progress(lo + (hi - lo) * v, m), cancel,
-                       env=self.ctx.runtimes.worker_env(RUNTIME), log=self.log)
+                       env=self.ctx.runtimes.worker_env(rt), log=self.log)
             k = 0
             for p, cnt in zip(plans, counts):
                 rendered = []

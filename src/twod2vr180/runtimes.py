@@ -33,7 +33,8 @@ class RuntimeSpec:
     description: str
     python: str
     torch_index: str
-    packages: list[str]
+    lock: str                               # path relative to config/, exact Windows lock
+    local_versions: dict = field(default_factory=dict)   # e.g. {"torch": "+cu128"}
     archives_no_deps: list[dict] = field(default_factory=list)
     extra_index: str | None = None
     min_driver: str | None = None
@@ -90,8 +91,24 @@ class RuntimeManager:
         import hashlib
 
         s = self.specs[rid]
-        blob = json.dumps([s.python, s.torch_index, s.extra_index, s.packages, s.archives_no_deps], sort_keys=True)
+        blob = json.dumps([s.python, s.torch_index, s.extra_index, self.lock_lines(rid), s.archives_no_deps],
+                          sort_keys=True)
         return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+    def lock_lines(self, rid: str) -> list[str]:
+        """Pinned requirement lines with CUDA local-version suffixes applied."""
+        spec = self.specs[rid]
+        lines = []
+        for raw in (config_dir() / spec.lock).read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            name = line.split("==")[0].split("[")[0].strip().lower()
+            suffix = spec.local_versions.get(name)
+            if suffix and "==" in line and "+" not in line:
+                line += suffix
+            lines.append(line)
+        return lines
 
     def status(self, rid: str) -> dict:
         s = self.specs[rid]
@@ -139,6 +156,7 @@ class RuntimeManager:
         env["UV_CACHE_DIR"] = str(self.root / "_uv-cache")
         env["UV_PYTHON_INSTALL_DIR"] = str(self.root / "_python")
         env["UV_PYTHON_PREFERENCE"] = "only-managed"
+        env["UV_PYTHON_BIN_DIR"] = str(self.root / "_python" / "bin")  # keep shims out of the user's PATH dirs
         env.pop("VIRTUAL_ENV", None)
         venv = d / "venv"
 
@@ -163,7 +181,9 @@ class RuntimeManager:
                "--index-strategy", "unsafe-best-match"]
         if spec.extra_index:
             idx += ["--extra-index-url", spec.extra_index]
-        run([uv, "pip", "install", "--python", py, *idx, *spec.packages])
+        req = d / "requirements.lock.txt"
+        req.write_text("\n".join(self.lock_lines(rid)) + "\n", encoding="utf-8")
+        run([uv, "pip", "install", "--python", py, "--no-deps", *idx, "-r", str(req)])
         if spec.archives_no_deps:
             run([uv, "pip", "install", "--python", py, "--no-deps",
                  *[a["url"] for a in spec.archives_no_deps]])

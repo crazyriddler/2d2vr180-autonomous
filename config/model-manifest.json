@@ -1,17 +1,17 @@
 {
   "schema_version": 2,
   "generated": "2026-09-27",
-  "hash_policy": "Pinned sha256 is enforced when present. null = could not be verified at authoring time (sandbox had no Hugging Face / Apple CDN access); the model manager records the hash on first download (trust-on-first-use) and scripts/resolve_models.py fills these fields from the host's LFS metadata on a networked machine.",
+  "hash_policy": "Pinned sha256/size are enforced. Hugging Face entries were resolved on 2026-09-27 by the Windows CI integration job (scripts/ci_integration.py: HF API LFS metadata + model-card licence). Non-LFS JSON files carry size only. The Apple SHARP checkpoint has no published hash: it is recorded on first download (trust-on-first-use).",
   "models": [
     {
       "id": "moge-2-vits-normal",
       "display_name": "MoGe-2 ViT-S (normal) \u2014 fast monocular metric geometry",
       "source": "https://huggingface.co/Ruicheng/moge-2-vits-normal",
-      "revision": "main (UNPINNED \u2014 resolve with scripts/resolve_models.py)",
-      "license": "UNVERIFIED: code MIT (microsoft/MoGe); weight license must be read from the HF model card",
+      "revision": "26b477f41595707c5db6770294c0d1721e8ed4ed",
+      "license": "MIT (Hugging Face model card: license: mit)",
       "license_url": "https://huggingface.co/Ruicheng/moge-2-vits-normal",
-      "commercial_use": false,
-      "redistributable": false,
+      "commercial_use": true,
+      "redistributable": true,
       "required_vram_gb": 2,
       "backends": [
         "moge_rgbd"
@@ -21,22 +21,22 @@
       "files": [
         {
           "path": "model.pt",
-          "url": "https://huggingface.co/Ruicheng/moge-2-vits-normal/resolve/main/model.pt",
-          "sha256": null,
-          "size_bytes": null
+          "url": "https://huggingface.co/Ruicheng/moge-2-vits-normal/resolve/26b477f41595707c5db6770294c0d1721e8ed4ed/model.pt",
+          "sha256": "79a16621928c2bf0ed04659218c55c01075e950507f40bb3332fb4c873d3e1dc",
+          "size_bytes": 140550416
         }
       ],
-      "notes": "Default Fast photo model. Treated as non-commercial until the weight license is verified."
+      "notes": "Default Fast photo model."
     },
     {
       "id": "moge-2-vitl-normal",
       "display_name": "MoGe-2 ViT-L (normal) \u2014 quality monocular metric geometry",
       "source": "https://huggingface.co/Ruicheng/moge-2-vitl-normal",
-      "revision": "main (UNPINNED \u2014 resolve with scripts/resolve_models.py)",
-      "license": "UNVERIFIED: code MIT (microsoft/MoGe); weight license must be read from the HF model card",
+      "revision": "cb0e8bbd6b1e243589717c78e750b1ba4c093acf",
+      "license": "MIT (Hugging Face model card: license: mit)",
       "license_url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal",
-      "commercial_use": false,
-      "redistributable": false,
+      "commercial_use": true,
+      "redistributable": true,
       "required_vram_gb": 5,
       "backends": [
         "moge_rgbd"
@@ -46,9 +46,9 @@
       "files": [
         {
           "path": "model.pt",
-          "url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal/resolve/main/model.pt",
-          "sha256": null,
-          "size_bytes": null
+          "url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal/resolve/cb0e8bbd6b1e243589717c78e750b1ba4c093acf/model.pt",
+          "sha256": "280741fd09bc3f403ccff9967784c2a391b52d2c0742ae3efdb21d9f90cc1a01",
+          "size_bytes": 1323815904
         }
       ],
       "notes": "Default Quality photo model and per-frame model for fixed-camera dynamic video."
@@ -57,9 +57,9 @@
       "id": "depth-anything-v2-small",
       "display_name": "Depth-Anything-V2 Small \u2014 commercial-safe relative depth",
       "source": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf",
-      "revision": "main (UNPINNED \u2014 resolve with scripts/resolve_models.py)",
-      "license": "Apache-2.0 (Depth-Anything-V2-Small; upstream README)",
-      "license_url": "https://github.com/DepthAnything/Depth-Anything-V2/blob/a561b849ebae10a6f5ef49e26c83cbbcd36c71bf/README.md",
+      "revision": "5426e4f0f36572d16453bbda7a8389317b1bef99",
+      "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
+      "license_url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf",
       "commercial_use": true,
       "redistributable": true,
       "required_vram_gb": 2,
@@ -71,21 +71,21 @@
       "files": [
         {
           "path": "config.json",
-          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/main/config.json",
+          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/config.json",
           "sha256": null,
-          "size_bytes": null
+          "size_bytes": 950
         },
         {
           "path": "preprocessor_config.json",
-          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/main/preprocessor_config.json",
+          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/preprocessor_config.json",
           "sha256": null,
-          "size_bytes": null
+          "size_bytes": 775
         },
         {
           "path": "model.safetensors",
-          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/main/model.safetensors",
-          "sha256": null,
-          "size_bytes": null
+          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/model.safetensors",
+          "sha256": "3152477ce0d8d6978d76b995120de97cb5b928701fd0f817769f59e249a16b70",
+          "size_bytes": 99173660
         }
       ],
       "notes": "Relative depth only (no metric scale). The Base/Large/Giant checkpoints are CC-BY-NC-4.0 and are not used."
@@ -139,9 +139,9 @@
       "display_name": "MoGe-2 ViT-L \u2014 metric alignment used by recon3d",
       "source": "https://huggingface.co/Ruicheng/moge-2-vitl",
       "revision": "main (UNPINNED)",
-      "license": "UNVERIFIED (see HF model card)",
+      "license": "MIT (Hugging Face model card family Ruicheng/moge-2-*)",
       "license_url": "https://huggingface.co/Ruicheng/moge-2-vitl",
-      "commercial_use": false,
+      "commercial_use": true,
       "redistributable": false,
       "required_vram_gb": 5,
       "backends": [

@@ -30,7 +30,10 @@ def test_runtime_manager_state(tmp_path):
     specs = load_runtime_manifest()
     assert {"photo-cu128", "recon3d-cu124"} <= set(specs)
     for s in specs.values():
-        assert all("==" in p for p in s.packages), "runtime packages must be pinned"
+        lines = RuntimeManager(tmp_path, specs).lock_lines(s.id)
+        assert len(lines) > 20 and all("==" in p for p in lines), "runtimes must install an exact lock"
+        torch_line = next(p for p in lines if p.startswith("torch=="))
+        assert "+cu" in torch_line
         assert all("/archive/" in a["url"] and len(a["url"].rsplit("/", 1)[1]) == 44 for a in s.archives_no_deps)
     rm = RuntimeManager(tmp_path, specs)
     assert not rm.is_installed("photo-cu128")
@@ -40,7 +43,7 @@ def test_runtime_manager_state(tmp_path):
     (rm.env_dir("photo-cu128") / "installed.json").write_text(
         json.dumps({"spec_fingerprint": rm._fingerprint("photo-cu128")}))
     assert rm.is_installed("photo-cu128")
-    specs["photo-cu128"].packages.append("extra==1.0")  # manifest change invalidates the install
+    specs["photo-cu128"].local_versions["torch"] = "+cu999"  # manifest change invalidates the install
     assert not rm.is_installed("photo-cu128")
 
 

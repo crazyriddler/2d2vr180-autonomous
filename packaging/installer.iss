@@ -29,6 +29,7 @@ WizardStyle=modern
 LicenseFile=..\LICENSE
 InfoBeforeFile=..\THIRD_PARTY_NOTICES.md
 UninstallDisplayIcon={app}\2D2VR180.exe
+SetupIconFile=..\assets\icon.ico
 MinVersion=10.0.19041
 
 [Tasks]

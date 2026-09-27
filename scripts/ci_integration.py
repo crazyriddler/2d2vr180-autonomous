@@ -115,6 +115,14 @@ def main() -> int:
     log = out / "integration.log"
     results: dict = {"runtime": a.runtime}
 
+    try:  # which prebuilt gsplat CUDA wheels exist for Windows (decides the GPU renderer runtime)
+        with urllib.request.urlopen("https://docs.gsplat.studio/whl/gsplat/", timeout=60) as r:
+            idx = r.read().decode("utf-8", "replace")
+        wins = sorted(set(re.findall(r"gsplat-[^\"<>]*win_amd64\.whl", idx)))
+        results["gsplat_windows_wheels"] = wins[-40:]
+        print("gsplat prebuilt Windows wheels:\n  " + "\n  ".join(wins[-40:]), flush=True)
+    except Exception as e:  # noqa: BLE001
+        results["gsplat_windows_wheels"] = f"index unavailable: {e}"
     if a.runtime == "photo-cu128":
         results["hf_metadata"] = {k: {kk: v.get(kk) for kk in ("revision", "card_license", "gated")}
                                   for k, v in hf_metadata(out).items()}
@@ -153,6 +161,16 @@ def main() -> int:
         results[name] = s
         ok_all &= s.get("status") == "succeeded"
     (out / "summary.json").write_text(json.dumps(results, indent=2, default=str))
+    import shutil
+
+    for name, _ in runs:  # keep reports + VR180 stills as CI artifacts
+        rep_dir = Path((results[name].get("report") or ""))
+        if rep_dir.is_dir():
+            dst = out / "jobs" / name
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(rep_dir / "run_report.json", dst / "run_report.json")
+            for img in (rep_dir / "export" / "vr180").glob("*.jpg"):
+                shutil.copy2(img, dst / img.name)
     print("\n==== SUMMARY ====")
     for name, _ in runs:
         s = results[name]

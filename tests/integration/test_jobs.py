@@ -55,6 +55,10 @@ def test_photo_end_to_end(ctx, rtx4080, photo):
 
 def test_commercial_profile_uses_commercial_safe_backend(ctx, rtx4080, photo):
     job, rep, _ = run_job(ctx, rtx4080, photo, license_profile="commercial")
+    assert rep["status"] == "succeeded" and rep["backend"]["id"] == "moge_rgbd"
+    for mid in ("moge-2-vitl-normal", "moge-2-vits-normal"):
+        ctx.models.delete(mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, license_profile="commercial")
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["backend"]["id"] == "depth_anything_v2" and rep["backend"]["commercial_use"] is True
     assert rep["outputs"]["metric_scale"] is False
@@ -64,7 +68,8 @@ def test_commercial_profile_uses_commercial_safe_backend(ctx, rtx4080, photo):
 
 
 def test_commercial_profile_blocks_noncommercial_models(ctx, rtx4080, photo):
-    ctx.models.delete("depth-anything-v2-small")
+    for mid in ("depth-anything-v2-small", "moge-2-vitl-normal", "moge-2-vits-normal"):
+        ctx.models.delete(mid)
     job, rep, _ = run_job(ctx, rtx4080, photo, license_profile="commercial")
     assert rep["status"] == "failed" and rep["error"]["code"] == "no_backend"
     assert "non-commercial" in rep["error"]["message"]

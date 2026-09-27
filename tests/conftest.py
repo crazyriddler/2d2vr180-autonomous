@@ -49,6 +49,15 @@ class FakeRuntimes:
     def worker_env(self, rid):
         return dict(os.environ)
 
+    def status(self, rid):
+        return {"id": rid, "installed": True, "approx_size_gb": 1.0, "manifest_status": "fake", "description": rid}
+
+    def install(self, rid, log=print, cancel=None):
+        log(f"fake install {rid}")
+
+    def remove(self, rid):
+        pass
+
 
 def install_fake_model(mm, model_id, content=b"fake-weights"):
     e = mm.entries[model_id]
