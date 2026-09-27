@@ -53,10 +53,33 @@ def test_photo_end_to_end(ctx, rtx4080, photo):
     assert prog == sorted(prog) and prog[-1] == 1.0
 
 
+def test_commercial_profile_uses_commercial_safe_backend(ctx, rtx4080, photo):
+    job, rep, _ = run_job(ctx, rtx4080, photo, license_profile="commercial")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["id"] == "depth_anything_v2" and rep["backend"]["commercial_use"] is True
+    assert rep["outputs"]["metric_scale"] is False
+    assert any("relative" in w for w in rep["warnings"])
+    rejected = {r["backend"] for r in rep["selection"]["rejected"]}
+    assert {"sharp", "moge_rgbd"} <= rejected
+
+
 def test_commercial_profile_blocks_noncommercial_models(ctx, rtx4080, photo):
+    ctx.models.delete("depth-anything-v2-small")
     job, rep, _ = run_job(ctx, rtx4080, photo, license_profile="commercial")
     assert rep["status"] == "failed" and rep["error"]["code"] == "no_backend"
     assert "non-commercial" in rep["error"]["message"]
+
+
+def test_gpu_renderer_failure_falls_back_to_cpu(ctx, rtx4080, photo):
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", renderer="gpu", layouts=["sbs"])
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert any("GPU renderer failed" in w for w in rep["warnings"])
+    assert rep["outputs"]["vr180"]["stills"][0]["metadata"]["renderer"] == "cpu-reference"
+
+
+def test_cpu_mode_runs_without_gpu(ctx, no_gpu, photo):
+    job, rep, _ = run_job(ctx, no_gpu, photo, mode="fast", allow_cpu=True, renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
 
 
 def test_no_gpu_fails_cleanly(ctx, no_gpu, photo):
@@ -67,6 +90,9 @@ def test_no_gpu_fails_cleanly(ctx, no_gpu, photo):
 
 def test_missing_model(ctx, rtx4080, photo):
     ctx.models.delete("moge-2-vitl-normal")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality")
+    assert rep["status"] == "succeeded" and rep["backend"]["id"] == "depth_anything_v2"
+    ctx.models.delete("depth-anything-v2-small")
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality")
     assert rep["status"] == "failed"
     assert "moge-2-vitl-normal" in rep["error"]["message"]

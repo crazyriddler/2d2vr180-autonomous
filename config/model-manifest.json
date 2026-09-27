@@ -5,43 +5,94 @@
   "models": [
     {
       "id": "moge-2-vits-normal",
-      "display_name": "MoGe-2 ViT-S (normal) — fast monocular metric geometry",
+      "display_name": "MoGe-2 ViT-S (normal) \u2014 fast monocular metric geometry",
       "source": "https://huggingface.co/Ruicheng/moge-2-vits-normal",
-      "revision": "main (UNPINNED — resolve with scripts/resolve_models.py)",
+      "revision": "main (UNPINNED \u2014 resolve with scripts/resolve_models.py)",
       "license": "UNVERIFIED: code MIT (microsoft/MoGe); weight license must be read from the HF model card",
       "license_url": "https://huggingface.co/Ruicheng/moge-2-vits-normal",
       "commercial_use": false,
       "redistributable": false,
       "required_vram_gb": 2,
-      "backends": ["moge_rgbd"],
+      "backends": [
+        "moge_rgbd"
+      ],
       "requires_acceptance": true,
       "gated": false,
       "files": [
-        {"path": "model.pt", "url": "https://huggingface.co/Ruicheng/moge-2-vits-normal/resolve/main/model.pt", "sha256": null, "size_bytes": null}
+        {
+          "path": "model.pt",
+          "url": "https://huggingface.co/Ruicheng/moge-2-vits-normal/resolve/main/model.pt",
+          "sha256": null,
+          "size_bytes": null
+        }
       ],
       "notes": "Default Fast photo model. Treated as non-commercial until the weight license is verified."
     },
     {
       "id": "moge-2-vitl-normal",
-      "display_name": "MoGe-2 ViT-L (normal) — quality monocular metric geometry",
+      "display_name": "MoGe-2 ViT-L (normal) \u2014 quality monocular metric geometry",
       "source": "https://huggingface.co/Ruicheng/moge-2-vitl-normal",
-      "revision": "main (UNPINNED — resolve with scripts/resolve_models.py)",
+      "revision": "main (UNPINNED \u2014 resolve with scripts/resolve_models.py)",
       "license": "UNVERIFIED: code MIT (microsoft/MoGe); weight license must be read from the HF model card",
       "license_url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal",
       "commercial_use": false,
       "redistributable": false,
       "required_vram_gb": 5,
-      "backends": ["moge_rgbd"],
+      "backends": [
+        "moge_rgbd"
+      ],
       "requires_acceptance": true,
       "gated": false,
       "files": [
-        {"path": "model.pt", "url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal/resolve/main/model.pt", "sha256": null, "size_bytes": null}
+        {
+          "path": "model.pt",
+          "url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal/resolve/main/model.pt",
+          "sha256": null,
+          "size_bytes": null
+        }
       ],
       "notes": "Default Quality photo model and per-frame model for fixed-camera dynamic video."
     },
     {
+      "id": "depth-anything-v2-small",
+      "display_name": "Depth-Anything-V2 Small \u2014 commercial-safe relative depth",
+      "source": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf",
+      "revision": "main (UNPINNED \u2014 resolve with scripts/resolve_models.py)",
+      "license": "Apache-2.0 (Depth-Anything-V2-Small; upstream README)",
+      "license_url": "https://github.com/DepthAnything/Depth-Anything-V2/blob/a561b849ebae10a6f5ef49e26c83cbbcd36c71bf/README.md",
+      "commercial_use": true,
+      "redistributable": true,
+      "required_vram_gb": 2,
+      "backends": [
+        "depth_anything_v2"
+      ],
+      "requires_acceptance": true,
+      "gated": false,
+      "files": [
+        {
+          "path": "config.json",
+          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/main/config.json",
+          "sha256": null,
+          "size_bytes": null
+        },
+        {
+          "path": "preprocessor_config.json",
+          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/main/preprocessor_config.json",
+          "sha256": null,
+          "size_bytes": null
+        },
+        {
+          "path": "model.safetensors",
+          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/main/model.safetensors",
+          "sha256": null,
+          "size_bytes": null
+        }
+      ],
+      "notes": "Relative depth only (no metric scale). The Base/Large/Giant checkpoints are CC-BY-NC-4.0 and are not used."
+    },
+    {
       "id": "sharp",
-      "display_name": "Apple SHARP — single image to 3D Gaussians",
+      "display_name": "Apple SHARP \u2014 single image to 3D Gaussians",
       "source": "https://github.com/apple/ml-sharp",
       "revision": "sharp_2572gikvuh.pt (upstream commit aed6527499ef91cba3b54c18d49a870f25947190)",
       "license": "Apple Machine Learning Research Model License (research purposes only, non-commercial)",
@@ -49,17 +100,24 @@
       "commercial_use": false,
       "redistributable": false,
       "required_vram_gb": 6,
-      "backends": ["sharp"],
+      "backends": [
+        "sharp"
+      ],
       "requires_acceptance": true,
       "gated": false,
       "files": [
-        {"path": "sharp_2572gikvuh.pt", "url": "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt", "sha256": null, "size_bytes": null}
+        {
+          "path": "sharp_2572gikvuh.pt",
+          "url": "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt",
+          "sha256": null,
+          "size_bytes": null
+        }
       ],
       "notes": "Research-only. Never bundled. Enabled only when the user selects the research/personal license profile and accepts the Apple model license. Splatline reports ~2.5 GB."
     },
     {
       "id": "vggt-1b",
-      "display_name": "VGGT-1B (original checkpoint) — used by recon3d",
+      "display_name": "VGGT-1B (original checkpoint) \u2014 used by recon3d",
       "source": "https://huggingface.co/facebook/VGGT-1B",
       "revision": "main (UNPINNED)",
       "license": "Non-commercial (original VGGT-1B checkpoint; see upstream README 2025-07-29 note)",
@@ -67,7 +125,9 @@
       "commercial_use": false,
       "redistributable": false,
       "required_vram_gb": 10,
-      "backends": ["recon3d_video"],
+      "backends": [
+        "recon3d_video"
+      ],
       "requires_acceptance": true,
       "gated": false,
       "fetched_by_upstream": true,
@@ -76,7 +136,7 @@
     },
     {
       "id": "moge-2-vitl",
-      "display_name": "MoGe-2 ViT-L — metric alignment used by recon3d",
+      "display_name": "MoGe-2 ViT-L \u2014 metric alignment used by recon3d",
       "source": "https://huggingface.co/Ruicheng/moge-2-vitl",
       "revision": "main (UNPINNED)",
       "license": "UNVERIFIED (see HF model card)",
@@ -84,7 +144,9 @@
       "commercial_use": false,
       "redistributable": false,
       "required_vram_gb": 5,
-      "backends": ["recon3d_video"],
+      "backends": [
+        "recon3d_video"
+      ],
       "requires_acceptance": true,
       "gated": false,
       "fetched_by_upstream": true,

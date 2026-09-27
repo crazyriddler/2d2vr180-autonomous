@@ -113,6 +113,7 @@ class BackendContext:
     models: Any                  # ModelManager
     runtimes: Any                # RuntimeManager
     license_profile: str = "commercial"   # "commercial" | "personal_research"
+    allow_cpu: bool = False               # run cpu-capable backends without an NVIDIA GPU (slow)
 
 
 class Backend:
@@ -124,6 +125,7 @@ class Backend:
     maturity: str = "experimental"            # production | experimental | research | unsupported
     upstream: list[str] = []                  # names in config/upstream-lock.json
     commercial_use: bool = False
+    cpu_capable: bool = False                 # worker can fall back to CPU inference
     description: str = ""
 
     # ---------------------------------------------------------------- contract
@@ -142,12 +144,12 @@ class Backend:
         if self.runtime_id and not ctx.runtimes.is_installed(self.runtime_id):
             missing_rt = self.runtime_id
             reasons.append(f"runtime '{self.runtime_id}' not installed")
-        missing = [m for m in self.model_ids(options) if m in ctx.models.entries
-                   and not ctx.models.entries[m].extra.get("fetched_by_upstream")
-                   and not ctx.models.is_installed(m)]
+        missing = [m for m in self.model_ids(options) if m not in ctx.models.entries
+                   or (not ctx.models.entries[m].extra.get("fetched_by_upstream")
+                       and not ctx.models.is_installed(m))]
         if missing:
             reasons.append("models not installed: " + ", ".join(missing))
-        if hw is not None:
+        if hw is not None and not (self.cpu_capable and getattr(ctx, "allow_cpu", False)):
             need = self.min_vram_gb(options)
             gpu = hw.best_gpu
             if need and (gpu is None or gpu.total_mib < need * 1024):

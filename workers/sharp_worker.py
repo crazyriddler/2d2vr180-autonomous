@@ -18,14 +18,16 @@ def main(req):
 
     env = torch_env(torch)
     if not env["cuda_available"] and not req.get("allow_cpu", False):
-        emit("error", code="cuda_unavailable", message="CUDA is not available to PyTorch in this runtime.")
+        emit("error", code="cuda_unavailable",
+             message="CUDA is not available to PyTorch in this runtime (enable CPU mode in Settings to run slowly).")
         sys.exit(1)
     if not os.path.exists(req["checkpoint"]):
         emit("error", code="model_missing", message=f"SHARP checkpoint not found: {req['checkpoint']}")
         sys.exit(1)
     progress(0.05, "running SHARP")
     cmd = [sys.executable, "-c", "from sharp.cli import main_cli; main_cli()", "predict",
-           "-i", req["input_dir"], "-o", req["output_dir"], "-c", req["checkpoint"]]
+           "-i", req["input_dir"], "-o", req["output_dir"], "-c", req["checkpoint"],
+           "--device", "cuda" if env["cuda_available"] else "cpu"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
     tail = []
     for line in proc.stdout:

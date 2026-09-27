@@ -144,3 +144,25 @@ def pointmap_to_obj(points: np.ndarray, image: np.ndarray, mask: np.ndarray | No
         np.savetxt(f, np.repeat(faces, 2, axis=1)[:, [0, 1, 2, 3, 4, 5]], fmt="f %d/%d %d/%d %d/%d")
     return {"vertices": int(len(verts)), "faces": int(len(faces)), "texture": tex_name,
             "grid_step": step, "dropped_discontinuity_quads": int((~good).sum())}
+
+
+def disparity_to_points(disparity: np.ndarray, hfov_deg: float = 65.0, near_m: float = 1.0,
+                        far_m: float = 12.0, mask: np.ndarray | None = None) -> tuple[np.ndarray, "Camera"]:
+    """Relative (affine-invariant) disparity → camera-space points.
+
+    Networks such as Depth-Anything-V2 predict disparity up to an unknown
+    scale and shift. We map robust percentiles of the disparity onto an
+    assumed depth range [near_m, far_m]; the result is plausible but NOT
+    metric, which callers must report (metric_scale=False).
+    """
+    h, w = disparity.shape
+    d = disparity.astype(np.float64)
+    valid = np.isfinite(d) if mask is None else (np.isfinite(d) & mask.astype(bool))
+    lo, hi = np.percentile(d[valid], [2, 98]) if valid.any() else (0.0, 1.0)
+    dn = np.clip((d - lo) / max(hi - lo, 1e-9), 0, 1)
+    inv = dn * (1.0 / near_m - 1.0 / far_m) + 1.0 / far_m
+    z = 1.0 / inv
+    f = (w / 2) / np.tan(np.radians(hfov_deg) / 2)
+    ys, xs = np.mgrid[0:h, 0:w]
+    pts = np.stack([(xs + 0.5 - w / 2) / f * z, (ys + 0.5 - h / 2) / f * z, z], -1).astype(np.float32)
+    return pts, Camera(w, h, f, f, w / 2, h / 2)

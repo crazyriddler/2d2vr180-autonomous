@@ -67,12 +67,13 @@ def install_fake_model(mm, model_id, content=b"fake-weights"):
 @pytest.fixture
 def ctx(app_home, monkeypatch):
     from twod2vr180.backends.base import BackendContext
-    from twod2vr180.backends.photo import MoGeRGBDBackend
+    from twod2vr180.backends.photo import DepthAnythingBackend, MoGeRGBDBackend
     from twod2vr180.models import ModelManager
 
     monkeypatch.setattr(MoGeRGBDBackend, "worker_script", str(FAKE_WORKER))
+    monkeypatch.setattr(DepthAnythingBackend, "worker_script", str(FAKE_WORKER))
     mm = ModelManager()
-    for mid in ("moge-2-vits-normal", "moge-2-vitl-normal"):
+    for mid in ("moge-2-vits-normal", "moge-2-vitl-normal", "depth-anything-v2-small"):
         install_fake_model(mm, mid)
     return BackendContext(mm, FakeRuntimes(), "personal_research")
 

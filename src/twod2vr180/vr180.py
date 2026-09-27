@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from .render import RenderResult, render_equirect180, render_pinhole
+from .render import RenderResult, fill_disocclusions, render_equirect180, render_pinhole
 from .scene import Camera, GaussianScene
 
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
@@ -33,6 +33,7 @@ class StereoOptions:
     head_offset_m: float = 0.0          # move head back (+) from the source camera
     convergence_m: float | None = None  # flat mode: zero-parallax distance (default: median depth)
     crack_fill: bool = True
+    fill_holes: bool = True             # background-fill disocclusions (reported as interpolated)
 
     def validate(self) -> None:
         if self.layout not in ("sbs", "tb"):
@@ -81,41 +82,70 @@ def compose(left: np.ndarray, right: np.ndarray, layout: str) -> np.ndarray:
     return np.concatenate([left, right], axis=1 if layout == "sbs" else 0)
 
 
-def render_stereo(scene: GaussianScene, opts: StereoOptions, head_c2w: np.ndarray | None = None,
-                  ref_camera: Camera | None = None) -> StereoFrame:
+@dataclass
+class StereoPlan:
+    """Everything needed to render one stereo frame, independent of renderer."""
+    head: np.ndarray
+    eyes: tuple[np.ndarray, np.ndarray]
+    width: int
+    height: int
+    meta: dict
+    flat: dict | None = None  # {"fx","fy","cx_left","cx_right","cy"} for flat projection
+
+
+def plan_stereo(scene: GaussianScene, opts: StereoOptions, head_c2w: np.ndarray | None = None,
+                ref_camera: Camera | None = None) -> StereoPlan:
     opts.validate()
     head = np.eye(4) if head_c2w is None else np.asarray(head_c2w, np.float64).copy()
     if opts.head_offset_m:
         head[:3, 3] = head[:3, 3] - head[:3, 2] * opts.head_offset_m
-    lc2w, rc2w = eye_poses(head, opts.eye_separation_m)
+    eyes = eye_poses(head, opts.eye_separation_m)
     H = opts.eye_resolution
     meta: dict = {"layout": opts.layout, "projection": opts.projection, "eye_order": "left_first",
                   "eye_separation_m": opts.eye_separation_m, "head_offset_m": opts.head_offset_m,
                   "metric_scale": scene.metric_scale}
     if opts.projection == "equirect180":
-        W = H
-        left = render_equirect180(scene, lc2w, W, H, crack_fill=opts.crack_fill)
-        right = render_equirect180(scene, rc2w, W, H, crack_fill=opts.crack_fill)
         meta["output_fov_deg"] = {"horizontal": 180.0, "vertical": 180.0}
-    else:
-        cam = ref_camera or (scene.cameras[0] if scene.cameras else None)
-        if cam is None:
-            raise ValueError("flat stereo needs a reference camera (intrinsics)")
-        s = H / cam.height
-        W = int(round(cam.width * s / 2)) * 2
-        fx, fy, cx, cy = cam.fx * s, cam.fy * s, cam.cx * s, cam.cy * s
-        conv = opts.convergence_m
-        if conv is None:
-            z = ((scene.means.astype(np.float64) - head[:3, 3]) @ head[:3, :3])[:, 2]
-            conv = float(np.median(z[z > 0])) if (z > 0).any() else 2.0
-        shift = fx * opts.eye_separation_m / (2 * conv)
-        left = render_pinhole(scene, lc2w, W, H, fx, fy, cx - shift, cy, crack_fill=opts.crack_fill)
-        right = render_pinhole(scene, rc2w, W, H, fx, fy, cx + shift, cy, crack_fill=opts.crack_fill)
-        meta["output_fov_deg"] = {"horizontal": round(float(np.degrees(2 * np.arctan(W / (2 * fx)))), 2),
-                                  "vertical": round(float(np.degrees(2 * np.arctan(H / (2 * fy)))), 2)}
-        meta["convergence_m"] = conv
+        return StereoPlan(head, eyes, H, H, meta)
+    cam = ref_camera or (scene.cameras[0] if scene.cameras else None)
+    if cam is None:
+        raise ValueError("flat stereo needs a reference camera (intrinsics)")
+    s = H / cam.height
+    W = int(round(cam.width * s / 2)) * 2
+    fx, fy, cx, cy = cam.fx * s, cam.fy * s, cam.cx * s, cam.cy * s
+    conv = opts.convergence_m
+    if conv is None:
+        z = ((scene.means.astype(np.float64) - head[:3, 3]) @ head[:3, :3])[:, 2]
+        conv = float(np.median(z[z > 0])) if (z > 0).any() else 2.0
+    shift = fx * opts.eye_separation_m / (2 * conv)
+    meta["output_fov_deg"] = {"horizontal": round(float(np.degrees(2 * np.arctan(W / (2 * fx)))), 2),
+                              "vertical": round(float(np.degrees(2 * np.arctan(H / (2 * fy)))), 2)}
+    meta["convergence_m"] = conv
+    return StereoPlan(head, eyes, W, H, meta,
+                      {"fx": fx, "fy": fy, "cx_left": cx - shift, "cx_right": cx + shift, "cy": cy})
+
+
+def render_eyes_cpu(scene: GaussianScene, plan: StereoPlan, opts: StereoOptions) -> tuple[RenderResult, RenderResult]:
+    lc2w, rc2w = plan.eyes
+    if plan.flat is None:
+        return (render_equirect180(scene, lc2w, plan.width, plan.height, crack_fill=opts.crack_fill),
+                render_equirect180(scene, rc2w, plan.width, plan.height, crack_fill=opts.crack_fill))
+    f = plan.flat
+    return (render_pinhole(scene, lc2w, plan.width, plan.height, f["fx"], f["fy"], f["cx_left"], f["cy"],
+                           crack_fill=opts.crack_fill),
+            render_pinhole(scene, rc2w, plan.width, plan.height, f["fx"], f["fy"], f["cx_right"], f["cy"],
+                           crack_fill=opts.crack_fill))
+
+
+def finalize_stereo(scene: GaussianScene, opts: StereoOptions, plan: StereoPlan, left: RenderResult,
+                    right: RenderResult, renderer: str = "cpu-reference") -> StereoFrame:
+    meta = dict(plan.meta)
+    if opts.fill_holes:
+        left, right = fill_disocclusions(left), fill_disocclusions(right)
+    meta["renderer"] = renderer
+    meta["hole_filling"] = "background propagation (interpolated, not observed)" if opts.fill_holes else "off"
     meta["eye_resolution"] = [int(left.rgb.shape[1]), int(left.rgb.shape[0])]
-    meta["content_fov_deg"] = content_fov(scene, head)
+    meta["content_fov_deg"] = content_fov(scene, plan.head)
     meta["coverage"] = {"left": left.coverage_stats(), "right": right.coverage_stats()}
     unknown = max(meta["coverage"]["left"]["unknown_fraction"], meta["coverage"]["right"]["unknown_fraction"])
     cf = meta["content_fov_deg"]
@@ -130,6 +160,54 @@ def render_stereo(scene: GaussianScene, opts: StereoOptions, head_c2w: np.ndarra
     return StereoFrame(img, left, right, meta)
 
 
+def render_stereo(scene: GaussianScene, opts: StereoOptions, head_c2w: np.ndarray | None = None,
+                  ref_camera: Camera | None = None) -> StereoFrame:
+    plan = plan_stereo(scene, opts, head_c2w, ref_camera)
+    left, right = render_eyes_cpu(scene, plan, opts)
+    return finalize_stereo(scene, opts, plan, left, right)
+
+
+# ------------------------------------------------------------------ GPU views
+def gpu_views(plan: StereoPlan) -> list[dict]:
+    """Pinhole views a GPU splat renderer must produce for this frame:
+    5 cube faces per eye (VR180) or one view per eye (flat)."""
+    from .render import cube_face_views
+
+    if plan.flat is None:
+        face = max(64, plan.height // 2)
+        return [v for eye in plan.eyes for v in cube_face_views(eye, face)]
+    f = plan.flat
+    return [{"c2w": plan.eyes[0], "width": plan.width, "height": plan.height, "fx": f["fx"], "fy": f["fy"],
+             "cx": f["cx_left"], "cy": f["cy"]},
+            {"c2w": plan.eyes[1], "width": plan.width, "height": plan.height, "fx": f["fx"], "fy": f["fy"],
+             "cx": f["cx_right"], "cy": f["cy"]}]
+
+
+def assemble_gpu(plan: StereoPlan, rendered: list[dict]) -> tuple[RenderResult, RenderResult]:
+    """rendered: dicts with rgb (premultiplied uint8), alpha, depth, in gpu_views() order."""
+    from .render import cubemap_to_equirect180
+
+    def flat_result(r):
+        a = r["alpha"].astype(np.float32)
+        cov = a >= 0.5
+        rgb = np.zeros_like(r["rgb"])
+        col = r["rgb"].astype(np.float32) / np.maximum(a[..., None], 1e-3)
+        rgb[cov] = np.clip(col[cov], 0, 255).astype(np.uint8)
+        return RenderResult(rgb, cov, np.zeros_like(cov), np.where(cov, 3, 255).astype(np.uint8),
+                            np.where(cov, r["depth"].astype(np.float32), np.inf).astype(np.float32))
+
+    if plan.flat is not None:
+        return flat_result(rendered[0]), flat_result(rendered[1])
+    eyes = []
+    for e in range(2):
+        faces = rendered[5 * e:5 * e + 5]
+        eyes.append(cubemap_to_equirect180(np.stack([f["rgb"] for f in faces]),
+                                           np.stack([f["alpha"].astype(np.float32) for f in faces]),
+                                           np.stack([f["depth"].astype(np.float32) for f in faces]),
+                                           plan.height))
+    return eyes[0], eyes[1]
+
+
 def output_suffix(opts: StereoOptions) -> str:
     """File-name tags recognised by common VR players (DeoVR/Skybox/Quest)."""
     if opts.projection == "equirect180":
@@ -142,10 +220,17 @@ def save_stereo_image(frame: StereoFrame, opts: StereoOptions, out_dir: Path, st
     name = f"{stem}{output_suffix(opts)}"
     img_path = out_dir / f"{name}.jpg"
     Image.fromarray(frame.image).save(img_path, quality=95, subsampling=0)
-    mask = np.concatenate([frame.left.covered | frame.left.filled, frame.right.covered | frame.right.filled],
-                          axis=1 if opts.layout == "sbs" else 0)
+    def cov_img(r):  # 255 observed/inferred, 160 crack-filled, 90 hole-filled, 0 unknown
+        m = np.zeros(r.covered.shape, np.uint8)
+        if r.hole_filled is not None:
+            m[r.hole_filled] = 90
+        m[r.filled] = 160
+        m[r.covered] = 255
+        return m
+
+    mask = np.concatenate([cov_img(frame.left), cov_img(frame.right)], axis=1 if opts.layout == "sbs" else 0)
     mask_path = out_dir / f"{name}_coverage.png"
-    Image.fromarray((mask * 255).astype(np.uint8)).save(mask_path)
+    Image.fromarray(mask).save(mask_path)
     meta = dict(frame.metadata)
     meta.update({"image": img_path.name, "coverage_mask": mask_path.name,
                  "width": int(frame.image.shape[1]), "height": int(frame.image.shape[0])})

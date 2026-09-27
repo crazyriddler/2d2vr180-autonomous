@@ -25,8 +25,8 @@ import numpy as np
 from . import __version__
 from .backends.base import BackendContext, BackendError, BackendResult, JobCancelled, JobInput
 from .hardware import HardwareReport, probe
-from .media import (MediaError, analyze_video, classify_path, extract_frames, extract_frames_fps, find_ffmpeg,
-                    load_image, probe_video)
+from .media import (MediaError, analyze_video, classify_path, exif_hfov_deg, extract_frames, extract_frames_fps,
+                    find_ffmpeg, load_image)
 from .paths import app_paths, config_dir
 from .selector import select
 
@@ -49,6 +49,10 @@ class JobOptions:
     max_keyframes: int = 80
     license_profile: str = "personal_research"
     output_dir: str | None = None        # copy final outputs here too
+    fill_holes: bool = True              # background-fill stereo disocclusions (reported as interpolated)
+    renderer: str = "auto"               # auto | gpu | cpu  (VR180 splat renderer)
+    allow_cpu: bool = False              # allow CPU inference for cpu-capable backends (slow)
+    max_path_frames: int = 720           # cap for moving-camera VR180 videos
 
 
 class Job:
@@ -98,12 +102,14 @@ class JobRunner:
     def __init__(self, ctx: BackendContext, hardware: HardwareReport | None = None):
         self.ctx = ctx
         self.hw = hardware
+        self._hw: HardwareReport | None = hardware
 
     # ------------------------------------------------------------------ run
     def run(self, job: Job, on_event: EventFn | None = None) -> dict:
         job.dir.mkdir(parents=True, exist_ok=True)
         opts = job.options
         self.ctx.license_profile = opts.license_profile
+        self.ctx.allow_cpu = opts.allow_cpu
         timings: dict[str, float] = {}
         warnings: list[str] = []
         logs: list[str] = []
@@ -149,6 +155,7 @@ class JobRunner:
             # ---------------------------------------------------- hardware
             emit("progress", value=0.01, message="probing hardware")
             hw = self.hw or probe(job.dir)
+            self._hw = hw
             report["hardware"] = hw.to_dict()
             stage("hardware")
 
@@ -221,7 +228,10 @@ class JobRunner:
 
             # ---------------------------------------------------- reconstruct
             ref_index = report.get("processing", {}).get("reference_frame_index", 0)
-            bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index}
+            bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index,
+                     "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
+            if bopts["hfov_deg"]:
+                log(f"EXIF field of view: {bopts['hfov_deg']:.1f}°")
             backend.prepare(self.ctx, bopts)
             emit("progress", value=0.1, message=f"reconstructing with {backend.display_name}")
             result = backend.run(inp, self.ctx, bopts,
@@ -232,6 +242,7 @@ class JobRunner:
                                  "upstream": upstream_commits(backend.upstream),
                                  "runtime": backend.runtime_id,
                                  "worker_env": result.worker_env}
+            result.extra.setdefault("hfov_deg", bopts["hfov_deg"])
             report["models"] = result.models_used
             report["vram_peak_mib"] = result.vram_peak_mib
             warnings += result.warnings
@@ -338,9 +349,45 @@ class JobRunner:
                 "psnr_db": round(float(psnr), 2), "covered_fraction": round(float(cov.mean()), 4),
                 "renderer": "cpu-reference (opaque isotropic splats)", "resolution": [w, h]}
 
+    def _stereo_frames(self, job: Job, scene, scene_ply: Path, so, heads: list, emit, lo: float, hi: float,
+                       warnings: list, check_cancel, label: str):
+        """Yield StereoFrames for the given head poses, on the GPU (gsplat) when
+        requested and available, otherwise (or on failure) on the CPU."""
+        from .gpu_render import GpuSplatRenderer, gpu_renderer_available
+        from .vr180 import render_stereo
+
+        opts = job.options
+        n = len(heads)
+        use_gpu = False
+        if opts.renderer in ("auto", "gpu"):
+            ok, why = gpu_renderer_available(self.ctx, self._hw)
+            use_gpu = ok
+            if not ok and opts.renderer == "gpu":
+                warnings.append(f"GPU renderer unavailable ({why}); used the CPU reference renderer.")
+        if use_gpu:
+            gpu = GpuSplatRenderer(self.ctx, job.dir / "gpu_render")
+            done = 0
+            try:
+                for fr in gpu.frames(scene, scene_ply, so, heads,
+                                     lambda v, m: emit("progress", value=lo + (hi - lo) * v, message=f"{label}: {m}"),
+                                     lambda: job.cancelled):
+                    done += 1
+                    yield fr
+                return
+            except JobCancelled:
+                raise
+            except BackendError as e:
+                if done:
+                    raise
+                warnings.append(f"GPU renderer failed ({e.code}: {str(e)[:200]}); fell back to the CPU renderer.")
+        for i, h in enumerate(heads):
+            check_cancel()
+            emit("progress", value=lo + (hi - lo) * i / max(n, 1), message=f"{label} {i + 1}/{n}")
+            yield render_stereo(scene, so, head_c2w=h)
+
     def _vr180(self, job: Job, scene, inp: JobInput, result: BackendResult, kind: str, emit, warnings,
                check_cancel) -> dict:
-        from .vr180 import StereoOptions, encode_video, render_stereo, save_stereo_image, still_to_video
+        from .vr180 import StereoOptions, save_stereo_image, still_to_video
 
         opts = job.options
         vr_dir = job.dir / "export" / "vr180"
@@ -349,10 +396,10 @@ class JobRunner:
         head = scene.cameras[0].c2w if scene.cameras else np.eye(4)
         for i, layout in enumerate(opts.layouts):
             check_cancel()
-            emit("progress", value=0.75 + 0.05 * i, message=f"VR180 {layout.upper()} still")
-            so = StereoOptions(layout=layout, projection=opts.projection, eye_resolution=opts.eye_resolution,
-                               eye_separation_m=opts.eye_separation_m)
-            fr = render_stereo(scene, so, head_c2w=head)
+            so = self._stereo_options(opts, layout, opts.eye_resolution)
+            lo = 0.75 + 0.05 * i
+            fr = next(self._stereo_frames(job, scene, result.scene_ply, so, [head], emit, lo, lo + 0.05,
+                                          warnings, check_cancel, f"VR180 {layout.upper()} still"))
             saved = save_stereo_image(fr, so, vr_dir, job.input.stem)
             out["stills"].append(saved)
             note = fr.metadata.get("honesty_note")
@@ -367,34 +414,41 @@ class JobRunner:
         if kind == "video:static_camera_dynamic" and result.frame_scenes:
             out["videos"].append(self._dynamic_video(job, result, emit, check_cancel, ffmpeg))
         elif kind == "video:moving_camera" and result.cameras:
-            out["videos"].append(self._trajectory_video(job, scene, result, inp, emit, check_cancel, ffmpeg))
+            out["videos"].append(self._trajectory_video(job, scene, result, inp, emit, check_cancel, ffmpeg,
+                                                        warnings))
         return out
+
+    @staticmethod
+    def _stereo_options(opts: "JobOptions", layout: str, res: int, projection: str | None = None):
+        from .vr180 import StereoOptions
+
+        return StereoOptions(layout=layout, projection=projection or opts.projection, eye_resolution=res,
+                             eye_separation_m=opts.eye_separation_m, fill_holes=opts.fill_holes)
 
     def _dynamic_video(self, job, result, emit, check_cancel, ffmpeg) -> dict:
         from .backends.photo import load_pointmap
         from .rgbd import pointmap_to_gaussians
-        from .vr180 import StereoOptions, encode_video, render_stereo
+        from .vr180 import encode_video, output_suffix, render_stereo
 
         opts = job.options
-        so = StereoOptions(layout=opts.layouts[0], projection=opts.projection,
-                           eye_resolution=opts.video_eye_resolution, eye_separation_m=opts.eye_separation_m)
+        so = self._stereo_options(opts, opts.layouts[0], opts.video_eye_resolution)
         n = len(result.frame_scenes)
+        hfov = result.extra.get("hfov_deg")
         side = opts.video_eye_resolution
         w, h = (2 * side, side) if so.layout == "sbs" else (side, 2 * side)
         if so.projection == "flat":
-            pts, img, mask, cam = load_pointmap(result.frame_scenes[0])
+            pts, img, mask, cam = load_pointmap(result.frame_scenes[0], hfov)
             w0 = int(round(cam.width * side / cam.height / 2)) * 2
             w, h = (2 * w0, side) if so.layout == "sbs" else (w0, 2 * side)
 
         def frames():
+            # Each frame is a different scene, so the per-frame CPU renderer is used.
             for i, npz in enumerate(result.frame_scenes):
                 check_cancel()
-                pts, img, mask, cam = load_pointmap(npz)
-                sc = pointmap_to_gaussians(pts, img, mask, cam)
+                pts, img, mask, cam = load_pointmap(npz, hfov)
+                sc = pointmap_to_gaussians(pts, img, mask, cam, metric=result.metric_scale)
                 emit("progress", value=0.85 + 0.14 * i / n, message=f"VR180 video frame {i + 1}/{n}")
                 yield render_stereo(sc, so).image
-
-        from .vr180 import output_suffix
 
         meta = encode_video(frames(), w, h, job.options.dynamic_fps, job.dir / "export" / "vr180" /
                             f"{job.input.stem}_dynamic{output_suffix(so)}.mp4", so, ffmpeg)
@@ -402,26 +456,25 @@ class JobRunner:
                           "depth may flicker between frames")
         return meta
 
-    def _trajectory_video(self, job, scene, result, inp, emit, check_cancel, ffmpeg) -> dict:
+    def _trajectory_video(self, job, scene, result, inp, emit, check_cancel, ffmpeg, warnings) -> dict:
+        from .render import interpolate_poses
         from .scene import Camera
-        from .vr180 import StereoOptions, encode_video, output_suffix, render_stereo
+        from .vr180 import encode_video, output_suffix
 
         opts = job.options
-        so = StereoOptions(layout=opts.layouts[0], projection="equirect180",
-                           eye_resolution=opts.video_eye_resolution, eye_separation_m=opts.eye_separation_m)
+        so = self._stereo_options(opts, opts.layouts[0], opts.video_eye_resolution, "equirect180")
         cams = [Camera.from_dict(c) for c in result.cameras]
         side = opts.video_eye_resolution
         w, h = (2 * side, side) if so.layout == "sbs" else (side, 2 * side)
-        dur = (inp.analysis or {}).get("info", {}).get("duration_s") or len(cams)
-        fps = max(1.0, min(30.0, len(cams) / max(dur, 1e-3)))
-
-        def frames():
-            for i, c in enumerate(cams):
-                check_cancel()
-                emit("progress", value=0.85 + 0.14 * i / len(cams), message=f"VR180 path frame {i + 1}/{len(cams)}")
-                yield render_stereo(scene, so, head_c2w=c.c2w).image
-
-        meta = encode_video(frames(), w, h, fps, job.dir / "export" / "vr180" /
+        dur = (inp.analysis or {}).get("info", {}).get("duration_s") or len(cams) / 2
+        fps = 24.0
+        n_out = int(max(len(cams), min(opts.max_path_frames, round(dur * fps))))
+        heads = interpolate_poses([c.c2w for c in cams], n_out)
+        fps = max(1.0, n_out / max(dur, 1e-3))
+        frames = (fr.image for fr in self._stereo_frames(job, scene, result.scene_ply, so, heads, emit, 0.85,
+                                                          0.99, warnings, check_cancel, "VR180 camera path"))
+        meta = encode_video(frames, w, h, fps, job.dir / "export" / "vr180" /
                             f"{job.input.stem}_path{output_suffix(so)}.mp4", so, ffmpeg)
-        meta["method"] = "reconstructed scene rendered along the recovered camera path (keyframe poses)"
+        meta["method"] = ("reconstructed scene rendered along the recovered camera path "
+                          f"({len(cams)} keyframe poses interpolated to {n_out} frames)")
         return meta

@@ -34,7 +34,10 @@ def main(req):
         f = 0.9 * w
         pts = np.stack([(xs + 0.5 - w / 2) / f * z, (ys + 0.5 - h / 2) / f * z, z], -1).astype(np.float32)
         K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], np.float64)
-        np.savez_compressed(item["out"], points=pts, mask=np.ones((h, w), bool), intrinsics=K, image=arr)
+        if "model_dir" in req:  # Depth-Anything protocol: relative disparity only
+            np.savez_compressed(item["out"], disparity=(1.0 / z).astype(np.float32), image=arr)
+        else:
+            np.savez_compressed(item["out"], points=pts, mask=np.ones((h, w), bool), intrinsics=K, image=arr)
         progress((i + 1) / len(req["images"]), f"fake geometry {i + 1}")
     emit("result", outputs=[it["out"] for it in req["images"]], vram_peak_mib=None, model="fake", metric=True)
 

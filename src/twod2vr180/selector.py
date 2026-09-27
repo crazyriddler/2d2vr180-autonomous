@@ -17,10 +17,13 @@ MODES = ("auto", "quality", "fast")
 
 # Preference order per input kind and mode (first available wins).
 PREFERENCES: dict[str, dict[str, list[str]]] = {
-    "photo": {"auto": ["sharp", "moge_rgbd"], "quality": ["sharp", "moge_rgbd"], "fast": ["moge_rgbd", "sharp"]},
-    "video:static_scene": {"auto": ["sharp", "moge_rgbd"], "quality": ["sharp", "moge_rgbd"],
-                           "fast": ["moge_rgbd", "sharp"]},
-    "video:static_camera_dynamic": {m: ["moge_rgbd"] for m in MODES},
+    "photo": {"auto": ["sharp", "moge_rgbd", "depth_anything_v2"],
+              "quality": ["sharp", "moge_rgbd", "depth_anything_v2"],
+              "fast": ["moge_rgbd", "depth_anything_v2", "sharp"]},
+    "video:static_scene": {"auto": ["sharp", "moge_rgbd", "depth_anything_v2"],
+                           "quality": ["sharp", "moge_rgbd", "depth_anything_v2"],
+                           "fast": ["moge_rgbd", "depth_anything_v2", "sharp"]},
+    "video:static_camera_dynamic": {m: ["moge_rgbd", "depth_anything_v2"] for m in MODES},
     "video:moving_camera": {"auto": ["recon3d_video"], "quality": ["recon3d_video"], "fast": ["recon3d_video"]},
 }
 

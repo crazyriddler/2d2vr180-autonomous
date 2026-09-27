@@ -40,6 +40,7 @@ class RuntimeSpec:
     approx_size_gb: float | None = None
     status: str = "unverified"
     smoke_test: str = ""
+    network_at_inference: bool = False    # recon3d fetches its own checkpoints on first use
 
     @classmethod
     def from_dict(cls, d: dict) -> "RuntimeSpec":
@@ -116,6 +117,12 @@ class RuntimeManager:
         env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         env.pop("PYTHONPATH", None)
         env.pop("PYTHONHOME", None)
+        spec = self.specs.get(rid)
+        if spec is not None and not spec.network_at_inference:
+            # Weights are loaded from the model manager's directory: forbid hub access so
+            # that inference is provably local.
+            env["HF_HUB_OFFLINE"] = "1"
+            env["TRANSFORMERS_OFFLINE"] = "1"
         return env
 
     def install(self, rid: str, log: Callable[[str], None] = print,
@@ -164,7 +171,8 @@ class RuntimeManager:
         if spec.smoke_test:
             r = subprocess.run([py, "-c", spec.smoke_test], capture_output=True, text=True,
                                env=self.worker_env(rid), creationflags=_NO_WINDOW)
-            smoke = {"ok": r.returncode == 0, "stderr": r.stderr[-2000:]}
+            smoke = {"ok": r.returncode == 0, "stdout": r.stdout[-500:], "stderr": r.stderr[-2000:],
+                     "cuda": "cuda True" in r.stdout}
             log(f"smoke test: {'OK' if smoke['ok'] else 'FAILED'}\n{r.stderr[-2000:]}")
         self._marker(rid).write_text(json.dumps({
             "spec_fingerprint": self._fingerprint(rid),
