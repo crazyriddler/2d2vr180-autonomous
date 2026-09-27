@@ -92,5 +92,34 @@
       "status": "pass",
       "evidence": "Interrupted/resumed download, corrupted model, pinned-hash mismatch, missing model, low disk (model manager), no GPU, invalid media, cancelled job: automated tests + scripts/acceptance.py."
     }
-  ]
+  ],
+  "integration_cpu": {
+    "environment": "GitHub windows-latest (no GPU), packaged 2d2vr180-cli.exe, runtimes installed by bundled uv, models downloaded via the model manager (pinned SHA256 verified)",
+    "run": "https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36348165737",
+    "input": "NASA astronaut photo (public domain, scikit-image) 512x512; synthetic fixed-camera video",
+    "results": {
+      "depth_anything_v2 (CPU)": {
+        "status": "succeeded",
+        "gaussians": 251514,
+        "source_view_psnr_db": 24.01,
+        "time_s": 20
+      },
+      "sharp (CPU)": {
+        "status": "succeeded",
+        "gaussians": 1179648,
+        "source_view_psnr_db": 27.9,
+        "time_s": 354
+      },
+      "auto, commercial profile (CPU)": {
+        "status": "succeeded",
+        "backend": "depth_anything_v2"
+      },
+      "moge_rgbd (CPU)": {
+        "status": "failed: console encoding bug (fixed in this commit series, re-verified in the next run)"
+      },
+      "fixed-camera video (CPU)": {
+        "status": "failed: same console encoding bug"
+      }
+    }
+  }
 }
