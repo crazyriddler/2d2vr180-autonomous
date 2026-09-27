@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2D2VR180 — splat viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111318; color: #e6e8ee; font: 14px system-ui, sans-serif; overflow: hidden; }
+  #help { position: fixed; left: 16px; top: 16px; max-width: 460px; background: rgba(20,22,28,.85); padding: 12px 14px;
+          border-radius: 10px; line-height: 1.45; z-index: 10; }
+  #help b { color: #fff; }
+  #help button { margin-top: 6px; background: #343a46; color: #e6e8ee; border: 1px solid #434a58; border-radius: 6px; padding: 4px 10px; }
+  #err { color: #ff8a80; }
+</style>
+<script type="importmap">
+  { "imports": { "three": "./three.module.js", "gaussian-splats-3d": "./gaussian-splats-3d.module.js" } }
+</script>
+</head>
+<body>
+<div id="help">
+  <b id="title">2D2VR180 splat viewer</b><br>
+  Mouse: drag = orbit · right-drag = pan · wheel = zoom.<br>
+  <b>VR</b>: connect your headset to this PC (Quest Link / Air Link / Virtual Desktop / SteamVR), then press
+  <b>ENTER VR</b> at the bottom of the page. You start where the original camera stood.<br>
+  Only what the camera saw exists in 3D — you will see empty space behind objects and outside the photo.
+  <div id="err"></div>
+  <button onclick="this.parentElement.style.display='none'">Hide</button>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import * as GaussianSplats3D from 'gaussian-splats-3d';
+
+const q = new URLSearchParams(location.search);
+const scene = q.get('scene') || 'scene.ply';
+const depth = Math.max(parseFloat(q.get('depth') || '2'), 0.05);
+document.getElementById('title').textContent = '2D2VR180 — ' + (q.get('name') || scene);
+
+// Scenes are stored in OpenCV camera coordinates (x right, y down, z forward);
+// rotating 180° about X maps them to three.js (y up, camera looks down -z).
+const viewer = window.viewer = new GaussianSplats3D.Viewer({
+  cameraUp: [0, 1, 0],
+  initialCameraPosition: [0, 0, 0.001],
+  initialCameraLookAt: [0, 0, -depth],
+  webXRMode: q.get('xr') === '0' ? GaussianSplats3D.WebXRMode.None : GaussianSplats3D.WebXRMode.VR,
+  sharedMemoryForWorkers: false,     // no cross-origin isolation headers needed
+  gpuAcceleratedSort: false,
+  sphericalHarmonicsDegree: 1,
+  sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
+  logLevel: q.get('debug') ? GaussianSplats3D.LogLevel.Debug : GaussianSplats3D.LogLevel.None,
+});
+viewer.addSplatScene(scene, {
+  rotation: [1, 0, 0, 0],
+  splatAlphaRemovalThreshold: 5,
+  showLoadingUI: true,
+  progressiveLoad: false,
+}).then(() => viewer.start())
+  .catch((e) => { document.getElementById('err').textContent = 'Could not load the scene: ' + e; });
+</script>
+</body>
+</html>

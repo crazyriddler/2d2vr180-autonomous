@@ -7,6 +7,10 @@ on:
         description: "Also run the real-model integration jobs (runtime install, model download, CPU inference)"
         type: boolean
         default: false
+      release_tag:
+        description: "Create a release with this tag (e.g. v1.0.0-rc1) from the dispatched commit; -rc tags become pre-releases"
+        type: string
+        default: ""
   pull_request:
   push:
     branches: [main]
@@ -25,10 +29,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: System libraries for Qt offscreen
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1
+      - name: System libraries for Qt (offscreen + Xvfb/Mesa OpenGL)
+        run: >
+          sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 xvfb
+          libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0
+          libxcb-xinerama0 libxcb-shape0 libgl1-mesa-dri
       - run: pip install -r requirements-dev.txt
       - run: QT_QPA_PLATFORM=offscreen python -m pytest -q
+      - name: GUI tests with real OpenGL (Mesa llvmpipe on Xvfb)
+        run: QT_QPA_PLATFORM=xcb xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q tests/integration/test_gui.py
 
   build-windows:
     # Hosted runners have no NVIDIA GPU: this job proves packaging, launch and
@@ -65,11 +74,13 @@ jobs:
     # v*-rc* tags publish a GitHub PRE-release (for owner testing on the target GPU);
     # any other v* tag creates a DRAFT release. Both require docs/status/gates.json:
     # every mandatory gate must pass, or (release candidates only) carry an explicit waiver.
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: [test-linux, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - name: Acceptance gates
@@ -77,7 +88,10 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, sys
-          rc = "-rc" in os.environ["GITHUB_REF_NAME"]
+          tag = os.environ["RELEASE_TAG"]
+          if not tag.startswith("v"):
+              print(f"release tag must start with 'v': {tag}"); sys.exit(1)
+          rc = "-rc" in tag
           g = json.load(open("docs/status/gates.json"))
           bad = [f"{x['id']}: {x['status']}" for x in g["gates"]
                  if x["mandatory"] and x["status"] != "pass" and not (rc and x.get("waived_for_rc"))]
@@ -94,6 +108,9 @@ jobs:
           path: release
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: 2D2VR180 ${{ env.RELEASE_TAG }}
           prerelease: ${{ steps.gates.outputs.prerelease == 'true' }}
           draft: ${{ steps.gates.outputs.prerelease != 'true' }}
           files: release/*

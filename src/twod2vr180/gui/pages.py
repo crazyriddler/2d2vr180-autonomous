@@ -48,6 +48,54 @@ def open_path(p: str | Path) -> None:
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
 
 
+VR_HELP = ("<h3>View the 3D splat in VR</h3>"
+           "<p>The scene opens in a WebXR viewer in <b>Microsoft Edge</b> (or Chrome) on this PC. "
+           "Nothing is uploaded: the page is served only to this computer (127.0.0.1).</p>"
+           "<ol><li>Connect your headset to this PC: <b>Quest Link</b> (cable), <b>Air Link</b>, "
+           "<b>Virtual Desktop</b> or <b>SteamVR</b>.</li>"
+           "<li>In the page that opens, press <b>ENTER VR</b> at the bottom.</li>"
+           "<li>You start where the original camera stood. Move your head to look around the 3D scene.</li></ol>"
+           "<p>Without a headset the same page works with the mouse (drag, right-drag, wheel).</p>"
+           "<p><i>A single photo only contains what the camera saw: step sideways and you will see empty space "
+           "behind objects.</i> For watching on a standalone headset, use the VR180 video instead "
+           "(Results → Play VR180 video; copy the _180_LR.mp4 to the headset).</p>")
+
+
+def open_in_vr(parent, ply: Path, scene=None) -> None:
+    """Serve the scene to the bundled WebXR viewer and open it in a WebXR-capable browser."""
+    import subprocess
+    import sys
+
+    from ..scene import load_scene
+    from ..vr_server import get_server, scene_depth
+
+    win = parent.window()
+    settings = getattr(win, "settings", None)
+    if settings is not None and not getattr(settings, "vr_help_seen", False):
+        box = QMessageBox(parent)
+        box.setWindowTitle("View in VR")
+        box.setTextFormat(Qt.RichText)
+        box.setText(VR_HELP)
+        box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        if box.exec() != QMessageBox.Ok:
+            return
+        settings.vr_help_seen = True
+        settings.save()
+    try:
+        scene = scene if scene is not None else load_scene(Path(ply))
+        url = get_server().share(Path(ply), scene_depth(scene), Path(ply).parent.parent.name)
+    except Exception as e:  # noqa: BLE001 - surfaced to the user
+        QMessageBox.warning(parent, APP_NAME, f"Cannot open the VR viewer: {e}")
+        return
+    if sys.platform == "win32":  # Edge ships with Windows and supports WebXR (OpenXR runtimes)
+        try:
+            subprocess.Popen(["cmd", "/c", "start", "", "msedge", url], creationflags=0x08000000)
+            return
+        except OSError:
+            pass
+    QDesktopServices.openUrl(QUrl(url))
+
+
 # ============================================================ Create
 class DropZone(QLabel):
     filesDropped = Signal(list)
@@ -331,20 +379,22 @@ class ResultsPage(QWidget):
         rv.addWidget(self.preview, 3)
         grid = QGridLayout()
         self.btn = {}
-        for i, (key, label) in enumerate([("explore", "Explore in 3D"), ("vrimg", "Open VR180 image"),
-                                          ("vrvid", "Play VR180 video"), ("folder", "Open folder"),
-                                          ("export", "Copy results to…"), ("delete", "Delete")]):
+        for i, (key, label) in enumerate([("explore", "Explore in 3D"), ("vr", "View in VR (6DoF)"),
+                                          ("vrimg", "Open VR180 image"), ("vrvid", "Play VR180 video"),
+                                          ("folder", "Open folder"), ("export", "Copy results to…"),
+                                          ("delete", "Delete")]):
             b = QPushButton(label)
             b.clicked.connect(lambda _=False, k=key: self.action(k))
-            grid.addWidget(b, i // 3, i % 3)
+            grid.addWidget(b, i // 4, i % 4)
             self.btn[key] = b
         rv.addLayout(grid)
         self.details = QTextBrowser()
         self.details.setOpenExternalLinks(True)
         rv.addWidget(self.details, 2)
-        rv.addWidget(note("Headset tip: copy the <code>*_180_LR.mp4</code> file to your headset (e.g. Quest: "
-                          "USB → Movies). Players that read VR180 metadata switch to 180° stereo automatically; "
-                          "otherwise choose 180° + side-by-side (or top/bottom) in the player."))
+        rv.addWidget(note("<b>Headset, two ways:</b> <b>View in VR</b> lets you look around the 3D splat with a "
+                          "PC-connected headset (Quest Link / Air Link / SteamVR). For a standalone headset, copy the "
+                          "<code>vr180\\*_180_LR.mp4</code> to it (Quest: USB → Movies) and play it as 180° "
+                          "side-by-side. Each result folder has a README.txt explaining every file."))
         split.addWidget(right)
         split.setSizes([380, 700])
         v.addWidget(split, 1)
@@ -410,6 +460,7 @@ class ResultsPage(QWidget):
         else:
             self.preview.setText("(no preview)")
         self.btn["explore"].setEnabled(bool(out.get("scene_ply")))
+        self.btn["vr"].setEnabled(bool(out.get("scene_ply")))
         self.btn["vrimg"].setEnabled(bool(vr.get("stills")))
         self.btn["vrvid"].setEnabled(bool(vr.get("videos")))
         html = [f"<h3>{Path((rep.get('input') or {}).get('path', '')).name}</h3>",
@@ -446,6 +497,8 @@ class ResultsPage(QWidget):
         vr = out.get("vr180") or {}
         if key == "explore" and out.get("scene_ply"):
             self.exploreScene.emit(out["scene_ply"])
+        elif key == "vr" and out.get("scene_ply"):
+            open_in_vr(self, Path(out["scene_ply"]))
         elif key == "vrimg" and vr.get("stills"):
             open_path(vr["stills"][0]["image"])
         elif key == "vrvid" and vr.get("videos"):
@@ -819,6 +872,10 @@ class ViewerPage(QWidget):
         ob = QPushButton("Open .ply / .splat…")
         ob.clicked.connect(self.open_file)
         head.addWidget(ob)
+        self.xr_btn = QPushButton("View in VR (6DoF)")
+        self.xr_btn.clicked.connect(lambda: open_in_vr(self, self.path, self.viewer.scene) if self.path else None)
+        self.xr_btn.setEnabled(False)
+        head.addWidget(self.xr_btn)
         self.vr_btn = QPushButton("Make VR180 from this scene")
         self.vr_btn.clicked.connect(self.make_vr)
         self.vr_btn.setEnabled(False)
@@ -844,6 +901,7 @@ class ViewerPage(QWidget):
         self.viewer.set_scene(scene)
         self.path = path
         self.vr_btn.setEnabled(True)
+        self.xr_btn.setEnabled(True)
         return True
 
     def make_vr(self):

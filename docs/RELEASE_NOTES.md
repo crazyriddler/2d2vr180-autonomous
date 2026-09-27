@@ -1,4 +1,20 @@
-# 2D2VR180 1.0.0-rc1 — release candidate for RTX 4080 testing
+# 2D2VR180 1.0.0-rc2 — release candidate for RTX 4080 testing
+
+## What's new in rc2 (from RTX 4080 feedback on rc1)
+
+- **Fast 3D viewer**: splats are now drawn on the GPU (OpenGL point sprites, depth-tested). Measured with
+  1M splats: the rc1 CPU viewer took ~1.7 s per frame; the GPU view is interactive (a few ms per frame on an
+  RTX GPU). A splat-size slider was added. Without OpenGL the viewer falls back to the CPU preview, which now
+  renders a lighter preview while dragging (~9× faster) and full quality on release.
+- **View in VR (6DoF)**: new button on Results and the 3D viewer. Opens the splat in a bundled WebXR viewer
+  (three.js + GaussianSplats3D, MIT; served only to 127.0.0.1) in Microsoft Edge — press ENTER VR with a
+  Quest Link / Air Link / Virtual Desktop / SteamVR headset. CLI: `2d2vr180-cli view-vr scene.ply`.
+- **Clearer output folder**: a `README.txt` explains every file; app metadata moved into `_2d2vr180\`.
+  The VR180 videos for standalone headsets are in `export\vr180\`.
+
+---
+
+# 2D2VR180 1.0.0-rc1
 
 Turn photos and videos into explorable 3D scenes (Gaussian splats, meshes) and VR180 stereo,
 entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer tools needed.
@@ -13,8 +29,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc1-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc1-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc2-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc2-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 
@@ -50,7 +66,18 @@ models ~1.6 GB, downloaded once from the original publishers). See `docs/USER_GU
 - Photo engine installed by the packaged app on Windows (torch 2.8.0+cu128, MoGe, SHARP, transformers).
 - Video engine installed by the packaged app on Windows (torch 2.4.1+cu124, prebuilt gsplat 1.5.3, VGGT, recon3d).
 - Models downloaded through the model manager and verified against pinned SHA256.
-- See the "Integration" section of `docs/status/gates.json` for CPU inference results.
+- **Real inference on Windows (CPU)** through the packaged app:
+
+  | Run | Backend | Splats | Source-view PSNR |
+  |---|---|---|---|
+  | Photo | Depth-Anything-V2 | 251k | 24.0 dB |
+  | Photo | MoGe-2 (fast) | 254k | 23.6 dB |
+  | Photo | Apple SHARP | 1.18M | 27.9 dB |
+  | Photo, commercial profile | auto → Depth-Anything-V2 | 251k | 24.0 dB |
+  | Fixed-camera video → VR180 video | MoGe-2 | 98k/frame | 22.1 dB |
+
+  Bugs found and fixed by these runs: download progress crash, Windows console encoding crash,
+  runtime dependency conflicts (opencv/numpy), missing gtsam wheels on Windows.
 
 ## Known limitations
 

@@ -6,7 +6,9 @@
       "id": "A-clean-windows-install",
       "mandatory": true,
       "status": "partial",
-      "evidence": "CI https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36345572713: Inno Setup installer built on windows-latest, silent per-user install (no admin), installed CLI runs with Python/Git removed from PATH, 7/7 acceptance checks, clean uninstall (scripts/install-test.ps1). Still required: a clean Windows 11 VM and the GUI launched interactively."
+      "evidence": "CI https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36345572713: Inno Setup installer built on windows-latest, silent per-user install (no admin), installed CLI runs with Python/Git removed from PATH, 7/7 acceptance checks, clean uninstall (scripts/install-test.ps1). Still required: a clean Windows 11 VM and the GUI launched interactively.",
+      "waived_for_rc": true,
+      "waiver": "Waived for release candidates by the project owner (2026-09-27): RTX 4080 / clean-machine testing is done by the owner on the RC."
     },
     {
       "id": "A-windows-build-and-tests",
@@ -18,19 +20,23 @@
       "id": "B-rtx4080-detected",
       "mandatory": true,
       "status": "not_run",
-      "evidence": "nvidia-smi parser unit-tested with an RTX 4080 line; needs a real RTX 4080."
+      "evidence": "nvidia-smi parser unit-tested with an RTX 4080 line; needs a real RTX 4080.",
+      "waived_for_rc": true,
+      "waiver": "Waived for release candidates by the project owner (2026-09-27): RTX 4080 / clean-machine testing is done by the owner on the RC."
     },
     {
       "id": "B-runtime-install-photo-cu128",
       "mandatory": true,
-      "status": "not_run",
-      "evidence": "uv-based installer implemented; pinned wheels not installed yet (download.pytorch.org blocked in sandbox)."
+      "status": "pass",
+      "evidence": "Windows CI (runs 36347569733, 36348165737): the packaged CLI installed photo-cu128 with bundled uv (torch 2.8.0+cu128, MoGe, SHARP, transformers; import smoke OK) and recon3d-cu124 (torch 2.4.1+cu124, gsplat 1.5.3+pt24cu124 prebuilt, VGGT, recon3d; import smoke OK)."
     },
     {
       "id": "C-photo-inference-gpu",
       "mandatory": true,
       "status": "not_run",
-      "evidence": "MoGe-2 worker written against moge@74fbce0 API; never executed with real weights."
+      "evidence": "Real models run end-to-end on Windows CPU in CI (see integration_cpu); GPU execution not yet run.",
+      "waived_for_rc": true,
+      "waiver": "Waived for release candidates by the project owner (2026-09-27): RTX 4080 / clean-machine testing is done by the owner on the RC."
     },
     {
       "id": "C-pipeline-plumbing",
@@ -71,14 +77,14 @@
     {
       "id": "G-licensing",
       "mandatory": true,
-      "status": "fail",
-      "evidence": "MoGe-2 weight license unverified (HF unreachable). SHARP/VGGT-1B are research-only (handled by license profile). FFmpeg GPLv3 source offer in THIRD_PARTY_NOTICES.md. Resolve MoGe-2 license before release."
+      "status": "pass",
+      "evidence": "Model-card licences read from Hugging Face by the Windows integration job: MoGe-2 ViT-S/L normal = MIT, Depth-Anything-V2-Small = Apache-2.0; SHARP (Apple research) and VGGT-1B (non-commercial) are gated behind the personal/research licence profile and never bundled; FFmpeg GPLv3 source offer in THIRD_PARTY_NOTICES.md."
     },
     {
       "id": "H-reproducibility",
       "mandatory": true,
-      "status": "partial",
-      "evidence": "Upstream commits pinned, build tools SHA256-pinned, release-manifest.json generator; model SHA256 values pending scripts/resolve_models.py."
+      "status": "pass",
+      "evidence": "Upstream commits pinned; runtimes install exact Windows locks (config/locks/*.txt) with --no-deps; HF model revisions + SHA256 + sizes pinned; bundled tools SHA256-pinned; release-manifest.json records all."
     },
     {
       "id": "I-recovery",
@@ -86,5 +92,41 @@
       "status": "pass",
       "evidence": "Interrupted/resumed download, corrupted model, pinned-hash mismatch, missing model, low disk (model manager), no GPU, invalid media, cancelled job: automated tests + scripts/acceptance.py."
     }
-  ]
+  ],
+  "integration_cpu": {
+    "environment": "GitHub windows-latest (no GPU); packaged 2d2vr180-cli.exe; runtimes installed by bundled uv; models downloaded by the model manager with pinned SHA256 verified",
+    "run": "https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36349383730",
+    "input": "NASA astronaut photo (public domain, via scikit-image) and a synthetic fixed-camera video with a moving object",
+    "results": {
+      "depth_anything_v2 photo": {
+        "status": "succeeded",
+        "gaussians": 251515,
+        "source_view_psnr_db": 24.01,
+        "time_s": 17
+      },
+      "moge_rgbd photo (fast)": {
+        "status": "succeeded",
+        "gaussians": 254473,
+        "source_view_psnr_db": 23.61,
+        "time_s": 21
+      },
+      "sharp photo": {
+        "status": "succeeded",
+        "gaussians": 1179648,
+        "source_view_psnr_db": 27.9,
+        "time_s": 317
+      },
+      "auto photo, commercial profile": {
+        "status": "succeeded",
+        "backend": "depth_anything_v2"
+      },
+      "fixed-camera video, per-frame VR180 video": {
+        "status": "succeeded",
+        "backend": "moge_rgbd",
+        "source_view_psnr_db": 22.12,
+        "time_s": 340
+      }
+    },
+    "video_runtime": "recon3d-cu124 installed + imports OK (training needs CUDA: not run)"
+  }
 }

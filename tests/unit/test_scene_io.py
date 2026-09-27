@@ -32,7 +32,8 @@ def test_ply_roundtrip(tmp_path):
     np.testing.assert_allclose(r.sh_rest, s.sh_rest)
     assert r.metric_scale and r.cameras[0].fx == 500
     assert r.validate() == []
-    assert (p.with_suffix(".meta.json")).exists()
+    assert (p.parent / "_2d2vr180" / "s.meta.json").exists()
+    assert not p.with_suffix(".meta.json").exists()  # user-facing folder stays clean
 
 
 def test_ply_header_is_standard_3dgs(tmp_path):
@@ -87,3 +88,14 @@ def test_not_a_ply(tmp_path):
     p.write_text("hello")
     with pytest.raises(SceneError):
         read_gaussian_ply(p)
+
+
+def test_legacy_sidecars_next_to_ply_still_read(tmp_path):
+    import shutil
+
+    s = make_scene(n=20, sh=False)
+    p = write_gaussian_ply(s, tmp_path / "s.ply")
+    shutil.move(tmp_path / "_2d2vr180" / "s.meta.json", tmp_path / "s.meta.json")
+    shutil.move(tmp_path / "_2d2vr180" / "s.provenance.npy", tmp_path / "s.provenance.npy")
+    r = read_gaussian_ply(p)
+    assert r.metric_scale and (r.provenance == INFERRED).all()
