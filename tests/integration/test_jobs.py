@@ -179,3 +179,22 @@ def test_moving_camera_multiview_path_video(ctx, rtx4080, videos, monkeypatch):
     assert path and path[0]["frames"] >= len(rep["input"]["analysis"]["keyframes"])
     assert "interpolated" in path[0]["method"]
     assert path[0]["spherical_metadata"]["projection"] == "equirect180"
+
+
+def test_job_state_is_final_only_after_report_is_written(ctx, rtx4080, photo, monkeypatch):
+    """Regression (Windows CI): the GUI saw state 'succeeded' before run_report.json existed."""
+    import twod2vr180.jobs as jobs_mod
+
+    job = Job(photo, JobOptions(mode="fast", eye_resolution=128, still_video_seconds=0.5, layouts=["sbs"]))
+    seen = []
+    real_write = Path.write_text
+
+    def spy(self, *a, **k):
+        if self.name == "run_report.json":
+            seen.append(job.state)  # state at the moment the report is written
+        return real_write(self, *a, **k)
+
+    monkeypatch.setattr(jobs_mod.Path, "write_text", spy)
+    rep = JobRunner(ctx, rtx4080).run(job)
+    assert rep["status"] == "succeeded"
+    assert seen == ["running"] and job.state == "succeeded" and job.report is rep

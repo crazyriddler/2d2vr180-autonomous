@@ -182,6 +182,7 @@ class JobRunner:
 
         result: BackendResult | None = None
         job.state = "running"
+        final_state = "failed"
         try:
             # ---------------------------------------------------- hardware
             emit("progress", value=0.01, message="probing hardware")
@@ -313,22 +314,22 @@ class JobRunner:
                 shutil.copytree(job.dir / "export", dest, dirs_exist_ok=True)
                 report["outputs"]["copied_to"] = str(dest)
             report["status"] = "succeeded"
-            job.state = "succeeded"
+            final_state = "succeeded"
             emit("progress", value=1.0, message="done")
         except JobCancelled as e:
             report["status"] = "cancelled"
             report["error"] = {"code": "cancelled", "message": str(e)}
-            job.state = "cancelled"
+            final_state = "cancelled"
         except (BackendError, MediaError) as e:
             report["status"] = "failed"
             report["error"] = {"code": getattr(e, "code", "bad_input" if isinstance(e, MediaError) else "error"),
                                "message": str(e)}
-            job.state = "failed"
+            final_state = "failed"
         except Exception as e:  # noqa: BLE001 - job boundary: never crash the app
             report["status"] = "failed"
             report["error"] = {"code": "internal_error", "message": f"{type(e).__name__}: {e}",
                                "traceback": traceback.format_exc()[-4000:]}
-            job.state = "failed"
+            final_state = "failed"
         finally:
             if result is None and "backend" not in report:
                 report["backend"] = None
@@ -338,6 +339,9 @@ class JobRunner:
             report["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             report["build"] = {"python": platform.python_version(), "platform": platform.platform()}
             (job.dir / "run_report.json").write_text(json.dumps(report, indent=2, default=str))
+            # Only now, with the report on disk, does the job leave the "running" state.
+            job.report = report
+            job.state = final_state
             try:
                 if job.state == "succeeded":
                     from .backends import get_backend
