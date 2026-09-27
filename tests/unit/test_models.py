@@ -60,9 +60,11 @@ def test_license_gate(tmp_path, server):
 
 
 def test_download_verify_and_tofu(tmp_path, server):
-    mm = ModelManager(tmp_path, [entry(server)])
+    mm = ModelManager(tmp_path, [entry(server, size=len(PAYLOAD))])
     mm.accept_license("m")
-    mm.download("m")
+    seen = []
+    mm.download("m", progress=lambda done, total: seen.append((done, total)))
+    assert seen and seen[-1] == (len(PAYLOAD), len(PAYLOAD))  # regression: progress callback crashed
     assert mm.is_installed("m")
     assert mm.status("m")["hash_status"] == "tofu"
     assert mm.verify("m") == []

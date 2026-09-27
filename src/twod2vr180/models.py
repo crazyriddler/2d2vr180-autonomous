@@ -222,7 +222,7 @@ class ModelManager:
                 continue
             self._check_disk(d, f.size_bytes)
 
-            def _p(n: int, _base=done_before) -> None:
+            def _p(n: int, _file_total: int | None = None, _base: int = done_before) -> None:
                 if progress:
                     progress(_base + n, total)
 

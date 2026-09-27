@@ -44,7 +44,7 @@
       "extra_index": "https://docs.gsplat.studio/whl/pt24cu124",
       "min_driver": "551.61",
       "approx_size_gb": 7.0,
-      "status": "unverified: needs the prebuilt gsplat 1.4.0+pt24cu124 Windows wheel from docs.gsplat.studio; gtsam has no Windows wheels, so long-video factor-graph refinement is skipped (Sim(3) chunk stitching only)",
+      "status": "unverified: needs the prebuilt gsplat 1.5.3+pt24cu124 Windows wheel from docs.gsplat.studio; gtsam has no Windows wheels, so long-video factor-graph refinement is skipped (Sim(3) chunk stitching only)",
       "archives_no_deps": [
         {
           "name": "recon3d",

@@ -103,6 +103,7 @@ def make_inputs(out: Path) -> dict:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--app", required=True)
     ap.add_argument("--runtime", required=True, choices=["photo-cu128", "recon3d-cu124"])
