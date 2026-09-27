@@ -61,7 +61,10 @@ jobs:
           path: release/*
           if-no-files-found: error
 
-  draft-release:
+  release:
+    # v*-rc* tags publish a GitHub PRE-release (for owner testing on the target GPU);
+    # any other v* tag creates a DRAFT release. Both require docs/status/gates.json:
+    # every mandatory gate must pass, or (release candidates only) carry an explicit waiver.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [test-linux, build-windows]
     runs-on: ubuntu-latest
@@ -69,14 +72,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Mandatory acceptance gates must pass
+      - name: Acceptance gates
+        id: gates
         run: |
           python - <<'PY'
-          import json, sys
+          import json, os, sys
+          rc = "-rc" in os.environ["GITHUB_REF_NAME"]
           g = json.load(open("docs/status/gates.json"))
-          bad = [f"{x['id']}: {x['status']}" for x in g["gates"] if x["mandatory"] and x["status"] != "pass"]
+          bad = [f"{x['id']}: {x['status']}" for x in g["gates"]
+                 if x["mandatory"] and x["status"] != "pass" and not (rc and x.get("waived_for_rc"))]
           if bad:
               print("Release blocked by gates:\n  " + "\n  ".join(bad)); sys.exit(1)
+          waived = [x["id"] for x in g["gates"] if x["mandatory"] and x["status"] != "pass"]
+          print("waived for this release candidate:", waived)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"prerelease={'true' if rc else 'false'}\n")
           PY
       - uses: actions/download-artifact@v4
         with:
@@ -84,7 +94,8 @@ jobs:
           path: release
       - uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          prerelease: ${{ steps.gates.outputs.prerelease == 'true' }}
+          draft: ${{ steps.gates.outputs.prerelease != 'true' }}
           files: release/*
           body_path: docs/RELEASE_NOTES.md
 

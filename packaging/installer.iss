@@ -1,7 +1,10 @@
 ; Inno Setup 6 script — per-user install, no administrator rights required.
-; Build: iscc /DAppVersion=0.1.0 /DSourceDir=..\dist\2D2VR180 /DOutputDir=..\release packaging\installer.iss
+; Build: iscc /DAppVersion=1.0.0-rc1 /DNumericVersion=1.0.0 /DSourceDir=..\dist\2D2VR180 /DOutputDir=..\release packaging\installer.iss
 #ifndef AppVersion
   #define AppVersion "0.0.0"
+#endif
+#ifndef NumericVersion
+  #define NumericVersion "0.0.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\dist\2D2VR180"
@@ -14,6 +17,7 @@
 AppId={{6C1C9B7E-2D2A-4B18-9E5B-2D2A18000001}
 AppName=2D2VR180
 AppVersion={#AppVersion}
+VersionInfoVersion={#NumericVersion}.0
 AppPublisher=2D2VR180 contributors
 DefaultDirName={localappdata}\Programs\2D2VR180
 DefaultGroupName=2D2VR180

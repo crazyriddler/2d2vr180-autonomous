@@ -163,3 +163,19 @@ def test_moving_camera_without_multiview_backend_falls_back(ctx, rtx4080, videos
     assert rep["selection"]["effective_kind"] == "video:static_scene"
     assert any("falling back" in w for w in rep["warnings"])
     assert any(r["backend"] == "recon3d_video" for r in rep["selection"]["rejected"])
+
+
+def test_moving_camera_multiview_path_video(ctx, rtx4080, videos, monkeypatch):
+    from conftest import REPO
+    from twod2vr180.backends.video import Recon3DBackend
+
+    monkeypatch.setattr(Recon3DBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_recon3d_worker.py"))
+    job, rep, _ = run_job(ctx, rtx4080, videos["pan"], mode="fast", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["id"] == "recon3d_video"
+    assert rep["coverage"]["by_splat"]["observed"] == 1.0
+    vids = rep["outputs"]["vr180"]["videos"]
+    path = [v for v in vids if "_path_" in Path(v["path"]).name]
+    assert path and path[0]["frames"] >= len(rep["input"]["analysis"]["keyframes"])
+    assert "interpolated" in path[0]["method"]
+    assert path[0]["spherical_metadata"]["projection"] == "equirect180"

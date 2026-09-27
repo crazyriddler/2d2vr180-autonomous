@@ -21,6 +21,7 @@ class Recon3DBackend(Backend):
     maturity = "experimental"
     upstream = ["recon3d", "vggt", "moge", "gsplat"]
     commercial_use = False  # recon3d loads the non-commercial facebook/VGGT-1B checkpoint
+    worker_script = "recon3d_worker.py"
     description = ("Moving-camera video → VGGT poses/depth (chunked, factor-graph refined) → MoGe-2 metric "
                    "scale → gsplat 3DGS training → .ply/.splat and TSDF .obj. Geometry is multi-view "
                    "OBSERVED for regions seen from several frames.")
@@ -46,7 +47,7 @@ class Recon3DBackend(Backend):
         fast = options.get("mode") == "fast"
         req = {"image_dir": str(img_dir), "output_dir": str(out_dir), "max_frames": len(inp.frames),
                "steps": 3000 if fast else 7000, "resize": 720 if fast else 960, "mesh": True, "metric": True}
-        out = run_worker(ctx.runtimes.python(self.runtime_id), "recon3d_worker.py", req,
+        out = run_worker(ctx.runtimes.python(self.runtime_id), self.worker_script, req,
                          inp.work_dir / "worker", progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id),
                          log=options.get("log"), progress_range=(0.0, 0.9), timeout_s=3 * 3600)
         res = out["result"]["outputs"]
