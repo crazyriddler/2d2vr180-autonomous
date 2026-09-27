@@ -34,7 +34,7 @@
       "id": "C-photo-inference-gpu",
       "mandatory": true,
       "status": "not_run",
-      "evidence": "MoGe-2 worker written against moge@74fbce0 API; never executed with real weights.",
+      "evidence": "Real models run end-to-end on Windows CPU in CI (see integration_cpu); GPU execution not yet run.",
       "waived_for_rc": true,
       "waiver": "Waived for release candidates by the project owner (2026-09-27): RTX 4080 / clean-machine testing is done by the owner on the RC."
     },
@@ -94,32 +94,39 @@
     }
   ],
   "integration_cpu": {
-    "environment": "GitHub windows-latest (no GPU), packaged 2d2vr180-cli.exe, runtimes installed by bundled uv, models downloaded via the model manager (pinned SHA256 verified)",
-    "run": "https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36348165737",
-    "input": "NASA astronaut photo (public domain, scikit-image) 512x512; synthetic fixed-camera video",
+    "environment": "GitHub windows-latest (no GPU); packaged 2d2vr180-cli.exe; runtimes installed by bundled uv; models downloaded by the model manager with pinned SHA256 verified",
+    "run": "https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36349383730",
+    "input": "NASA astronaut photo (public domain, via scikit-image) and a synthetic fixed-camera video with a moving object",
     "results": {
-      "depth_anything_v2 (CPU)": {
+      "depth_anything_v2 photo": {
         "status": "succeeded",
-        "gaussians": 251514,
+        "gaussians": 251515,
         "source_view_psnr_db": 24.01,
-        "time_s": 20
+        "time_s": 17
       },
-      "sharp (CPU)": {
+      "moge_rgbd photo (fast)": {
+        "status": "succeeded",
+        "gaussians": 254473,
+        "source_view_psnr_db": 23.61,
+        "time_s": 21
+      },
+      "sharp photo": {
         "status": "succeeded",
         "gaussians": 1179648,
         "source_view_psnr_db": 27.9,
-        "time_s": 354
+        "time_s": 317
       },
-      "auto, commercial profile (CPU)": {
+      "auto photo, commercial profile": {
         "status": "succeeded",
         "backend": "depth_anything_v2"
       },
-      "moge_rgbd (CPU)": {
-        "status": "failed: console encoding bug (fixed in this commit series, re-verified in the next run)"
-      },
-      "fixed-camera video (CPU)": {
-        "status": "failed: same console encoding bug"
+      "fixed-camera video, per-frame VR180 video": {
+        "status": "succeeded",
+        "backend": "moge_rgbd",
+        "source_view_psnr_db": 22.12,
+        "time_s": 340
       }
-    }
+    },
+    "video_runtime": "recon3d-cu124 installed + imports OK (training needs CUDA: not run)"
   }
 }

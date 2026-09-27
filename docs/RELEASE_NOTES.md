@@ -50,7 +50,18 @@ models ~1.6 GB, downloaded once from the original publishers). See `docs/USER_GU
 - Photo engine installed by the packaged app on Windows (torch 2.8.0+cu128, MoGe, SHARP, transformers).
 - Video engine installed by the packaged app on Windows (torch 2.4.1+cu124, prebuilt gsplat 1.5.3, VGGT, recon3d).
 - Models downloaded through the model manager and verified against pinned SHA256.
-- See the "Integration" section of `docs/status/gates.json` for CPU inference results.
+- **Real inference on Windows (CPU)** through the packaged app:
+
+  | Run | Backend | Splats | Source-view PSNR |
+  |---|---|---|---|
+  | Photo | Depth-Anything-V2 | 251k | 24.0 dB |
+  | Photo | MoGe-2 (fast) | 254k | 23.6 dB |
+  | Photo | Apple SHARP | 1.18M | 27.9 dB |
+  | Photo, commercial profile | auto → Depth-Anything-V2 | 251k | 24.0 dB |
+  | Fixed-camera video → VR180 video | MoGe-2 | 98k/frame | 22.1 dB |
+
+  Bugs found and fixed by these runs: download progress crash, Windows console encoding crash,
+  runtime dependency conflicts (opencv/numpy), missing gtsam wheels on Windows.
 
 ## Known limitations
 
