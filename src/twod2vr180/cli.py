@@ -255,7 +255,18 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _safe_console() -> None:
+    """Windows consoles default to a legacy code page (cp1252/cp850) that cannot
+    encode characters such as '→' or '°'; never let console output crash a job."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _safe_console()
     args = build_parser().parse_args(argv)
     return int(args.fn(args) or 0)
 
