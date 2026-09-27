@@ -137,7 +137,8 @@ def cmd_run(a) -> int:
     opts = JobOptions(mode=a.mode, backend=a.backend, vr180=not a.no_vr180,
                       layouts=[x for x in a.layout.split(",") if x], projection=a.projection,
                       eye_resolution=a.eye_resolution, license_profile=a.license_profile,
-                      output_dir=a.out)
+                      output_dir=a.out, allow_cpu=a.allow_cpu, renderer=a.renderer,
+                      fill_holes=not a.no_fill_holes, video_eye_resolution=a.video_eye_resolution)
     job = Job(Path(a.input), opts)
     runner = JobRunner(_ctx(a.license_profile))
 
@@ -149,6 +150,17 @@ def cmd_run(a) -> int:
 
     rep = runner.run(job, on_event)
     print(f"\nstatus: {rep['status']}   report: {job.dir / 'run_report.json'}")
+    if a.summary_json:
+        out = rep.get("outputs") or {}
+        summary = {"status": rep["status"], "error": rep.get("error"), "backend": (rep.get("backend") or {}).get("id"),
+                   "worker_env": (rep.get("backend") or {}).get("worker_env"), "validation": rep.get("validation"),
+                   "coverage": rep.get("coverage"), "gaussians": out.get("gaussians"),
+                   "outputs": {k: out.get(k) for k in ("scene_ply", "splat", "obj")},
+                   "vr180": [s["metadata"].get("coverage") for s in (out.get("vr180") or {}).get("stills", [])],
+                   "videos": [{k: v.get(k) for k in ("path", "frames", "spherical_metadata")}
+                              for v in (out.get("vr180") or {}).get("videos", [])],
+                   "timings_s": rep.get("timings_s"), "warnings": rep.get("warnings"), "report": str(job.dir)}
+        Path(a.summary_json).write_text(json.dumps(summary, indent=2, default=str))
     for w in rep.get("warnings", []):
         print(f"WARNING: {w}")
     if rep.get("error"):
@@ -219,6 +231,11 @@ def build_parser() -> argparse.ArgumentParser:
     j.add_argument("--eye-resolution", type=int, default=2048)
     j.add_argument("--license-profile", default="personal_research", choices=["personal_research", "commercial"])
     j.add_argument("--out", help="also copy outputs to this directory")
+    j.add_argument("--video-eye-resolution", type=int, default=1280)
+    j.add_argument("--allow-cpu", action="store_true", help="run cpu-capable backends without a GPU (slow)")
+    j.add_argument("--renderer", default="auto", choices=["auto", "gpu", "cpu"])
+    j.add_argument("--no-fill-holes", action="store_true")
+    j.add_argument("--summary-json", help="write a compact result summary to this file")
     j.add_argument("-v", "--verbose", action="store_true")
     j.set_defaults(fn=cmd_run)
 
