@@ -7,6 +7,10 @@ on:
         description: "Also run the real-model integration jobs (runtime install, model download, CPU inference)"
         type: boolean
         default: false
+      release_tag:
+        description: "Create a release with this tag (e.g. v1.0.0-rc1) from the dispatched commit; -rc tags become pre-releases"
+        type: string
+        default: ""
   pull_request:
   push:
     branches: [main]
@@ -65,11 +69,13 @@ jobs:
     # v*-rc* tags publish a GitHub PRE-release (for owner testing on the target GPU);
     # any other v* tag creates a DRAFT release. Both require docs/status/gates.json:
     # every mandatory gate must pass, or (release candidates only) carry an explicit waiver.
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: [test-linux, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - name: Acceptance gates
@@ -77,7 +83,10 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, sys
-          rc = "-rc" in os.environ["GITHUB_REF_NAME"]
+          tag = os.environ["RELEASE_TAG"]
+          if not tag.startswith("v"):
+              print(f"release tag must start with 'v': {tag}"); sys.exit(1)
+          rc = "-rc" in tag
           g = json.load(open("docs/status/gates.json"))
           bad = [f"{x['id']}: {x['status']}" for x in g["gates"]
                  if x["mandatory"] and x["status"] != "pass" and not (rc and x.get("waived_for_rc"))]
@@ -94,6 +103,9 @@ jobs:
           path: release
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: 2D2VR180 ${{ env.RELEASE_TAG }}
           prerelease: ${{ steps.gates.outputs.prerelease == 'true' }}
           draft: ${{ steps.gates.outputs.prerelease != 'true' }}
           files: release/*
