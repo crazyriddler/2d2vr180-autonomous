@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "note": "Third-party executables bundled into the Windows package (bin/). Fetched from PyPI wheels, verified against these SHA256 digests (taken from the PyPI JSON API on 2026-09-27).",
+  "tools": [
+    {
+      "name": "uv",
+      "version": "0.12.19",
+      "license": "MIT OR Apache-2.0",
+      "wheel": "uv-0.12.19-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/c2/5d/8e0b84503b77ead843ef57e4f9305eb32a95cac6806c0e0d54b9404a5f7b/uv-0.12.19-py3-none-win_amd64.whl",
+      "sha256": "dcbc531a96762569bbfe9639b4f45f00aabff51f427540711f63e7c23f225fdf",
+      "size_bytes": 18050617,
+      "extract": {"uv-0.12.19.data/scripts/uv.exe": "uv.exe"},
+      "purpose": "creates the isolated backend runtimes (Python + pinned wheels) on the user's machine"
+    },
+    {
+      "name": "ffmpeg (via imageio-ffmpeg wheel)",
+      "version": "7.1 (imageio-ffmpeg 0.6.0)",
+      "license": "GPL-3.0-or-later (built with --enable-gpl --enable-version3, libx264/libx265)",
+      "source_offer": "https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz ; build configuration is embedded in the binary (ffmpeg -buildconf)",
+      "wheel": "imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/2c/c6/fa760e12a2483469e2bf5058c5faff664acf66cadb4df2ad6205b016a73d/imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl",
+      "sha256": "02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a",
+      "size_bytes": 31246824,
+      "extract": {"imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe": "ffmpeg.exe"},
+      "purpose": "media decode/encode, run as a separate process (aggregate, not linked)"
+    }
+  ]
+}

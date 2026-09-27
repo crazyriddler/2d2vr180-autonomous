@@ -1,0 +1,1 @@
+"""Desktop GUI (PySide6)."""

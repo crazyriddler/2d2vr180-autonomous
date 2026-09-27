@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "twod2vr180"
+version = "0.1.0"
+description = "2D2VR180: local photo/video to 3D Gaussian splat, mesh and VR180 stereo on NVIDIA GPUs"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+# The application process deliberately stays light: no torch, no CUDA.
+# ML backends run in isolated runtimes managed by twod2vr180.runtimes.
+dependencies = [
+    "numpy>=1.26",
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.6"]
+media = ["imageio-ffmpeg>=0.5"]
+dev = ["pytest>=8", "imageio-ffmpeg>=0.5"]
+
+[project.scripts]
+2d2vr180 = "twod2vr180.cli:main"
+
+[project.gui-scripts]
+2d2vr180-gui = "twod2vr180.gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

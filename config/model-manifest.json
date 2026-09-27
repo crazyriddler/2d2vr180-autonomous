@@ -1,0 +1,95 @@
+{
+  "schema_version": 2,
+  "generated": "2026-09-27",
+  "hash_policy": "Pinned sha256 is enforced when present. null = could not be verified at authoring time (sandbox had no Hugging Face / Apple CDN access); the model manager records the hash on first download (trust-on-first-use) and scripts/resolve_models.py fills these fields from the host's LFS metadata on a networked machine.",
+  "models": [
+    {
+      "id": "moge-2-vits-normal",
+      "display_name": "MoGe-2 ViT-S (normal) — fast monocular metric geometry",
+      "source": "https://huggingface.co/Ruicheng/moge-2-vits-normal",
+      "revision": "main (UNPINNED — resolve with scripts/resolve_models.py)",
+      "license": "UNVERIFIED: code MIT (microsoft/MoGe); weight license must be read from the HF model card",
+      "license_url": "https://huggingface.co/Ruicheng/moge-2-vits-normal",
+      "commercial_use": false,
+      "redistributable": false,
+      "required_vram_gb": 2,
+      "backends": ["moge_rgbd"],
+      "requires_acceptance": true,
+      "gated": false,
+      "files": [
+        {"path": "model.pt", "url": "https://huggingface.co/Ruicheng/moge-2-vits-normal/resolve/main/model.pt", "sha256": null, "size_bytes": null}
+      ],
+      "notes": "Default Fast photo model. Treated as non-commercial until the weight license is verified."
+    },
+    {
+      "id": "moge-2-vitl-normal",
+      "display_name": "MoGe-2 ViT-L (normal) — quality monocular metric geometry",
+      "source": "https://huggingface.co/Ruicheng/moge-2-vitl-normal",
+      "revision": "main (UNPINNED — resolve with scripts/resolve_models.py)",
+      "license": "UNVERIFIED: code MIT (microsoft/MoGe); weight license must be read from the HF model card",
+      "license_url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal",
+      "commercial_use": false,
+      "redistributable": false,
+      "required_vram_gb": 5,
+      "backends": ["moge_rgbd"],
+      "requires_acceptance": true,
+      "gated": false,
+      "files": [
+        {"path": "model.pt", "url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal/resolve/main/model.pt", "sha256": null, "size_bytes": null}
+      ],
+      "notes": "Default Quality photo model and per-frame model for fixed-camera dynamic video."
+    },
+    {
+      "id": "sharp",
+      "display_name": "Apple SHARP — single image to 3D Gaussians",
+      "source": "https://github.com/apple/ml-sharp",
+      "revision": "sharp_2572gikvuh.pt (upstream commit aed6527499ef91cba3b54c18d49a870f25947190)",
+      "license": "Apple Machine Learning Research Model License (research purposes only, non-commercial)",
+      "license_url": "https://github.com/apple/ml-sharp/blob/aed6527499ef91cba3b54c18d49a870f25947190/LICENSE_MODEL",
+      "commercial_use": false,
+      "redistributable": false,
+      "required_vram_gb": 6,
+      "backends": ["sharp"],
+      "requires_acceptance": true,
+      "gated": false,
+      "files": [
+        {"path": "sharp_2572gikvuh.pt", "url": "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt", "sha256": null, "size_bytes": null}
+      ],
+      "notes": "Research-only. Never bundled. Enabled only when the user selects the research/personal license profile and accepts the Apple model license. Splatline reports ~2.5 GB."
+    },
+    {
+      "id": "vggt-1b",
+      "display_name": "VGGT-1B (original checkpoint) — used by recon3d",
+      "source": "https://huggingface.co/facebook/VGGT-1B",
+      "revision": "main (UNPINNED)",
+      "license": "Non-commercial (original VGGT-1B checkpoint; see upstream README 2025-07-29 note)",
+      "license_url": "https://github.com/facebookresearch/vggt/blob/a288dd0f14786c93483e45524328726ab7b1b4ce/README.md",
+      "commercial_use": false,
+      "redistributable": false,
+      "required_vram_gb": 10,
+      "backends": ["recon3d_video"],
+      "requires_acceptance": true,
+      "gated": false,
+      "fetched_by_upstream": true,
+      "files": [],
+      "notes": "recon3d@e40cd91 calls VGGT.from_pretrained('facebook/VGGT-1B'); the weights are fetched by the runtime into <models>/hf-cache (HF_HOME). The commercial checkpoint facebook/VGGT-1B-Commercial is gated and would need an adapter patch."
+    },
+    {
+      "id": "moge-2-vitl",
+      "display_name": "MoGe-2 ViT-L — metric alignment used by recon3d",
+      "source": "https://huggingface.co/Ruicheng/moge-2-vitl",
+      "revision": "main (UNPINNED)",
+      "license": "UNVERIFIED (see HF model card)",
+      "license_url": "https://huggingface.co/Ruicheng/moge-2-vitl",
+      "commercial_use": false,
+      "redistributable": false,
+      "required_vram_gb": 5,
+      "backends": ["recon3d_video"],
+      "requires_acceptance": true,
+      "gated": false,
+      "fetched_by_upstream": true,
+      "files": [],
+      "notes": "Fetched by recon3d into <models>/hf-cache."
+    }
+  ]
+}

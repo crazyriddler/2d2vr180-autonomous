@@ -41,6 +41,40 @@ The first production target is a **working, reproducible Windows release for RTX
    - no model weights in Git;
    - GitHub Release assets for installers and runtime bundles where size permits.
 
+## Current state (2026-09-27)
+
+The application skeleton, job system, VR180 renderer, exporters, model/runtime
+managers, desktop GUI and Windows packaging are implemented and tested on CPU.
+**No ML backend has yet been run on an RTX 4080**, so no release has been published.
+See `docs/status/BOOTSTRAP.md`, `docs/status/EXECUTION_PLAN.md` and `docs/status/gates.json`.
+
+### Quick start (source checkout)
+
+```bash
+pip install -r requirements-dev.txt
+PYTHONPATH=src python -m twod2vr180.cli doctor          # GPU / driver / FFmpeg diagnostics
+PYTHONPATH=src python -m twod2vr180.cli backends        # what can run here, and why not
+PYTHONPATH=src python -m twod2vr180.cli runtimes install photo-cu128
+PYTHONPATH=src python -m twod2vr180.cli models download moge-2-vitl-normal --accept-license
+PYTHONPATH=src python -m twod2vr180.cli run photo.jpg   # -> jobs/<id>/export + run_report.json
+PYTHONPATH=src python -m twod2vr180.cli vr180 scene.ply --layout sbs,tb
+PYTHONPATH=src python -m twod2vr180.cli gui
+```
+
+Build instructions: `docs/BUILDING.md`.
+
+### Layout
+
+| Path | Content |
+|---|---|
+| `src/twod2vr180/` | application: hardware probe, media analysis, job system, selector, scene I/O, renderer, VR180, model & runtime managers, CLI, GUI |
+| `src/twod2vr180/backends/` | adapters: `moge_rgbd`, `sharp`, `recon3d_video`, plus evaluated-but-unsupported research backends |
+| `workers/` | scripts executed inside isolated backend runtimes (JSON-lines protocol) |
+| `config/` | upstream commit lock, model manifest, runtime manifest, bundled-tool lock |
+| `packaging/` | PyInstaller spec, Inno Setup installer |
+| `scripts/` | bootstrap/build/test/package/release scripts and helpers |
+| `tests/` | unit + integration tests (GPU-free; a test-only fake worker stands in for the model) |
+
 ## What Claude Code must NOT do
 
 - Do not blindly vendor third-party repositories into this repository.

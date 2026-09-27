@@ -2,44 +2,80 @@ name: Build
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    # The final implementation must choose a runner that actually provides
-    # the CUDA/GPU environment needed for the selected backend.
-    # Do not pretend ubuntu-latest can validate an RTX-specific pipeline.
-    runs-on: windows-latest
-
+  test-linux:
+    # GPU-free tests: scene I/O, VR180 geometry, media analysis, model manager,
+    # job pipeline with a test-only fake worker, GUI offscreen.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: System libraries for Qt offscreen
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1
+      - run: pip install -r requirements-dev.txt
+      - run: QT_QPA_PLATFORM=offscreen python -m pytest -q
 
-      - name: Show environment
-        shell: pwsh
-        run: |
-          $PSVersionTable
-          git --version
-
+  build-windows:
+    # Hosted runners have no NVIDIA GPU: this job proves packaging, launch and
+    # error paths only. RTX 4080 gates are recorded in docs/status/gates.json.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: Bootstrap
         shell: pwsh
         run: ./scripts/bootstrap.ps1
-
       - name: Build
         shell: pwsh
         run: ./scripts/build.ps1
-
       - name: Test
         shell: pwsh
         run: ./scripts/test.ps1
-
       - name: Package
         shell: pwsh
         run: ./scripts/package.ps1
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: 2d2vr180-build
+          name: 2d2vr180-windows
           path: release/*
+          if-no-files-found: error
+
+  draft-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mandatory acceptance gates must pass
+        run: |
+          python - <<'PY'
+          import json, sys
+          g = json.load(open("docs/status/gates.json"))
+          bad = [f"{x['id']}: {x['status']}" for x in g["gates"] if x["mandatory"] and x["status"] != "pass"]
+          if bad:
+              print("Release blocked by gates:\n  " + "\n  ".join(bad)); sys.exit(1)
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: 2d2vr180-windows
+          path: release
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: release/*
+          body_path: docs/RELEASE_NOTES.md

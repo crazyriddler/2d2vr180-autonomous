@@ -1,0 +1,6 @@
+# Application process (GUI/CLI) — packaged with PyInstaller. No torch here:
+# ML dependencies live in the isolated runtimes (config/runtime-manifest.json).
+numpy==2.4.6
+pillow==12.3.0
+PySide6-Essentials==6.11.2
+shiboken6==6.11.2
