@@ -87,7 +87,8 @@
       "archives_no_deps": [
         {
           "name": "stable-virtual-camera",
-          "url": "https://github.com/Stability-AI/stable-virtual-camera/archive/fe19948e9b7bea261ab2db780a59656131404a83.zip"
+          "url": "https://github.com/Stability-AI/stable-virtual-camera/archive/fe19948e9b7bea261ab2db780a59656131404a83.zip",
+          "copy_package": "seva"
         }
       ],
       "smoke_test": "import sys, types; sys.modules['gradio'] = types.SimpleNamespace(Progress=object); import torch, open_clip, diffusers, kornia, seva.model, seva.eval; print('cuda', torch.cuda.is_available())",

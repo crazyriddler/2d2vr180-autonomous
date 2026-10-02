@@ -61,3 +61,41 @@ def test_upstream_lock_complete():
     for r in lock["repositories"]:
         assert len(r["commit"]) == 40 and r["code_license"] and r["category"] in lock["license_categories"]
         assert r["gpu_smoke_test"]
+
+
+def test_copy_package_installs_subpackages_from_archive(tmp_path, monkeypatch):
+    """stable-virtual-camera's packaging drops seva.modules; the installer copies the package tree."""
+    import io
+    import sys
+    import urllib.request
+    import zipfile
+
+    from twod2vr180.runtimes import RuntimeManager
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("repo-abc/seva/__init__.py", "")
+        z.writestr("repo-abc/seva/modules/layers.py", "X = 1\n")
+        z.writestr("repo-abc/demo.py", "")
+        z.writestr("repo-abc/third_party/x.py", "")
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: Resp(buf.getvalue()))
+    site = tmp_path / "site"
+    site.mkdir()
+    import subprocess
+
+    real_run = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0, "stdout": str(site),
+                                                                          "stderr": ""})())
+    rm = RuntimeManager(root=tmp_path / "rt", specs={})
+    rm._copy_package(sys.executable, {"url": "https://x/archive/abc.zip", "copy_package": "seva"}, lambda m: None, None)
+    monkeypatch.setattr(subprocess, "run", real_run)
+    assert (site / "seva" / "modules" / "layers.py").read_text() == "X = 1\n"
+    assert not (site / "demo.py").exists() and not (site / "third_party").exists()

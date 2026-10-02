@@ -184,9 +184,12 @@ class RuntimeManager:
         req = d / "requirements.lock.txt"
         req.write_text("\n".join(self.lock_lines(rid)) + "\n", encoding="utf-8")
         run([uv, "pip", "install", "--python", py, "--no-deps", *idx, "-r", str(req)])
-        if spec.archives_no_deps:
-            run([uv, "pip", "install", "--python", py, "--no-deps",
-                 *[a["url"] for a in spec.archives_no_deps]])
+        pip_archives = [a for a in spec.archives_no_deps if not a.get("copy_package")]
+        if pip_archives:
+            run([uv, "pip", "install", "--python", py, "--no-deps", *[a["url"] for a in pip_archives]])
+        for a in spec.archives_no_deps:
+            if a.get("copy_package"):
+                self._copy_package(py, a, log, cancel)
         smoke = None
         if spec.smoke_test:
             r = subprocess.run([py, "-c", spec.smoke_test], capture_output=True, text=True,
@@ -202,6 +205,46 @@ class RuntimeManager:
         if smoke and not smoke["ok"]:
             raise RuntimeInstallError(f"Runtime '{rid}' installed but its smoke test failed: "
                                 f"{smoke['stderr'].strip().splitlines()[-1:] or ['?']}")
+
+    def _copy_package(self, py: str, archive: dict, log, cancel) -> None:
+        """Install a pure-Python package straight from a commit archive, for upstream projects
+        whose packaging omits subpackages (stable-virtual-camera ships only 'seva', not
+        'seva.modules', when installed non-editable)."""
+        import io
+        import urllib.request
+        import zipfile
+
+        pkg = archive["copy_package"]
+        r = subprocess.run([py, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+                           capture_output=True, text=True, creationflags=_NO_WINDOW)
+        if r.returncode != 0:
+            raise RuntimeInstallError(f"cannot locate site-packages: {r.stderr[-300:]}")
+        site = Path(r.stdout.strip())
+        log(f"downloading {archive['url']}")
+        req = urllib.request.Request(archive["url"], headers={"User-Agent": "2D2VR180-runtime-installer"})
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            data = resp.read()
+        if cancel and cancel():
+            raise RuntimeInstallError("Runtime installation cancelled.")
+        dest = site / pkg
+        if dest.exists():
+            shutil.rmtree(dest)
+        n = 0
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            for name in z.namelist():
+                parts = name.split("/", 1)
+                if len(parts) < 2 or not parts[1].startswith(pkg + "/") or name.endswith("/"):
+                    continue
+                rel = parts[1]
+                if ".." in rel.split("/"):
+                    continue
+                target = site / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(z.read(name))
+                n += 1
+        if not n:
+            raise RuntimeInstallError(f"package '{pkg}' not found in {archive['url']}")
+        log(f"installed {pkg} ({n} files) into {site}")
 
     def remove(self, rid: str) -> None:
         d = self.env_dir(rid)
