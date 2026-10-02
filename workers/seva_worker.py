@@ -22,7 +22,8 @@ import types
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
-TRAJECTORIES = ("orbit", "explore", "spiral")
+TRAJECTORIES = ("arc", "orbit", "explore", "spiral")
+PRESETS = {"arc": "lemniscate"}   # our name → Stable Virtual Camera preset (figure-of-eight, ±60°)
 
 
 def short_sides(start: int, aspect: float, budget: int) -> list[int]:
@@ -72,7 +73,7 @@ def trajectory(kind, n, hfov_deg, w, h):
         return explore_c2ws(n), intrinsics(hfov_deg, w, h, n)
     from seva.geometry import get_preset_pose_fov
 
-    c2ws, _ = get_preset_pose_fov(option=kind, num_frames=n, start_w2c=torch.eye(4),
+    c2ws, _ = get_preset_pose_fov(option=PRESETS.get(kind, kind), num_frames=n, start_w2c=torch.eye(4),
                                   look_at=torch.Tensor([0, 0, 10]))
     c2ws = np.asarray(c2ws, np.float64)
     if c2ws.shape[1] == 3:
@@ -234,7 +235,7 @@ def generate(req, models, short_side, torch):
         "guider_types": [1, 2], "cfg": [4.0 if kind != "explore" else 3.0, 2.0], "camera_scale": 2.0,
         "num_steps": int(req.get("steps", 50)), "cfg_min": 1.2, "encoding_t": 1, "decoding_t": 1,
         "replace_or_include_input": True, "L_short": short_side, "num_targets": n_targets,
-        "use_traj_prior": True, "traj_prior": kind, "save_input": True}}
+        "use_traj_prior": True, "traj_prior": PRESETS.get(kind, kind), "save_input": True}}
     num_anchors = infer_prior_stats(version_dict["T"], 1, num_total_frames=n_targets, version_dict=version_dict)
     anchor_idx = [round(i) for i in np.linspace(1, n_targets, num_anchors)]
     save = os.path.join(req["output_dir"], f"seva_{short_side}")
@@ -283,7 +284,11 @@ def main(req):
 
     with Image.open(req["image"]) as im:
         aspect = max(im.size) / min(im.size)
-    sizes = short_sides(int(req.get("short_side", 576)), aspect, int(req.get("pixel_budget", 576 * 576)))
+    # Start at the model's native 576 px (best quality); the memory cap turns a too-large attempt
+    # into an out-of-memory error and the next, smaller size is tried.
+    budget = int(req.get("pixel_budget", 0)) or int(576 * 576 * max(aspect, 1.0))
+    sizes = short_sides(int(req.get("short_side", 576)), aspect, budget) + [384, 320]
+    sizes = list(dict.fromkeys(sizes))
     log(f"generation resolutions to try (short side): {sizes}")
     last = None
     for s in sizes:

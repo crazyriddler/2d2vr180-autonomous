@@ -1,4 +1,17 @@
-# 2D2VR180 1.0.0-rc8 — generative 3D fix
+# 2D2VR180 1.0.0-rc9 — better generated views
+
+## What's new in rc9
+
+- **Generated views of people were deformed (RTX 4080 report on rc8).** Changes:
+  - generation starts at Stable Virtual Camera's native 576-pixel resolution (rc7/rc8 used 448 to save
+    memory); the memory cap still falls back to 512/448/384 automatically if needed;
+  - always 50 diffusion steps (Fast used 30); Fast now only generates fewer views;
+  - new default path **Around the subject ±60°** (Stable Virtual Camera's figure-of-eight preset): far more
+    reliable than a full 360° orbit from one photo, and the best choice for people. *Orbit 360°* remains
+    available for objects, but the back side of a person seen from the front is pure invention and often
+    deformed.
+
+## rc8
 
 ## What's new in rc8
 
@@ -126,8 +139,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc8-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc8-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc9-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc9-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

@@ -30,7 +30,7 @@ class Settings:
     setup_completed: bool = False
     vr_help_seen: bool = False
     check_updates: bool = False                  # no network access unless the user enables it
-    generative: str = "off"                      # off | orbit | explore | spiral
+    generative: str = "off"                      # off | arc | orbit | explore | spiral
     video_mode: str = "auto"                     # auto | multiview | per_frame | best_frame
     combine_photos: bool = True                  # several photos dropped together → one multi-view scene
     ai_hole_fill: bool = True                    # LaMa inpainting of VR180 disocclusions
@@ -55,7 +55,7 @@ class Settings:
             self.mode = "auto"
         if self.renderer not in ("auto", "gpu", "cpu"):
             self.renderer = "auto"
-        if self.generative not in ("off", "orbit", "explore", "spiral"):
+        if self.generative not in ("off", "arc", "orbit", "explore", "spiral"):
             self.generative = "off"
         if self.video_mode not in ("auto", "multiview", "per_frame", "best_frame"):
             self.video_mode = "auto"
