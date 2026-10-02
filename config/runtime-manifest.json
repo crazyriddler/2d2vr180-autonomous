@@ -67,8 +67,8 @@
           "url": "https://github.com/EasternJournalist/pipeline/archive/1c511390d90226c00c101f34b84df26a0f8789b4.zip"
         }
       ],
-      "smoke_test": "import torch, gsplat, vggt, recon3d.pipeline; print('cuda', torch.cuda.is_available())",
-      "network_at_inference": true,
+      "smoke_test": "import torch, gsplat, gsplat.strategy, vggt.models.vggt, moge.model.v2, open3d, sklearn, plyfile; print('cuda', torch.cuda.is_available())",
+      "network_at_inference": false,
       "lock": "locks/recon3d-cu124.txt",
       "local_versions": {
         "torch": "+cu124",

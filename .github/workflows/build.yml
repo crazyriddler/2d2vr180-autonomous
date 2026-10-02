@@ -50,6 +50,8 @@ jobs:
           libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0
           libxcb-xinerama0 libxcb-shape0 libgl1-mesa-dri
       - run: pip install -r requirements-dev.txt
+      - name: CPU PyTorch for the splat-trainer tests
+        run: pip install torch==2.8.0 scikit-learn --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
       - run: QT_QPA_PLATFORM=offscreen python -m pytest -q
       - name: GUI tests with real OpenGL (Mesa llvmpipe on Xvfb)
         run: QT_QPA_PLATFORM=xcb xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q tests/integration/test_gui.py
@@ -180,15 +182,45 @@ jobs:
         run: |
           ./scripts/bootstrap.ps1
           ./scripts/build.ps1
-      - name: Install recon3d runtime (install + import smoke only; training needs CUDA)
+      - name: Multi-view runtime (install, real VGGT + MoGe camera poses on CPU; training needs CUDA)
         shell: pwsh
         env:
           TWOD2VR180_HOME: D:\2d2vr180-home
-        run: .venv\Scripts\python.exe scripts\ci_integration.py --app dist\2D2VR180\2d2vr180-cli.exe --runtime recon3d-cu124 --out D:\ci-out
+        run: |
+          .venv\Scripts\python.exe -m pip install scikit-image==0.25.2
+          .venv\Scripts\python.exe scripts\ci_integration.py --app dist\2D2VR180\2d2vr180-cli.exe --runtime recon3d-cu124 --out D:\ci-out
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-video
+          name: integration-video-results
+          path: D:\ci-out\*
+          if-no-files-found: warn
+
+  integration-generative:
+    if: github.event_name == 'workflow_dispatch' && inputs.integration
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Bootstrap and build
+        shell: pwsh
+        run: |
+          ./scripts/bootstrap.ps1
+          ./scripts/build.ps1
+          .venv\Scripts\python.exe -m pip install scikit-image==0.25.2
+      - name: Generative runtime (install, real LaMa inpainting on CPU, Stable Virtual Camera import)
+        shell: pwsh
+        env:
+          TWOD2VR180_HOME: D:\2d2vr180-home
+        run: .venv\Scripts\python.exe scripts\ci_integration.py --app dist\2D2VR180\2d2vr180-cli.exe --runtime gen-cu128 --out D:\ci-out
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-generative
           path: D:\ci-out\*
           if-no-files-found: warn

@@ -102,11 +102,106 @@ def make_inputs(out: Path) -> dict:
     return {"photo": photo, "video": video}
 
 
+def runtime_python(env, rid) -> Path:
+    base = Path(env["TWOD2VR180_HOME"]) / "runtimes" / rid / "venv"
+    return base / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def run_worker(py, script, req, out, env, log, name) -> dict:
+    """Run a worker like the app does and return its result event (or the error)."""
+    req_path = out / f"{name}_request.json"
+    req_path.write_text(json.dumps(req))
+    wenv = dict(env, HF_HUB_OFFLINE="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1",
+                HF_HOME=str(Path(env["TWOD2VR180_HOME"]) / "models" / "hf-cache"))
+    p = subprocess.run([str(py), str(REPO / "workers" / script), str(req_path)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=wenv, timeout=5400)
+    (out / f"{name}.log").write_text(p.stdout + "\n" + p.stderr, encoding="utf-8")
+    with open(log, "a", encoding="utf-8") as lf:
+        lf.write(p.stdout[-20000:] + p.stderr[-20000:])
+    res = {"exit_code": p.returncode}
+    for line in p.stdout.splitlines():
+        if line.startswith("@@2D2VR180 "):
+            ev = json.loads(line[len("@@2D2VR180 "):])
+            if ev.get("event") in ("result", "error"):
+                res.update(ev)
+    print(name, json.dumps({k: v for k, v in res.items() if k not in ("c2ws", "traceback")})[:2000], flush=True)
+    if res.get("traceback"):
+        print(res["traceback"], flush=True)
+    return res
+
+
+def model_dir(env, mid) -> Path:
+    return Path(env["TWOD2VR180_HOME"]) / "models" / mid
+
+
+def multiview_selftest(a, env, log, out) -> dict:
+    """Real VGGT-1B + MoGe-2 camera poses on the CPU (training needs CUDA and is skipped)."""
+    import numpy as np
+    from PIL import Image
+    from skimage import data
+
+    r = {}
+    for mid in ("vggt-1b", "moge-2-vitl-normal"):
+        r[f"download_{mid}"] = sh([a.app, "models", "download", mid, "--accept-license"], env, log) == 0
+    big = np.asarray(Image.fromarray(data.astronaut()).resize((768, 768)))
+    views = []
+    for i, dx in enumerate((0, 40, 80)):  # three overlapping crops = a sideways camera move
+        p = out / f"mv_view_{i}.png"
+        Image.fromarray(big[100:580, 60 + dx:700 + dx]).save(p)
+        views.append({"path": str(p), "generated": False, "weight": 1.0})
+    res = run_worker(runtime_python(env, "recon3d-cu124"), "multiview_worker.py",
+                     {"images": views, "output_dir": str(out / "mv_out"), "vggt_dir": str(model_dir(env, "vggt-1b")),
+                      "moge_path": str(model_dir(env, "moge-2-vitl-normal") / "model.pt"), "stop_after_poses": True,
+                      "max_side": 640}, out, env, log, "multiview_poses")
+    c2ws = np.asarray(res.get("c2ws") or np.zeros((0, 4, 4)))
+    ok = res.get("event") == "result" and len(c2ws) == 3 and np.allclose(c2ws[0], np.eye(4), atol=1e-4)
+    if ok:  # the camera moved right → x of later views increases
+        ok = bool(c2ws[2][0, 3] > c2ws[1][0, 3] > c2ws[0][0, 3] - 1e-6)
+    r["multiview_poses"] = {"ok": bool(ok), "points": res.get("points"), "metric_scale": res.get("metric_scale_factor"),
+                            "camera_x": [float(m[0, 3]) for m in c2ws], "error": res.get("message")}
+    return r
+
+
+def generative_selftest(a, env, log, out) -> dict:
+    """LaMa inpainting for real (CPU) and Stable Virtual Camera import + trajectory check."""
+    import numpy as np
+    from PIL import Image
+    from skimage import data
+
+    r = {"download_big-lama": sh([a.app, "models", "download", "big-lama", "--accept-license"], env, log) == 0}
+    img = np.asarray(Image.fromarray(data.astronaut()).resize((256, 256)))
+    mask = np.zeros((256, 256), np.uint8)
+    mask[100:140, 110:150] = 255
+    holed = img.copy()
+    holed[mask > 0] = 0
+    Image.fromarray(holed).save(out / "lama_in.png")
+    Image.fromarray(mask).save(out / "lama_mask.png")
+    res = run_worker(runtime_python(env, "gen-cu128"), "inpaint_worker.py",
+                     {"model": str(model_dir(env, "big-lama") / "big-lama.pt"),
+                      "items": [{"image": str(out / "lama_in.png"), "mask": str(out / "lama_mask.png"),
+                                 "out": str(out / "lama_out.png")}]}, out, env, log, "lama")
+    ok = res.get("event") == "result" and (out / "lama_out.png").exists()
+    err = None
+    if ok:
+        o = np.asarray(Image.open(out / "lama_out.png")).astype(float)
+        err = float(np.abs(o[100:140, 110:150] - img[100:140, 110:150]).mean())
+        ok = bool(err < 60 and o[100:140, 110:150].mean() > 20)   # filled with plausible content, not black
+    r["lama"] = {"ok": ok, "mean_abs_error_in_hole": err, "error": res.get("message")}
+    code = ("import sys, types; sys.path.insert(0, r'%s'); import seva_worker as sw; "
+            "sys.modules['gradio'] = types.SimpleNamespace(Progress=object); import seva.eval, seva.model; "
+            "c, K = sw.trajectory('orbit', 21, 60.0, 640, 480); e, _ = sw.trajectory('explore', 21, 60.0, 640, 480); "
+            "print('SEVA_OK', c.shape, e.shape)" % (REPO / "workers"))
+    p = subprocess.run([str(runtime_python(env, "gen-cu128")), "-c", code], capture_output=True, text=True, env=env)
+    print(p.stdout[-2000:], p.stderr[-4000:], flush=True)
+    r["seva_import"] = {"ok": "SEVA_OK" in p.stdout, "stderr": p.stderr[-1500:]}
+    return r
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--app", required=True)
-    ap.add_argument("--runtime", required=True, choices=["photo-cu128", "recon3d-cu124"])
+    ap.add_argument("--runtime", required=True, choices=["photo-cu128", "recon3d-cu124", "gen-cu128"])
     ap.add_argument("--out", default="ci-out")
     a = ap.parse_args()
     out = Path(a.out).resolve()
@@ -132,10 +227,18 @@ def main() -> int:
     rt_state = Path(env["TWOD2VR180_HOME"]) / "runtimes" / a.runtime / "installed.json"
     if rt_state.exists():
         results["runtime_smoke"] = json.loads(rt_state.read_text()).get("smoke_test")
+    if rc == 0 and a.runtime in ("recon3d-cu124", "gen-cu128"):
+        fn = multiview_selftest if a.runtime == "recon3d-cu124" else generative_selftest
+        try:
+            results.update(fn(a, env, log, out))
+        except Exception as e:  # noqa: BLE001
+            results["selftest_error"] = f"{type(e).__name__}: {e}"
     if rc != 0 or a.runtime != "photo-cu128":
-        (out / "summary.json").write_text(json.dumps(results, indent=2))
-        print(json.dumps(results, indent=2))
-        return 0 if rc == 0 else 1
+        (out / "summary.json").write_text(json.dumps(results, indent=2, default=str))
+        print(json.dumps(results, indent=2, default=str))
+        ok = rc == 0 and not results.get("selftest_error") and all(
+            v.get("ok", True) for v in results.values() if isinstance(v, dict) and "ok" in v)
+        return 0 if ok else 1
 
     for mid in ("depth-anything-v2-small", "moge-2-vits-normal", "sharp"):
         results[f"download_{mid}"] = sh([a.app, "models", "download", mid, "--accept-license"], env, log) == 0

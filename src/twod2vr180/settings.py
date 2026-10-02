@@ -30,6 +30,10 @@ class Settings:
     setup_completed: bool = False
     vr_help_seen: bool = False
     check_updates: bool = False                  # no network access unless the user enables it
+    generative: str = "off"                      # off | orbit | explore | spiral
+    video_mode: str = "auto"                     # auto | multiview | per_frame | best_frame
+    combine_photos: bool = True                  # several photos dropped together → one multi-view scene
+    ai_hole_fill: bool = True                    # LaMa inpainting of VR180 disocclusions
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":
@@ -50,6 +54,10 @@ class Settings:
             self.mode = "auto"
         if self.renderer not in ("auto", "gpu", "cpu"):
             self.renderer = "auto"
+        if self.generative not in ("off", "orbit", "explore", "spiral"):
+            self.generative = "off"
+        if self.video_mode not in ("auto", "multiview", "per_frame", "best_frame"):
+            self.video_mode = "auto"
         if self.projection not in ("equirect180", "flat"):
             self.projection = "equirect180"
         self.eye_separation_mm = float(min(max(self.eye_separation_mm, 0.0), 200.0))
@@ -73,7 +81,8 @@ class Settings:
                        eye_separation_m=self.eye_separation_mm / 1000.0,
                        still_video_seconds=self.still_video_seconds, license_profile=self.license_profile,
                        output_dir=self.output_dir or None, fill_holes=self.fill_holes, renderer=self.renderer,
-                       allow_cpu=self.allow_cpu)
+                       allow_cpu=self.allow_cpu, generative=self.generative, video_mode=self.video_mode,
+                       ai_hole_fill=self.ai_hole_fill)
         for k, v in overrides.items():
             setattr(o, k, v)
         return o

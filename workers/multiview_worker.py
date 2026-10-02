@@ -98,6 +98,11 @@ def robust_sim3(src, dst, iters=3, keep=0.8):
     return s, R, t
 
 
+def free(torch):
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def run_vggt(model, batch, dtype, torch):
     """batch: list of (h,518,3) arrays → padded tensor → predictions (numpy)."""
     import numpy as np
@@ -110,15 +115,16 @@ def run_vggt(model, batch, dtype, torch):
         top = (H - a.shape[0]) // 2
         x[i, top:top + a.shape[0]] = a
         pads.append(top)
-    t = torch.from_numpy(x).permute(0, 3, 1, 2).cuda()
-    with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+    dev = next(model.parameters()).device
+    t = torch.from_numpy(x).permute(0, 3, 1, 2).to(dev)
+    with torch.no_grad(), torch.autocast(dev.type, dtype=dtype):
         pred = model(t)
     ext, intr = pose_encoding_to_extri_intri(pred["pose_enc"], t.shape[-2:])
     out = {"w2c": ext[0].float().cpu().numpy(), "K": intr[0].float().cpu().numpy(),
            "depth": pred["depth"][0, ..., 0].float().cpu().numpy(),
            "conf": pred["depth_conf"][0].float().cpu().numpy(), "pads": pads}
     del pred, t
-    torch.cuda.empty_cache()
+    free(torch)
     return out
 
 
@@ -192,17 +198,17 @@ def estimate_cameras(vin, model, dtype, torch, chunk, overlap):
     return c2w, Ks, depth, conf
 
 
-def metric_scale(moge_path, vin, depth, conf, torch, max_views=4):
+def metric_scale(moge_path, vin, depth, conf, torch, max_views=4, device="cuda"):
     import numpy as np
     from moge.model.v2 import MoGeModel
 
-    model = MoGeModel.from_pretrained(moge_path).cuda().eval()
+    model = MoGeModel.from_pretrained(moge_path).to(device).eval()
     ratios = []
     for i in np.linspace(0, len(vin) - 1, min(max_views, len(vin))).round().astype(int):
         a = vin[i][0]
-        t = torch.from_numpy(a).cuda().permute(2, 0, 1)
+        t = torch.from_numpy(a).to(device).permute(2, 0, 1)
         with torch.no_grad():
-            out = model.infer(t, use_fp16=True)
+            out = model.infer(t, use_fp16=device == "cuda")
         mz = out["depth"].float().cpu().numpy()
         vz, vc = depth[i], conf[i]
         ok = np.isfinite(mz) & (mz > 0) & (vz > 0) & (vc > np.percentile(vc, 50))
@@ -211,7 +217,7 @@ def metric_scale(moge_path, vin, depth, conf, torch, max_views=4):
         if ok.sum() > 100:
             ratios.append(float(np.median(mz[ok] / vz[ok])))
     del model
-    torch.cuda.empty_cache()
+    free(torch)
     return float(np.median(ratios)) if ratios else None
 
 
@@ -244,7 +250,9 @@ def main(req):
     import splat_trainer as st
 
     env = torch_env(torch)
-    if not env["cuda_available"]:
+    poses_only = bool(req.get("stop_after_poses"))   # CI self-test on machines without a GPU
+    device = "cuda" if env["cuda_available"] else "cpu"
+    if device == "cpu" and not poses_only:
         emit("error", code="cuda_unavailable", message="Multi-view reconstruction needs an NVIDIA GPU (CUDA).")
         sys.exit(1)
     out_dir = req["output_dir"]
@@ -269,19 +277,19 @@ def main(req):
         model = VGGT()
         sd = torch.load(os.path.join(vdir, "model.pt"), map_location="cpu", weights_only=True)
         model.load_state_dict(sd)
-    model = model.cuda().eval()
-    dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
+    model = model.to(device).eval()
+    dtype = (torch.bfloat16 if device == "cpu" or torch.cuda.get_device_capability()[0] >= 8 else torch.float16)
     vram = env.get("vram_total_mib", 16000) / 1024
     chunk = int(req.get("chunk") or (24 if vram >= 15 else 12))
     c2w_v, K_v, depth, conf = estimate_cameras(vin, model, dtype, torch, chunk, int(req.get("overlap", 8)))
     del model
-    torch.cuda.empty_cache()
+    free(torch)
 
     scale = None
     if req.get("moge_path"):
         progress(0.32, "metric scale (MoGe-2)")
         try:
-            scale = metric_scale(req["moge_path"], vin, depth, conf, torch)
+            scale = metric_scale(req["moge_path"], vin, depth, conf, torch, device=device)
         except Exception as e:  # noqa: BLE001 - metric scale is optional
             log(f"metric scale failed: {e}")
     if scale and np.isfinite(scale) and scale > 0:
@@ -312,6 +320,10 @@ def main(req):
     points = np.concatenate(pts).astype(np.float32)
     colors = np.concatenate(cols).astype(np.float32)
     log(f"{len(points):,} initial points from {n} views")
+    if poses_only:
+        emit("result", outputs={}, poses_only=True, views=n, points=int(len(points)), metric_scale_factor=scale,
+             c2ws=[m.tolist() for m in c2w_v], vram_peak_mib=vram_peak_mib(torch))
+        return
 
     # ------------------------------------------------------------ training
     Ks = np.stack([to_original_K(K_v[i], vin[i][1], 0) for i in range(n)])

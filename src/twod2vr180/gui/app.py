@@ -77,9 +77,12 @@ class WelcomeDialog(QDialog):
                    "GPU (or CPU mode in Settings, which is very slow).")
         body = QLabel(
             f"<p>{gpu}</p><p>Turn photos and videos into explorable 3D scenes, Gaussian splats, meshes and VR180 "
-            "stereo — entirely on this computer.</p><p>Before the first run, the app downloads its AI engine "
-            "(about 5–6 GB) and models (0.1–1.5 GB each) from their original publishers. You will see each "
-            "model's licence before it is downloaded.</p>")
+            "stereo — entirely on this computer: single photos, several photos of one place, videos, and "
+            "generative 3D that invents the parts a photo does not show.</p><p>Before the first run, the app "
+            "downloads its three AI engines (about 5–7 GB each) and models (0.1–5 GB each, about 20 GB in "
+            "total) from their original publishers — plan for ~40 GB of free disk space. You will see each "
+            "model's licence before it is downloaded. Stable Virtual Camera additionally needs a free Hugging "
+            "Face account (Settings → Hugging Face token).</p>")
         body.setWordWrap(True)
         body.setTextFormat(Qt.RichText)
         v.addWidget(body)
