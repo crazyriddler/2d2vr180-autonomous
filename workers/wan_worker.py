@@ -58,14 +58,58 @@ def _yaw_pitch(yaw, pitch):
     return ry @ rx
 
 
-def orbit_c2w(theta, radius=2.0, pitch=0.0):
-    """Camera on a circle around the point (0, 0, radius) in front of the first camera (OpenCV)."""
+def about_target(R, radius=2.0):
+    """Camera rotated by R about the point (0, 0, radius) in front of the first camera (OpenCV)."""
     import numpy as np
 
+    c = np.array([0.0, 0.0, radius])
     m = np.eye(4)
-    m[:3, :3] = _yaw_pitch(-theta, pitch)
-    m[:3, 3] = [radius * math.sin(theta), 0.0, radius * (1 - math.cos(theta))]
+    m[:3, :3] = R
+    m[:3, 3] = c - R @ c
     return m
+
+
+def orbit_c2w(theta, radius=2.0, pitch=0.0):
+    """Horizontal orbit (yaw theta) around the subject."""
+    return about_target(_yaw_pitch(-theta, pitch), radius)
+
+
+def crane_c2w(alpha, radius=2.0):
+    """Vertical orbit around the subject: alpha < 0 rises above it looking down, alpha > 0 goes below
+    looking up (OpenCV y points down)."""
+    return about_target(_yaw_pitch(0.0, alpha), radius)
+
+
+# (label, kind, degrees): yaw = horizontal orbit, crane = vertical orbit, look = rotation in place
+SHOT_PLANS = {
+    "arc": [("right", "yaw", 45), ("left", "yaw", -45), ("from above", "crane", -35), ("from below", "crane", 25)],
+    "orbit": [("right", "yaw", 100), ("left", "yaw", -100), ("from above", "crane", -50),
+              ("from below", "crane", 30)],
+}
+KEY_FRACTIONS = (0.25, 0.5, 0.75, 1.0)   # of each shot's full angle: the views used by sharp fusion
+
+
+def ease_curve(n):
+    import numpy as np
+
+    t = np.linspace(0, 1, n)
+    return 0.5 - 0.5 * np.cos(np.pi * t)            # smooth start and stop
+
+
+def key_frames(n):
+    """Frame indices where a shot reaches 1/4, 1/2, 3/4 and all of its angle."""
+    import numpy as np
+
+    e = ease_curve(n)
+    return sorted({int(np.argmin(np.abs(e - f))) for f in KEY_FRACTIONS} - {0})
+
+
+def shot_labels(kind):
+    if kind in SHOT_PLANS:
+        return [label for label, _, _ in SHOT_PLANS[kind]]
+    if kind == "explore":
+        return ["look right", "look left", "look up", "look down"]
+    return ["spiral"]
 
 
 def shots(kind, n):
@@ -73,11 +117,13 @@ def shots(kind, n):
     import numpy as np
 
     t = np.linspace(0, 1, n)
-    ease = 0.5 - 0.5 * np.cos(np.pi * t)            # smooth start and stop
-    if kind == "arc":
-        return [[orbit_c2w(s * math.radians(45) * e) for e in ease] for s in (1, -1)]
-    if kind == "orbit":
-        return [[orbit_c2w(s * math.radians(100) * e) for e in ease] for s in (1, -1)]
+    ease = ease_curve(n)
+    if kind in SHOT_PLANS:
+        out = []
+        for _, how, deg in SHOT_PLANS[kind]:
+            f = orbit_c2w if how == "yaw" else crane_c2w
+            out.append([f(math.radians(deg) * e) for e in ease])
+        return out
     if kind == "explore":
         out = []
         for yaw, pitch in ((60, 0), (-60, 0), (0, 30), (0, -25)):
@@ -297,6 +343,7 @@ def main(req):
     n = int(req.get("frames", 49))
     steps = int(req.get("steps", 50))
     plan = shots(kind, n)
+    labels = shot_labels(kind)
     torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.92)))
     attempts = [("model_cpu_offload", int(req.get("short_side", 704))),
                 ("model_cpu_offload_and_qfloat8", int(req.get("short_side", 704))),
@@ -319,11 +366,11 @@ def main(req):
                 progress(0.0, f"loading Wan 2.2 Fun 5B ({m})")
                 pipe, mode = load_pipeline(req["model_dir"], m, torch, embeds), m
             size = sample_size(image.width, image.height, short)
-            log(f"shot {si + 1}/{len(plan)}: {size[1]}x{size[0]}, {len(c2ws)} frames, {m}")
+            log(f"shot {si + 1}/{len(plan)} ({labels[si]}): {size[1]}x{size[0]}, {len(c2ws)} frames, {m}")
             oom = None
             try:
                 frames = generate_shot(pipe, req["image"], c2ws, hfov, size, steps, int(req.get("seed", 42)) + si,
-                                       prompt, torch, f"shot {si + 1}/{len(plan)}")
+                                       prompt, torch, f"shot {si + 1}/{len(plan)} ({labels[si]})")
             except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
                 if "out of memory" not in str(e).lower() or ai == len(attempts) - 1:
                     raise
@@ -337,10 +384,11 @@ def main(req):
             pipe = None
             gc.collect()
             torch.cuda.empty_cache()
-        for fi in range(every, len(frames), every):      # frame 0 is the photo itself
+        keys = set(key_frames(len(frames)))
+        for fi in sorted(set(range(every, len(frames), every)) | keys):      # frame 0 is the photo itself
             p = os.path.join(out_dir, f"shot{si}_{fi:03d}.png")
             Image.fromarray((frames[fi] * 255).round().astype(np.uint8)).save(p)
-            views.append({"path": p, "generated": True, "shot": si, "frame": fi})
+            views.append({"path": p, "generated": True, "shot": si, "frame": fi, "key": fi in keys})
     with open(os.path.join(out_dir, "views.json"), "w") as f:
         json.dump(views, f)
     emit("result", views=views, vram_peak_mib=vram_peak_mib(torch), trajectory=kind, mode=mode)

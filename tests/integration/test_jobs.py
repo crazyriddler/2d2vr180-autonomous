@@ -314,4 +314,27 @@ def test_generative_prefers_wan_when_installed(ctx, rtx4080, photo, monkeypatch)
     assert {m["id"] for m in rep["models"]} >= {"wan2.2-fun-5b-camera", "vggt-1b"}
     assert "seva-1.1" not in {m["id"] for m in rep["models"]}
     req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
-    assert req["trajectory"] == "arc" and req["frames"] == 49 and req["model_dir"].endswith("wan2.2-fun-5b-camera")
+    assert req["trajectory"] == "arc" and req["frames"] == 33 and req["model_dir"].endswith("wan2.2-fun-5b-camera")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    # sharp fusion (default): the photo + a few key views, not every generated frame
+    assert mv["assembly"] == "fusion" and mv["fuse_ref_side"] == 1024
+    assert len(mv["images"]) == 17 and not mv["images"][0]["generated"]
+    assert rep["backend"]["extra"]["assembly"] == "fusion"
+
+
+def test_generative_trained_assembly_uses_every_frame(ctx, rtx4080, photo, monkeypatch):
+    from conftest import REPO, install_fake_model
+    from twod2vr180.backends.generative import GenerativeSceneBackend
+    from twod2vr180.backends.multiview import MultiViewBackend
+
+    fakes = REPO / "tests" / "fakes"
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(fakes / "fake_multiview_worker.py"))
+    monkeypatch.setattr(GenerativeSceneBackend, "wan_script", str(fakes / "fake_seva_worker.py"))
+    install_fake_model(ctx.models, "wan2.2-fun-5b-camera")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="arc", gen_assembly="train",
+                          layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
+    assert req["frames"] == 49 and req["steps"] == 30
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["assembly"] == "train" and len(mv["images"]) == 50

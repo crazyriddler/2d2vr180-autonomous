@@ -51,9 +51,14 @@ verified (SHA256) before use.
 2. Choose **Auto** (recommended), **Quality** or **Fast**.
 3. Choose outputs: VR180 side-by-side and/or top/bottom, VR180 or flat 3D projection.
 4. Under **3D reconstruction**:
-   - **Photo: generative 3D** — *Off* uses only what the photo shows. *Around the subject ±60°* is the most
-     reliable and the best choice for people; *Orbit 360°* also invents the back (objects), *Explore* invents the surroundings so a VR180 is filled (best for VR180),
+   - **Photo: generative 3D** — *Off* uses only what the photo shows. *Around the subject* films four short
+     camera moves (45° to each side, from above, from below) and is the best choice for people; *Wide orbit* also
+     invents the back (objects), *Explore* invents the surroundings so a VR180 is filled (best for VR180),
      *Spiral* adds a small, faithful extension.
+   - **Generative 3D assembly** — *Sharp fusion* (default) gives every view MoGe-2's crisp per-pixel geometry,
+     keeps the photo exactly as it is and adds only what the other views show (sides, top, underside): as
+     sharp as a single photo from any angle. *Trained splat* fits one model to every generated frame: smoother
+     transitions but softer, because the generated frames never agree perfectly.
    - **Video** — *Automatic* analyses the video; *Whole video → one 3D scene* reconstructs every part of the
      video into one splat (camera must move); *Frame by frame* for people/animals moving in front of a fixed
      camera; *Sharpest frame only*.
@@ -81,7 +86,7 @@ When a job finishes, **Results** shows it. From there you can:
 | Input | What happens |
 |---|---|
 | Photo | Single-image 3D (SHARP if installed and allowed, otherwise MoGe-2, otherwise Depth-Anything). |
-| Photo + generative 3D | Wan 2.2 films 1–4 short camera moves that start at your photo (Stable Virtual Camera if Wan is not installed); the multi-view engine trains one 3D splat from all frames. |
+| Photo + generative 3D | Wan 2.2 films 1–4 short camera moves that start at your photo (Stable Virtual Camera if Wan is not installed). Sharp fusion: VGGT places a few key views in 3D, MoGe-2 gives each one sharp geometry, and the photo is kept whole while the key views add only what it does not show. Trained splat: one 3D splat optimised on all frames. |
 | Several photos | Multi-view engine: VGGT finds where each photo was taken, MoGe-2 gives real-world scale, a 3D Gaussian splat is trained on all photos. |
 | Video, camera moves | Multi-view engine on up to 80 keyframes of the whole video. |
 | Video, fixed camera, people/animals move | Each frame is reconstructed (depth stabilised over time) → a VR180 video of the motion, optional 4D sequence. |

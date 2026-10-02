@@ -164,6 +164,20 @@ def multiview_selftest(a, env, log, out) -> dict:
         ok = bool(right[2] > right[1] > right[0] - 1e-6) and int(res.get("points") or 0) > 1000
     r["multiview_poses"] = {"ok": bool(ok), "points": res.get("points"), "metric_scale": res.get("metric_scale_factor"),
                             "camera_x": tx, "yaw_deg": yaw, "error": res.get("message")}
+    # Sharp fusion (generative 3D assembly) for real on the CPU: the two shifted crops play the
+    # generated views; only their new strip on the right may be added to the photo's splats.
+    fviews = [dict(v, generated=i > 0) for i, v in enumerate(views)]
+    res = run_worker(runtime_python(env, "recon3d-cu124"), "multiview_worker.py",
+                     {"images": fviews, "output_dir": str(out / "fusion_out"), "vggt_dir": str(model_dir(env, "vggt-1b")),
+                      "moge_path": str(model_dir(env, "moge-2-vitl-normal") / "model.pt"), "assembly": "fusion",
+                      "allow_cpu": True, "max_side": 640, "fuse_ref_side": 320, "fuse_side": 320, "mesh": True,
+                      "max_gaussians": 1_000_000}, out, env, log, "multiview_fusion")
+    prov = res.get("provenance") or {}
+    ref_px = 320 * 240
+    ok = (res.get("event") == "result" and Path((res.get("outputs") or {}).get("ply", "")).exists()
+          and prov.get("inferred", 0) > 0.8 * ref_px and 0 < prov.get("generative", 0) < 0.6 * ref_px)
+    r["multiview_fusion"] = {"ok": bool(ok), "provenance": prov, "splats": res.get("splats"), "mesh": res.get("mesh"),
+                             "error": res.get("message")}
     return r
 
 

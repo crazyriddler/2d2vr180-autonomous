@@ -1,3 +1,24 @@
+# 2D2VR180 1.0.0-rc12 — generative 3D: sharp fusion, views from above and below
+
+## What's new in rc12
+
+- **Sharp fusion — new default for generative 3D.** rc11 trained one splat on every generated frame. The
+  frames never agree perfectly, so training averaged them: soft from the side, broken from above or below.
+  Now:
+  1. Wan 2.2 films fewer, shorter shots.
+  2. VGGT places four key views per shot in 3D.
+  3. MoGe-2 gives each key view the same crisp per-pixel geometry as the single-photo mode.
+  4. The photo is kept exactly as it is. The other views add only surfaces it does not show (sides, top,
+     underside, the background behind the subject). Where two views disagree, the earlier one wins instead of
+     being averaged.
+  - No training step, so it is sharp from every angle that a view covers, and faster.
+  - The previous behaviour is still available as *Generative 3D assembly → Trained splat*.
+- **Views from above and below.** *Around the subject* now films four shots: 45° to the right, 45° to the
+  left, 35° from above, and 25° from below. *Wide orbit* does the same at ±100°, 50° above and 30° below.
+- Shorter Wan shots for fusion: 33 frames / 25 steps (Fast), 49 / 30 (Auto), 81 / 50 (Quality).
+- `run_report.json` now includes the backend details: assembly, engine, views, splats.
+- CI: the real VGGT + MoGe-2 + fusion pipeline runs on Windows (CPU) on every integration build.
+
 # 2D2VR180 1.0.0-rc11 — Wan 2.2 fits in 16 GB VRAM / 32 GB RAM
 
 ## What's new in rc11
@@ -167,8 +188,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc11-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc11-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc12-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc12-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

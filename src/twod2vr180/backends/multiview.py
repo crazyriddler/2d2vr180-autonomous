@@ -21,6 +21,11 @@ QUALITY = {  # mode → (training steps, longest image side, splat cap)
     "auto": (9000, 960, 2_000_000),
     "quality": (15000, 1280, 3_000_000),
 }
+FUSION = {  # sharp fusion: mode → (photo side, generated-view side, splat cap)
+    "fast": (1024, 768, 2_000_000),
+    "auto": (1536, 1024, 3_000_000),
+    "quality": (2048, 1280, 4_000_000),
+}
 
 
 class MultiViewBackend(Backend):
@@ -60,13 +65,18 @@ class MultiViewBackend(Backend):
     def reconstruct(self, views: list[dict], inp: JobInput, ctx: BackendContext, options: dict, progress, cancel,
                     progress_range: tuple[float, float] = (0.0, 0.95), extra_models: list[dict] | None = None,
                     extra_warnings: list[str] | None = None) -> BackendResult:
-        steps, side, cap = QUALITY.get(options.get("mode", "auto"), QUALITY["auto"])
+        mode = options.get("mode", "auto")
+        steps, side, cap = QUALITY.get(mode, QUALITY["auto"])
+        assembly = options.get("assembly") if options.get("assembly") == "fusion" else "train"
         out_dir = inp.work_dir / "multiview_out"
         req = {"images": views, "output_dir": str(out_dir),
                "vggt_dir": str(ctx.models.model_dir("vggt-1b")),
                "moge_path": str(ctx.models.paths("moge-2-vitl-normal")["model.pt"]),
                "max_side": int(options.get("max_side", side)), "steps": int(options.get("train_steps", steps)),
-               "max_gaussians": cap, "mesh": bool(options.get("mesh", True))}
+               "max_gaussians": cap, "mesh": bool(options.get("mesh", True)), "assembly": assembly}
+        if assembly == "fusion":
+            ref_side, gen_side, req["max_gaussians"] = FUSION.get(mode, FUSION["auto"])
+            req.update(fuse_ref_side=ref_side, fuse_side=gen_side)
         ctx.models.paths("vggt-1b")  # clear error when missing
         out = run_worker(ctx.runtimes.python(self.runtime_id), self.worker_script, req, inp.work_dir / "worker",
                          progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id), log=options.get("log"),
@@ -86,10 +96,16 @@ class MultiViewBackend(Backend):
             obj = exp / "scene.obj"
             shutil.copy2(files["obj"], obj)
         p = res.get("provenance") or {}
-        note = (f"Trained on {res.get('views')} views ({res.get('real_views')} real). Splats seen by two or more real "
-                f"views are OBSERVED ({p.get('observed', 0):,}), by one real view INFERRED ({p.get('inferred', 0):,})")
-        note += (f", only by generated views GENERATIVE ({p.get('generative', 0):,})." if p.get("generative")
-                 else ".")
+        if res.get("assembly") == "fusion":
+            note = (f"Sharp fusion of {res.get('views')} views: splats from the photo's own pixels are INFERRED "
+                    f"(observed colours, network-predicted depth; {p.get('inferred', 0):,}); surfaces added from "
+                    f"generated views are GENERATIVE ({p.get('generative', 0):,}).")
+        else:
+            note = (f"Trained on {res.get('views')} views ({res.get('real_views')} real). Splats seen by two or more "
+                    f"real views are OBSERVED ({p.get('observed', 0):,}), by one real view INFERRED "
+                    f"({p.get('inferred', 0):,})")
+            note += (f", only by generated views GENERATIVE ({p.get('generative', 0):,})." if p.get("generative")
+                     else ".")
         warnings = list(extra_warnings or [])
         if not res.get("metric"):
             warnings.append("Metric scale could not be estimated; stereo depth may need the eye-separation setting.")
@@ -102,4 +118,5 @@ class MultiViewBackend(Backend):
             worker_env=out["env"], models_used=models + list(extra_models or []), warnings=warnings,
             extra={"gaussians": len(scene), "views": res.get("views"), "real_views": res.get("real_views"),
                    "reference_psnr_db": res.get("reference_psnr_db"), "mesh": res.get("mesh"),
+                   "assembly": res.get("assembly", "train"),
                    "metric_scale_factor": res.get("metric_scale_factor")})

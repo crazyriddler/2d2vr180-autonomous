@@ -5,8 +5,10 @@ Two generation engines, chosen automatically:
     camera-controlled shots that start at the photo; keeps people and animals intact (preferred);
   * Stable Virtual Camera (Stability AI, non-commercial) - multi-view diffusion; good for scenes and
     objects, documented to distort people.
-The multi-view engine then reconstructs the views into one consistent splat. Splats visible from the
-original photo are labelled INFERRED, everything else GENERATIVE.
+The views are then assembled into one 3D scene, by default with *sharp fusion*: VGGT poses the
+views, MoGe-2 gives each one crisp per-pixel geometry, and only surfaces the photo does not show are
+added from the generated views (no optimisation, so nothing is blurred). The alternative, *trained*,
+optimises one splat against every generated frame. Photo pixels are INFERRED, the rest GENERATIVE.
 """
 
 from __future__ import annotations
@@ -16,13 +18,18 @@ from .base import (NOVEL_VIEW_COMPLETION, SCENE_STATIC, SINGLE_VIEW, Availabilit
 from .multiview import MultiViewBackend
 
 TRAJECTORIES = {
-    "arc": "around the subject, ±45-60° to each side (most reliable; best for people)",
-    "orbit": "wide orbit around the main subject (±100° with Wan 2.2, 360° with Stable Virtual Camera)",
+    "arc": "around the subject: 45° to each side, from above and from below (best for people)",
+    "orbit": "wide orbit around the main subject (±100°, above and below with Wan 2.2; 360° with Stable "
+             "Virtual Camera)",
     "explore": "look around from where the photo was taken, with a little head movement (best for VR180)",
     "spiral": "small forward-facing spiral (most faithful, least new content)",
 }
 FRAMES = {"fast": 48, "auto": 80, "quality": 110}          # Stable Virtual Camera views
-WAN_FRAMES = {"fast": 49, "auto": 81, "quality": 81}       # frames per Wan shot (4k+1)
+# (frames per shot (4k+1), sampling steps). Sharp fusion only uses a few key views per shot, so its
+# shots can be shorter; a trained splat wants many frames.
+WAN_SETTINGS = {"fusion": {"fast": (33, 25), "auto": (49, 30), "quality": (81, 50)},
+                "train": {"fast": (49, 30), "auto": (81, 50), "quality": (81, 50)}}
+FUSION_SEVA_VIEWS = 16
 SEVA_MODELS = ("seva-1.1", "sd21-vae", "clip-vit-h-14")
 WAN_MODELS = ("wan2.2-fun-5b-camera",)
 
@@ -88,14 +95,18 @@ class GenerativeSceneBackend(Backend):
             traj = "arc"
         engine = getattr(self, "_engine", None) or generation_engine(ctx, options.get("engine")) or "wan"
         mode = options.get("mode", "auto")
+        assembly = options.get("assembly") or "fusion"
+        if assembly not in WAN_SETTINGS:
+            assembly = "fusion"
         ref = inp.frames[min(int(options.get("reference_frame_index", 0)), len(inp.frames) - 1)]
         log = options.get("log") or (lambda m: None)
         out_dir = str(inp.work_dir / "generated_views")
         if engine == "wan":
             name, models = "Wan 2.2 Fun 5B Control-Camera", WAN_MODELS
             log(f"generating camera shots with {name} along a '{traj}' path: {TRAJECTORIES[traj]}")
-            req = {"image": str(ref), "output_dir": out_dir, "trajectory": traj, "frames": WAN_FRAMES.get(mode, 81),
-                   "steps": 30 if mode == "fast" else 50, "short_side": 704, "hfov_deg": options.get("hfov_deg"),
+            frames, steps = WAN_SETTINGS[assembly].get(mode, WAN_SETTINGS[assembly]["auto"])
+            req = {"image": str(ref), "output_dir": out_dir, "trajectory": traj, "frames": frames,
+                   "steps": steps, "short_side": 704, "hfov_deg": options.get("hfov_deg"),
                    "seed": int(options.get("seed", 42)), "model_dir": str(ctx.models.model_dir(WAN_MODELS[0])),
                    "every": 2}
             ctx.models.paths(WAN_MODELS[0])
@@ -115,6 +126,9 @@ class GenerativeSceneBackend(Backend):
                          progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id), log=options.get("log"),
                          progress_range=(0.0, 0.5), timeout_s=4 * 3600)
         views = out["result"]["views"]
+        if assembly == "fusion":
+            views = self.fusion_views(views)
+            log(f"sharp fusion of the photo and {len(views) - 1} key views")
         # The real photo is sampled more often than any single generated view during training.
         w_in = max(4.0, len(views) / 10)
         mv_views = [{"path": v["path"], "generated": bool(v["generated"]), "weight": 1.0 if v["generated"] else w_in}
@@ -122,13 +136,26 @@ class GenerativeSceneBackend(Backend):
         gen_models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
                       for m in models]
         res = self.mv.reconstruct(
-            mv_views, inp, ctx, {**options, "max_side": 1024}, progress, cancel, progress_range=(0.5, 0.97),
-            extra_models=gen_models,
+            mv_views, inp, ctx, {**options, "max_side": 1024, "assembly": assembly}, progress, cancel,
+            progress_range=(0.5, 0.97), extra_models=gen_models,
             extra_warnings=[f"Generative completion: {len(views) - 1} views were invented by {name} "
-                            f"('{traj}' path). Splats seen only in those views are labelled GENERATIVE; they are "
+                            f"('{traj}' path). Splats taken from those views are labelled GENERATIVE; they are "
                             "plausible, not measured."])
         res.backend = self.id
-        res.extra.update({"trajectory": traj, "engine": engine, "generated_views": len(views) - 1,
+        res.extra.update({"trajectory": traj, "engine": engine, "assembly": assembly,
+                          "generated_views": len(views) - 1,
                           "generation_vram_peak_mib": out["result"].get("vram_peak_mib")})
         res.worker_env = {"generation": out["env"], "reconstruction": res.worker_env}
         return res
+
+    @staticmethod
+    def fusion_views(views: list[dict]) -> list[dict]:
+        """The photo plus the key views of every shot (Wan marks them; for engines that do not, an even
+        selection of the generated views)."""
+        photo = [v for v in views if not v.get("generated")][:1]
+        gen = [v for v in views if v.get("generated")]
+        keys = [v for v in gen if v.get("key")]
+        if not keys and gen:
+            n = min(FUSION_SEVA_VIEWS, len(gen))
+            keys = [gen[round(i * (len(gen) - 1) / max(n - 1, 1))] for i in range(n)]
+        return photo + keys

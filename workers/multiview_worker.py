@@ -243,6 +243,91 @@ def tsdf_mesh(depths, Ks, c2ws, colors, out_obj, voxel):
     return {"vertices": len(mesh.vertices), "faces": len(mesh.triangles), "voxel_m": voxel}
 
 
+def fuse_views(req, items, vin, c2w_v, K_v, depth, conf, device, torch, out_dir):
+    """Sharp assembly (generated views): MoGe-2 depth per view, scaled onto the VGGT depth of that
+    view, merged by coverage (fusion.py) - no optimisation, so nothing is averaged into blur."""
+    import numpy as np
+    from moge.model.v2 import MoGeModel
+
+    import fusion as fu
+    import splat_trainer as st
+
+    model = MoGeModel.from_pretrained(req["moge_path"]).to(device).eval()
+    ref_side, side = int(req.get("fuse_ref_side", 1536)), int(req.get("fuse_side", 1024))
+    views, scales = [], []
+    for i, it in enumerate(items):
+        progress(0.36 + 0.4 * i / len(items), f"sharp geometry (MoGe-2) {i + 1}/{len(items)}")
+        img = load_rgb(it["path"], ref_side if i == 0 else side)
+        h, w = img.shape[:2]
+        t = torch.from_numpy(img).to(device).float().div(255).permute(2, 0, 1)
+        with torch.no_grad():
+            out = model.infer(t, resolution_level=9, use_fp16=device == "cuda")
+        zm = out["depth"].float().cpu().numpy()
+        valid = np.isfinite(zm) & (zm > 0)
+        if "mask" in out:
+            valid &= out["mask"].cpu().numpy().astype(bool)
+        del out, t
+        # this image's pixels → the view's VGGT pixels (see vggt_input)
+        info = vin[i][1]
+        r = w / (info["sx"] * VGGT_W)
+        xs = ((np.arange(w) + 0.5) / r / info["sx"]).astype(int)
+        ys = ((np.arange(h) + 0.5) / r / info["sy"] - info["crop"]).astype(int)
+        inside_y = (ys >= 0) & (ys < depth[i].shape[0])
+        xs = np.clip(xs, 0, depth[i].shape[1] - 1)
+        yc = np.clip(ys, 0, depth[i].shape[0] - 1)
+        zv = depth[i][yc][:, xs]
+        cv = conf[i][yc][:, xs]
+        ok = valid & inside_y[:, None] & (cv > np.percentile(conf[i], 50))
+        s = fu.align_scale(zm, zv, ok)
+        if s is None:
+            if i == 0:
+                s = 1.0
+            else:
+                log(f"view {i}: could not align its depth; skipped")
+                continue
+        scales.append(s)
+        K = to_original_K(K_v[i], info, 0)
+        K[:2] *= r
+        views.append(fu.View(zm * s, K, c2w_v[i], img, valid, bool(it.get("generated"))))
+        if i == 0:
+            ref_index = len(views) - 1
+    del model
+    free(torch)
+    log("depth alignment scales: " + ", ".join(f"{s:.3f}" for s in scales))
+    progress(0.8, f"fusing {len(views)} views")
+    order = fu.fusion_order([v.c2w for v in views], ref_index)
+    fu.fuse(views, order)
+    for k in order:
+        v = views[k]
+        log(f"view {k}: {int(v.keep.sum()):,} of {int(v.valid.sum()):,} pixels kept"
+            + (" (generated)" if v.generated else " (photo)"))
+    arrs, prov = fu.assemble(views, int(req.get("max_gaussians", 3_000_000)))
+    n = len(prov)
+    params = {k: torch.from_numpy(a) for k, a in arrs.items()}
+    params["shN"] = torch.zeros(n, 0, 3)
+    ply = os.path.join(out_dir, "scene.ply")
+    count = st.write_ply(params, ply, prov)
+    log(f"{count:,} splats")
+    cams = [{"width": v.w, "height": v.h, "fx": float(v.K[0, 0]), "fy": float(v.K[1, 1]), "cx": float(v.K[0, 2]),
+             "cy": float(v.K[1, 2]), "c2w": v.c2w.tolist(), "file": os.path.basename(items[0]["path"]) if j == ref_index
+             else f"view{j}", "generated": v.generated} for j, v in enumerate(views)]
+    with open(os.path.join(out_dir, "cameras.json"), "w") as f:
+        json.dump(cams, f)
+    outputs = {"ply": ply, "cameras": os.path.join(out_dir, "cameras.json")}
+    mesh_info = None
+    if req.get("mesh", True):
+        progress(0.9, "mesh (TSDF fusion)")
+        try:
+            dd = [np.nan_to_num(v.z, nan=0.0) for v in views]
+            med = float(np.median(dd[ref_index][dd[ref_index] > 0]))
+            mesh_info = tsdf_mesh(dd, [v.K for v in views], [v.c2w for v in views], [v.image for v in views],
+                                  os.path.join(out_dir, "scene.obj"), max(med / 250, 1e-3))
+            outputs["obj"] = os.path.join(out_dir, "scene.obj")
+        except Exception as e:  # noqa: BLE001 - the mesh is optional
+            log(f"mesh export failed: {e}")
+    return outputs, count, prov, mesh_info
+
+
 def main(req):
     import numpy as np
     import torch
@@ -252,12 +337,14 @@ def main(req):
     env = torch_env(torch)
     poses_only = bool(req.get("stop_after_poses"))   # CI self-test on machines without a GPU
     device = "cuda" if env["cuda_available"] else "cpu"
-    if device == "cpu" and not poses_only:
+    fusion_mode = req.get("assembly") == "fusion"
+    if device == "cpu" and not (poses_only or (fusion_mode and req.get("allow_cpu"))):
         emit("error", code="cuda_unavailable", message="Multi-view reconstruction needs an NVIDIA GPU (CUDA).")
         sys.exit(1)
     out_dir = req["output_dir"]
     os.makedirs(out_dir, exist_ok=True)
     items = req["images"]
+    n_views = len(items)
     if len(items) < 2:
         emit("error", code="bad_input", message="Multi-view reconstruction needs at least 2 images.")
         sys.exit(1)
@@ -297,6 +384,18 @@ def main(req):
         depth = [d * scale for d in depth]
         for m in c2w_v:
             m[:3, 3] *= scale
+
+    if fusion_mode and not poses_only:
+        if not req.get("moge_path"):
+            emit("error", code="model_missing", message="Sharp fusion needs the MoGe-2 model.")
+            sys.exit(1)
+        outputs, count, prov, mesh_info = fuse_views(req, items, vin, c2w_v, K_v, depth, conf, device, torch,
+                                                     out_dir)
+        emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), metric=bool(scale),
+             metric_scale_factor=scale, views=n_views, real_views=sum(1 for it in items if not it.get("generated")),
+             reference_psnr_db=None, splats=count, mesh=mesh_info, assembly="fusion",
+             provenance={"observed": 0, "inferred": int((prov == 1).sum()), "generative": int((prov == 2).sum())})
+        return
 
     # ------------------------------------------------------------ initial points
     progress(0.35, "building the initial point cloud")
