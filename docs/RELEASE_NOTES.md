@@ -1,3 +1,17 @@
+# 2D2VR180 1.0.0-rc13 — Wan 2.2 memory: one process per attempt, fewer frames
+
+## What's new in rc13
+
+- **Fix: Wan 2.2 still ran out of GPU memory and filled the 32 GB of RAM (rc12, Quality).** Each failed
+  memory setting left about 8 GB of VRAM and a lot of RAM behind inside the same process. Now:
+  - **Separate process per attempt.** Each memory setting runs in its own process, and only exiting the
+    process frees everything for certain.
+  - **Nothing is redone.** Shots that are already finished, and the encoded prompt, are reused.
+  - **16 GB cards start directly with FP8 weights.** That is the setting that fits; a 24 GB+ card still
+    starts with full precision.
+- **Fewer frames for sharp fusion.** Fusion only uses 4 key views per shot, so the shots are now 25 frames
+  (Fast), 33 (Auto) or 49 (Quality), instead of up to 81. Faster and lighter.
+
 # 2D2VR180 1.0.0-rc12 — generative 3D: sharp fusion, views from above and below
 
 ## What's new in rc12
@@ -15,7 +29,6 @@
   - The previous behaviour is still available as *Generative 3D assembly → Trained splat*.
 - **Views from above and below.** *Around the subject* now films four shots: 45° to the right, 45° to the
   left, 35° from above, and 25° from below. *Wide orbit* does the same at ±100°, 50° above and 30° below.
-- Shorter Wan shots for fusion: 33 frames / 25 steps (Fast), 49 / 30 (Auto), 81 / 50 (Quality).
 - `run_report.json` now includes the backend details: assembly, engine, views, splats.
 - CI: the real VGGT + MoGe-2 + fusion pipeline runs on Windows (CPU) on every integration build.
 
@@ -188,8 +201,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc12-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc12-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc13-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc13-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

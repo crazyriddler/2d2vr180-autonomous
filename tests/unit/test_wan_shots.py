@@ -29,3 +29,9 @@ def test_key_frames_spread_over_the_shot():
     assert len(k) == 4 and k[-1] == 48 and 0 not in k
     e = w.ease_curve(49)
     assert np.allclose(e[k], [0.25, 0.5, 0.75, 1.0], atol=0.05)
+
+
+def test_16gb_cards_start_with_fp8_weights():
+    a16 = w.memory_attempts(16376, 704)
+    assert a16[0] == ("model_cpu_offload_and_qfloat8", 704) and a16[-1][0] == "sequential_cpu_offload"
+    assert w.memory_attempts(24576, 704)[0] == ("model_cpu_offload", 704)

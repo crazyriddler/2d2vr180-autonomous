@@ -14,7 +14,7 @@ optimises one splat against every generated frame. Photo pixels are INFERRED, th
 from __future__ import annotations
 
 from .base import (NOVEL_VIEW_COMPLETION, SCENE_STATIC, SINGLE_VIEW, Availability, Backend, BackendContext,
-                   BackendResult, Estimate, JobInput, run_worker)
+                   BackendError, BackendResult, Estimate, JobInput, run_worker)
 from .multiview import MultiViewBackend
 
 TRAJECTORIES = {
@@ -27,7 +27,7 @@ TRAJECTORIES = {
 FRAMES = {"fast": 48, "auto": 80, "quality": 110}          # Stable Virtual Camera views
 # (frames per shot (4k+1), sampling steps). Sharp fusion only uses a few key views per shot, so its
 # shots can be shorter; a trained splat wants many frames.
-WAN_SETTINGS = {"fusion": {"fast": (33, 25), "auto": (49, 30), "quality": (81, 50)},
+WAN_SETTINGS = {"fusion": {"fast": (25, 25), "auto": (33, 30), "quality": (49, 40)},
                 "train": {"fast": (49, 30), "auto": (81, 50), "quality": (81, 50)}}
 FUSION_SEVA_VIEWS = 16
 SEVA_MODELS = ("seva-1.1", "sd21-vae", "clip-vit-h-14")
@@ -122,9 +122,20 @@ class GenerativeSceneBackend(Backend):
             for m in ("seva-1.1", "sd21-vae"):
                 ctx.models.paths(m)  # clear error when missing
             script = self.worker_script
-        out = run_worker(ctx.runtimes.python(self.runtime_id), script, req, inp.work_dir / "worker",
-                         progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id), log=options.get("log"),
-                         progress_range=(0.0, 0.5), timeout_s=4 * 3600)
+        # Wan: each memory setting runs in a fresh process (only an exiting process reliably frees VRAM
+        # and RAM); the worker reports 'oom_retry' while a lighter setting is left, and reuses the shots
+        # it already finished.
+        for attempt in range(8):
+            req["attempt"] = attempt
+            try:
+                out = run_worker(ctx.runtimes.python(self.runtime_id), script, req, inp.work_dir / "worker",
+                                 progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id),
+                                 log=options.get("log"), progress_range=(0.0, 0.5), timeout_s=4 * 3600)
+                break
+            except BackendError as e:
+                if e.code != "oom_retry":
+                    raise
+                log(str(e))
         views = out["result"]["views"]
         if assembly == "fusion":
             views = self.fusion_views(views)
