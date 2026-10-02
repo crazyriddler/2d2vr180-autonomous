@@ -44,21 +44,26 @@ COMPONENTS: list[Component] = [
     Component("model-vggt", "VGGT-1B — camera poses and depth from many views (non-commercial)", "model", "vggt-1b",
               "Finds where each photo/frame was taken and its depth.", True, ("engine-video",)),
     # ---------------------------------------------------------------- generative
-    Component("engine-gen", "Generative engine (Stable Virtual Camera, LaMa)", "runtime", "gen-cu128",
+    Component("engine-gen", "Generative engine (Wan 2.2, Stable Virtual Camera, LaMa)", "runtime", "gen-cu128",
               "Invents the parts of a scene a photo does not show (other sides of a subject, the surroundings "
               "for VR180) and fills holes behind objects with AI.", True),
     Component("model-lama", "LaMa — AI hole filling for VR180", "model", "big-lama",
               "Fills the gaps that appear behind objects in VR180 stereo with plausible texture.", True,
               ("engine-gen",)),
-    Component("model-seva", "Stable Virtual Camera 1.1 — new views of a photo (non-commercial, gated)", "model",
-              "seva-1.1", "Generates the camera path (orbit / explore / spiral) for Generative 3D.", True,
+    Component("model-wan", "Wan 2.2 Fun 5B Control-Camera — generative 3D (Apache-2.0)", "model",
+              "wan2.2-fun-5b-camera", "Video model that films new camera moves around your photo for Generative 3D. "
+              "Keeps people and animals intact. ~25 GB; needs ~32 GB of RAM.", True,
+              ("engine-gen", "engine-video", "model-vggt", "model-moge-l")),
+    Component("model-seva", "Stable Virtual Camera 1.1 — alternative generative engine (non-commercial, gated)",
+              "model", "seva-1.1", "Multi-view diffusion for scenes and objects without people (used only when Wan "
+              "2.2 is not installed). Distorts people.", False,
               ("engine-gen", "model-seva-vae", "model-clip-h", "engine-video", "model-vggt", "model-moge-l"),
               note="Gated: first accept the licence at huggingface.co/stabilityai/stable-virtual-camera and paste "
                    "a Hugging Face access token (read) in Settings."),
     Component("model-seva-vae", "Stable Diffusion 2.1 VAE (for Stable Virtual Camera)", "model", "sd21-vae",
-              "Image encoder/decoder used by Stable Virtual Camera.", True, ("engine-gen",)),
+              "Image encoder/decoder used by Stable Virtual Camera.", False, ("engine-gen",)),
     Component("model-clip-h", "OpenCLIP ViT-H/14 (for Stable Virtual Camera)", "model", "clip-vit-h-14",
-              "Image understanding used by Stable Virtual Camera.", True, ("engine-gen",)),
+              "Image understanding used by Stable Virtual Camera.", False, ("engine-gen",)),
 ]
 
 

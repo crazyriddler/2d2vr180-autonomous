@@ -17,3 +17,10 @@ opencv-python-headless==4.12.0.88
 huggingface-hub<1.0
 tqdm
 pyyaml
+# Wan 2.2 Fun 5B camera control (VideoX-Fun)
+transformers==4.57.1
+accelerate
+omegaconf
+sentencepiece
+librosa
+func_timeout

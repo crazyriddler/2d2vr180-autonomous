@@ -199,6 +199,18 @@ def generative_selftest(a, env, log, out) -> dict:
     p = subprocess.run([str(runtime_python(env, "gen-cu128")), "-c", code], capture_output=True, text=True, env=env)
     print(p.stdout[-2000:], p.stderr[-4000:], flush=True)
     r["seva_import"] = {"ok": "SEVA_OK" in p.stdout, "stderr": p.stderr[-1500:]}
+    code = ("import sys, os; sys.path.insert(0, r'%s'); import wan_worker as w; w.stub_triton(); "
+            "os.environ['VIDEOX_ATTENTION_TYPE'] = 'SDPA'; "
+            "from videox_fun.models import AutoencoderKLWan3_8, AutoTokenizer, Wan2_2Transformer3DModel, "
+            "WanT5EncoderModel; from videox_fun.pipeline import Wan2_2FunControlPipeline; "
+            "from videox_fun.utils import apply_gpu_memory_mode, filter_kwargs, get_image_to_video_latent; "
+            "from videox_fun.data import process_pose_params; "
+            "h, wd = w.sample_size(1037, 1555, 704); "
+            "cam = process_pose_params(w.pose_rows(w.shots('arc', 49)[0], 60, wd, h), width=wd, height=h, "
+            "original_pose_width=wd, original_pose_height=h); print('WAN_OK', tuple(cam.shape))" % (REPO / "workers"))
+    p = subprocess.run([str(runtime_python(env, "gen-cu128")), "-c", code], capture_output=True, text=True, env=env)
+    print(p.stdout[-2000:], p.stderr[-4000:], flush=True)
+    r["wan_import"] = {"ok": "WAN_OK (49, 1056, 704, 6)" in p.stdout, "stderr": p.stderr[-1500:]}
     return r
 
 
