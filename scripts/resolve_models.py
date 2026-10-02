@@ -13,14 +13,8 @@ import sys
 import urllib.request
 
 HF_REPOS = [
-    "facebook/VGGT-1B", "facebook/VGGT-1B-Commercial",
-    "stabilityai/stable-virtual-camera",
-    "stabilityai/stable-diffusion-2-1-base", "sd2-community/stable-diffusion-2-1-base",
-    "Manojb/stable-diffusion-2-1-base",
-    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
-    "Ruicheng/moge-2-vitl-normal",
-    "fashn-ai/LaMa", "smartywu/big-lama", "Carve/LaMa-ONNX",
-    "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
+    "alibaba-pai/Wan2.2-Fun-5B-Control-Camera", "alibaba-pai/Wan2.2-Fun-5B-InP",
+    "Wan-AI/Wan2.2-TI2V-5B",
 ]
 URLS = [  # non-HF downloads: hashed by streaming
     "https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt",

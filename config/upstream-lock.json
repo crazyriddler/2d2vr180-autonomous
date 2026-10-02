@@ -229,6 +229,21 @@
    "gpu_smoke_test": "not run",
    "integration": "Weights: TorchScript export big-lama.pt (Sanster/models release add_big_lama, SHA256 pinned). workers/inpaint_worker.py fills stereo disocclusions in VR180 frames.",
    "findings": ""
+  },
+  {
+   "name": "videox-fun",
+   "url": "https://github.com/aigc-apps/VideoX-Fun",
+   "role": "backend",
+   "commit": "4b7b6402a1e0f0406bd6801fb66c0a00bd922621",
+   "commit_date": "2026-09-29",
+   "code_license": "Apache-2.0",
+   "model_license": "Apache-2.0 (alibaba-pai/Wan2.2-Fun-5B-Control-Camera)",
+   "category": "redistributable",
+   "windows": "pure PyTorch; Triton kernel imported at module level is stubbed (unused); SDPA attention",
+   "vram": "5B transformer bf16 ~10 GB + activations; model_cpu_offload, fp8 fallback",
+   "gpu_smoke_test": "not run",
+   "integration": "workers/wan_worker.py: camera-controlled image-to-video shots from the photo (CameraCtrl poses -> Plucker), frames reconstructed by the multi-view engine.",
+   "findings": "Stable Virtual Camera distorts people (documented upstream limitation, confirmed by the owner on RTX 4080); Wan 2.2 is trained on large amounts of real video including people."
   }
  ],
  "auxiliary_archives": [

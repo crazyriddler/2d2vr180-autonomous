@@ -205,16 +205,26 @@ class CreatePage(QWidget):
         gf = QFormLayout(gbox)
         self.generative = QComboBox()
         for label, val in (("Off — only what the photo shows", "off"),
-                           ("Around the subject ±60° — most reliable, best for people", "arc"),
-                           ("Orbit 360° — invent the back too (objects; less reliable)", "orbit"),
+                           ("Around the subject — sides, above and below (best for people)", "arc"),
+                           ("Wide orbit — invent the back too (objects; less reliable)", "orbit"),
                            ("Explore — invent the surroundings (best for VR180)", "explore"),
                            ("Spiral — small, faithful extension", "spiral")):
             self.generative.addItem(label, val)
         self.generative.setCurrentIndex(max(self.generative.findData(win.settings.generative), 0))
-        self.generative.setToolTip("Generative 3D (photos): Stable Virtual Camera imagines new camera views, then "
-                                   "a real 3D splat is trained from them. Invented parts are labelled "
-                                   "'generative'. Needs the Generative and Multi-view engines (12 GB+ GPU).")
+        self.generative.setToolTip("Generative 3D (photos): a video model (Wan 2.2) films new camera moves around "
+                                   "the photo, then they are assembled into one 3D scene. Invented parts are "
+                                   "labelled 'generative'. Needs the Generative and Multi-view engines (12 GB+ GPU).")
         gf.addRow("Photo: generative 3D", self.generative)
+        self.assembly = QComboBox()
+        for label, val in (("Sharp fusion — MoGe-2 geometry per view, as sharp as a single photo", "fusion"),
+                           ("Trained splat — one optimised model (smoother, softer)", "train")):
+            self.assembly.addItem(label, val)
+        self.assembly.setCurrentIndex(max(self.assembly.findData(win.settings.gen_assembly), 0))
+        self.assembly.setToolTip("How the generated views become 3D. Sharp fusion keeps the photo exactly as it is "
+                                 "and adds only what the other views show (sides, top, underside). Trained splat "
+                                 "fits one model to every view: smoother transitions, but generated views' small "
+                                 "differences blur it.")
+        gf.addRow("Generative 3D assembly", self.assembly)
         self.video_mode = QComboBox()
         for label, val in (("Automatic (analyse the video)", "auto"),
                            ("Whole video → one 3D scene (camera moves)", "multiview"),
@@ -232,7 +242,7 @@ class CreatePage(QWidget):
         self.sequence.setChecked(win.settings.export_sequence)
         self.sequence.toggled.connect(self._save_opts)
         gf.addRow("", self.sequence)
-        for w in (self.generative, self.video_mode):
+        for w in (self.generative, self.assembly, self.video_mode):
             w.currentIndexChanged.connect(self._save_opts)
         self.combine.toggled.connect(self._save_opts)
         opts.addWidget(gbox)
@@ -318,6 +328,7 @@ class CreatePage(QWidget):
         s.layout_tb = self.tb.isChecked()
         s.projection = self.projection.currentData()
         s.generative = self.generative.currentData()
+        s.gen_assembly = self.assembly.currentData()
         s.video_mode = self.video_mode.currentData()
         s.combine_photos = self.combine.isChecked()
         s.export_sequence = self.sequence.isChecked()

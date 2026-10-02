@@ -164,6 +164,20 @@ def multiview_selftest(a, env, log, out) -> dict:
         ok = bool(right[2] > right[1] > right[0] - 1e-6) and int(res.get("points") or 0) > 1000
     r["multiview_poses"] = {"ok": bool(ok), "points": res.get("points"), "metric_scale": res.get("metric_scale_factor"),
                             "camera_x": tx, "yaw_deg": yaw, "error": res.get("message")}
+    # Sharp fusion (generative 3D assembly) for real on the CPU: the two shifted crops play the
+    # generated views; only their new strip on the right may be added to the photo's splats.
+    fviews = [dict(v, generated=i > 0) for i, v in enumerate(views)]
+    res = run_worker(runtime_python(env, "recon3d-cu124"), "multiview_worker.py",
+                     {"images": fviews, "output_dir": str(out / "fusion_out"), "vggt_dir": str(model_dir(env, "vggt-1b")),
+                      "moge_path": str(model_dir(env, "moge-2-vitl-normal") / "model.pt"), "assembly": "fusion",
+                      "allow_cpu": True, "max_side": 640, "fuse_ref_side": 320, "fuse_side": 320, "mesh": True,
+                      "max_gaussians": 1_000_000}, out, env, log, "multiview_fusion")
+    prov = res.get("provenance") or {}
+    ref_px = 320 * 240
+    ok = (res.get("event") == "result" and Path((res.get("outputs") or {}).get("ply", "")).exists()
+          and prov.get("inferred", 0) > 0.8 * ref_px and 0 < prov.get("generative", 0) < 0.6 * ref_px)
+    r["multiview_fusion"] = {"ok": bool(ok), "provenance": prov, "splats": res.get("splats"), "mesh": res.get("mesh"),
+                             "error": res.get("message")}
     return r
 
 
@@ -199,6 +213,22 @@ def generative_selftest(a, env, log, out) -> dict:
     p = subprocess.run([str(runtime_python(env, "gen-cu128")), "-c", code], capture_output=True, text=True, env=env)
     print(p.stdout[-2000:], p.stderr[-4000:], flush=True)
     r["seva_import"] = {"ok": "SEVA_OK" in p.stdout, "stderr": p.stderr[-1500:]}
+    code = ("import sys, os; sys.path.insert(0, r'%s'); import wan_worker as w; w.stub_triton(); "
+            "os.environ['VIDEOX_ATTENTION_TYPE'] = 'SDPA'; "
+            "from videox_fun.models import AutoencoderKLWan3_8, AutoTokenizer, Wan2_2Transformer3DModel, "
+            "WanT5EncoderModel; from videox_fun.pipeline import Wan2_2FunControlPipeline; "
+            "from videox_fun.utils import apply_gpu_memory_mode, filter_kwargs, get_image_to_video_latent; "
+            "from videox_fun.data import process_pose_params; "
+            "h, wd = w.sample_size(1037, 1555, 704); "
+            "cam = process_pose_params(w.pose_rows(w.shots('arc', 49)[0], 60, wd, h), width=wd, height=h, "
+            "original_pose_width=wd, original_pose_height=h); print('WAN_OK', tuple(cam.shape))" % (REPO / "workers"))
+    p = subprocess.run([str(runtime_python(env, "gen-cu128")), "-c", code], capture_output=True, text=True, env=env)
+    print(p.stdout[-2000:], p.stderr[-4000:], flush=True)
+    r["wan_import"] = {"ok": "WAN_OK (49, 1056, 704, 6)" in p.stdout, "stderr": p.stderr[-1500:]}
+    p = subprocess.run([str(runtime_python(env, "gen-cu128")), str(REPO / "scripts" / "wan_assembly_check.py"),
+                        str(REPO / "workers")], capture_output=True, text=True, env=env)
+    print(p.stdout[-2000:], p.stderr[-4000:], flush=True)
+    r["wan_pipeline"] = {"ok": "WAN_PIPELINE_OK" in p.stdout, "stderr": p.stderr[-1500:]}
     return r
 
 

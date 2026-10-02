@@ -1,4 +1,53 @@
-# 2D2VR180 1.0.0-rc9 — better generated views
+# 2D2VR180 1.0.0-rc12 — generative 3D: sharp fusion, views from above and below
+
+## What's new in rc12
+
+- **Sharp fusion — new default for generative 3D.** rc11 trained one splat on every generated frame. The
+  frames never agree perfectly, so training averaged them: soft from the side, broken from above or below.
+  Now:
+  1. Wan 2.2 films fewer, shorter shots.
+  2. VGGT places four key views per shot in 3D.
+  3. MoGe-2 gives each key view the same crisp per-pixel geometry as the single-photo mode.
+  4. The photo is kept exactly as it is. The other views add only surfaces it does not show (sides, top,
+     underside, the background behind the subject). Where two views disagree, the earlier one wins instead of
+     being averaged.
+  - No training step, so it is sharp from every angle that a view covers, and faster.
+  - The previous behaviour is still available as *Generative 3D assembly → Trained splat*.
+- **Views from above and below.** *Around the subject* now films four shots: 45° to the right, 45° to the
+  left, 35° from above, and 25° from below. *Wide orbit* does the same at ±100°, 50° above and 30° below.
+- Shorter Wan shots for fusion: 33 frames / 25 steps (Fast), 49 / 30 (Auto), 81 / 50 (Quality).
+- `run_report.json` now includes the backend details: assembly, engine, views, splats.
+- CI: the real VGGT + MoGe-2 + fusion pipeline runs on Windows (CPU) on every integration build.
+
+# 2D2VR180 1.0.0-rc11 — Wan 2.2 fits in 16 GB VRAM / 32 GB RAM
+
+## What's new in rc11
+
+- **Fix: Wan 2.2 ran out of GPU memory and filled the RAM on an RTX 4080 with 32 GB.**
+  - The 11 GB text encoder (umT5-XXL) now runs once, at the start, and is then released. Before, it stayed in
+    VRAM while the photo was encoded and in RAM for the whole run.
+  - The video VAE leaves the GPU while sampling, and the camera-control tensor is half the size.
+  - When a setting does not fit, the failed attempt's memory is now really freed before the next one. Before,
+    every retry stacked another copy of the model on top, until the RAM was full.
+  - No reinstall needed; just update the application.
+- CI: new Windows check that assembles the Wan 2.2 pipeline exactly as the worker uses it.
+
+
+## What's new in rc10
+
+- **New default generative engine: Wan 2.2 Fun 5B Control-Camera** (Alibaba PAI, Apache-2.0). RTX 4080 tests of
+  rc9 showed that Stable Virtual Camera deforms people from the very first generated view (extra limbs,
+  distorted faces) - a limitation its authors document. Wan 2.2 is a video model trained on real footage:
+  it "films" camera moves that start at your photo (one shot to each side for *Around the subject*, wider
+  ones for *Orbit*, four for *Explore*), and the multi-view engine reconstructs the frames into one splat.
+- **No Hugging Face account needed** any more: Wan 2.2 is a public download (~25 GB, needs ~32 GB of RAM).
+  Stable Virtual Camera becomes optional (used only if Wan 2.2 is not installed).
+- The generative engine runtime changes: open **Components** and install **Generative engine** again, then
+  **Wan 2.2 Fun 5B Control-Camera** (or press *Install recommended*).
+- Progress shows each shot and diffusion step with seconds per step and GPU memory; out-of-memory falls back
+  automatically to fp8 weights, a lower resolution, or sequential offloading.
+
+## rc9
 
 ## What's new in rc9
 
@@ -139,8 +188,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc9-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc9-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc12-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc12-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

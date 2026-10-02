@@ -56,6 +56,7 @@ class JobOptions:
     video_mode: str = "auto"             # auto | multiview (all frames → one 3D scene) | per_frame | best_frame
     export_sequence: bool = False        # fixed-camera video: also export one .ply per frame (4D sequence)
     generative: str = "off"              # off | arc | orbit | explore | spiral: invent unseen views of a photo
+    gen_assembly: str = "fusion"         # fusion (sharp: MoGe-2 per view, merged) | train (one optimised splat)
     ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
 
 
@@ -322,6 +323,7 @@ class JobRunner:
             ref_index = report.get("processing", {}).get("reference_frame_index", 0)
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index,
                      "trajectory": opts.generative if opts.generative != "off" else None,
+                     "assembly": opts.gen_assembly,
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
             if bopts["hfov_deg"]:
                 log(f"EXIF field of view: {bopts['hfov_deg']:.1f}°")
@@ -337,6 +339,8 @@ class JobRunner:
                                  "worker_env": result.worker_env}
             result.extra.setdefault("hfov_deg", bopts["hfov_deg"])
             result.extra.setdefault("reference_frame_index", ref_index)
+            report["backend"]["extra"] = {k: v for k, v in result.extra.items()
+                                          if isinstance(v, (str, int, float, bool, dict, list, type(None)))}
             report["models"] = result.models_used
             report["vram_peak_mib"] = result.vram_peak_mib
             warnings += result.warnings

@@ -260,6 +260,79 @@
     }
    ],
    "notes": "SHA256 recorded by the CI resolver on 2026-10-02."
+  },
+  {
+   "id": "wan2.2-fun-5b-camera",
+   "display_name": "Wan 2.2 Fun 5B Control-Camera — camera moves around a photo (video model, good with people)",
+   "source": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera",
+   "revision": "4dde4056e00166c04fe5bebe48ca04575c6c58ea",
+   "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
+   "license_url": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 12,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "config.json",
+     "url": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera/resolve/4dde4056e00166c04fe5bebe48ca04575c6c58ea/config.json",
+     "sha256": null,
+     "size_bytes": 381
+    },
+    {
+     "path": "configuration.json",
+     "url": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera/resolve/4dde4056e00166c04fe5bebe48ca04575c6c58ea/configuration.json",
+     "sha256": null,
+     "size_bytes": 47
+    },
+    {
+     "path": "diffusion_pytorch_model.safetensors",
+     "url": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera/resolve/4dde4056e00166c04fe5bebe48ca04575c6c58ea/diffusion_pytorch_model.safetensors",
+     "sha256": "5d85c374cc1ccef0ce4347a934ea23ce2ff58e9f621891c1385c029e47c2b75b",
+     "size_bytes": 10491690400
+    },
+    {
+     "path": "Wan2.2_VAE.pth",
+     "url": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera/resolve/4dde4056e00166c04fe5bebe48ca04575c6c58ea/Wan2.2_VAE.pth",
+     "sha256": "20eb789667fa5e60e7516bf509512f6cb61f01b0aa0695eadaea930c13892b36",
+     "size_bytes": 2818839170
+    },
+    {
+     "path": "models_t5_umt5-xxl-enc-bf16.pth",
+     "url": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera/resolve/4dde4056e00166c04fe5bebe48ca04575c6c58ea/models_t5_umt5-xxl-enc-bf16.pth",
+     "sha256": "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d",
+     "size_bytes": 11361920418
+    },
+    {
+     "path": "google/umt5-xxl/special_tokens_map.json",
+     "url": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera/resolve/4dde4056e00166c04fe5bebe48ca04575c6c58ea/google/umt5-xxl/special_tokens_map.json",
+     "sha256": null,
+     "size_bytes": 6623
+    },
+    {
+     "path": "google/umt5-xxl/spiece.model",
+     "url": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera/resolve/4dde4056e00166c04fe5bebe48ca04575c6c58ea/google/umt5-xxl/spiece.model",
+     "sha256": "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458",
+     "size_bytes": 4548313
+    },
+    {
+     "path": "google/umt5-xxl/tokenizer.json",
+     "url": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera/resolve/4dde4056e00166c04fe5bebe48ca04575c6c58ea/google/umt5-xxl/tokenizer.json",
+     "sha256": "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b",
+     "size_bytes": 16837417
+    },
+    {
+     "path": "google/umt5-xxl/tokenizer_config.json",
+     "url": "https://huggingface.co/alibaba-pai/Wan2.2-Fun-5B-Control-Camera/resolve/4dde4056e00166c04fe5bebe48ca04575c6c58ea/google/umt5-xxl/tokenizer_config.json",
+     "sha256": null,
+     "size_bytes": 61728
+    }
+   ],
+   "notes": "About 24.7 GB. Needs ~32 GB of system RAM (parts of the model wait in RAM while others run on the GPU)."
   }
  ]
 }

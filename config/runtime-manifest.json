@@ -78,7 +78,7 @@
     },
     {
       "id": "gen-cu128",
-      "description": "Generative engine: Stable Virtual Camera (new camera views of a photo) and LaMa hole filling",
+      "description": "Generative engine: Wan 2.2 Fun 5B camera control (video diffusion, people-safe), Stable Virtual Camera, LaMa hole filling",
       "python": "3.12",
       "torch_index": "https://download.pytorch.org/whl/cu128",
       "min_driver": "570.00",
@@ -89,9 +89,14 @@
           "name": "stable-virtual-camera",
           "url": "https://github.com/Stability-AI/stable-virtual-camera/archive/fe19948e9b7bea261ab2db780a59656131404a83.zip",
           "copy_package": "seva"
+        },
+        {
+          "name": "videox-fun",
+          "url": "https://github.com/aigc-apps/VideoX-Fun/archive/4b7b6402a1e0f0406bd6801fb66c0a00bd922621.zip",
+          "copy_package": "videox_fun"
         }
       ],
-      "smoke_test": "import sys, types; sys.modules['gradio'] = types.SimpleNamespace(Progress=object); import torch, open_clip, diffusers, kornia, seva.model, seva.eval; print('cuda', torch.cuda.is_available())",
+      "smoke_test": "import sys, types; sys.modules['gradio'] = types.SimpleNamespace(Progress=object); import torch, open_clip, diffusers, kornia, transformers, omegaconf, seva.model, seva.eval; print('cuda', torch.cuda.is_available())",
       "lock": "locks/gen-cu128.txt",
       "local_versions": {
         "torch": "+cu128",

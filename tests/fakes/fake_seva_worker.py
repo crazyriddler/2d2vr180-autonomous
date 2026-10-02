@@ -15,7 +15,7 @@ def main(req):
     out = req["output_dir"]
     os.makedirs(out, exist_ok=True)
     views = []
-    for i in range(int(req["num_frames"]) + 1):
+    for i in range(int(req.get("num_frames") or req.get("frames")) + 1):
         p = os.path.join(out, f"view_{i:03d}.png")
         shutil.copy(req["image"], p)
         views.append({"path": p, "generated": i != 0, "c2w": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
