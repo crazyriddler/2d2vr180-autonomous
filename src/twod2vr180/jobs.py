@@ -56,6 +56,7 @@ class JobOptions:
     video_mode: str = "auto"             # auto | multiview (all frames → one 3D scene) | per_frame | best_frame
     export_sequence: bool = False        # fixed-camera video: also export one .ply per frame (4D sequence)
     generative: str = "off"              # off | orbit | explore | spiral: invent unseen views of a photo
+    ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
@@ -488,6 +489,7 @@ class JobRunner:
         ffmpeg = find_ffmpeg()
         from .align import estimate_up, level_c2w
 
+        self._lama_note = False
         up = estimate_up(scene)
         out["alignment"] = up.to_dict()
         self._up = up.up
@@ -499,6 +501,8 @@ class JobRunner:
             lo = 0.75 + 0.05 * i
             fr = next(self._stereo_frames(job, scene, result.scene_ply, so, [head], emit, lo, lo + 0.05,
                                           warnings, check_cancel, f"VR180 {layout.upper()} still"))
+            if opts.fill_holes and opts.ai_hole_fill:
+                self._ai_fill(job, [fr], emit, lo + 0.04, warnings)
             saved = save_stereo_image(fr, so, vr_dir, job.input.stem)
             out["stills"].append(saved)
             note = fr.metadata.get("honesty_note")
@@ -516,6 +520,25 @@ class JobRunner:
             out["videos"].append(self._trajectory_video(job, scene, result, inp, emit, check_cancel, ffmpeg,
                                                         warnings))
         return out
+
+    def _ai_fill(self, job, frames, emit, at: float, warnings: list) -> None:
+        from .inpaint import lama_available, lama_fill_frames
+
+        ok, why = lama_available(self.ctx)
+        if not ok:
+            if not getattr(self, "_lama_note", False):
+                warnings.append(f"AI hole filling (LaMa) not used: {why}; holes behind objects were filled by "
+                                "stretching the background.")
+                self._lama_note = True
+            return
+        try:
+            lama_fill_frames(frames, self.ctx, job.dir / "inpaint", lambda v, m: emit("progress", value=at,
+                                                                                     message=m),
+                             lambda: job.cancelled)
+        except JobCancelled:
+            raise
+        except BackendError as e:
+            warnings.append(f"AI hole filling failed ({e.code}); kept the background fill.")
 
     @staticmethod
     def _stereo_options(opts: "JobOptions", layout: str, res: int, projection: str | None = None):

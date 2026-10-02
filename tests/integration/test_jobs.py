@@ -269,3 +269,21 @@ def test_generative_request_falls_back_when_models_missing(ctx, rtx4080, photo):
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["backend"]["id"] == "moge_rgbd"
     assert any("Generative 3D was requested" in w for w in rep["warnings"])
+
+
+def test_vr180_holes_filled_by_lama_when_installed(ctx, rtx4080, photo, monkeypatch):
+    from conftest import REPO, install_fake_model
+    import twod2vr180.inpaint as inp_mod
+    from PIL import Image
+
+    monkeypatch.setattr(inp_mod, "WORKER", str(REPO / "tests" / "fakes" / "fake_inpaint_worker.py"))
+    install_fake_model(ctx.models, "big-lama")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", layouts=["sbs"], projection="flat", renderer="cpu",
+                          eye_separation_m=0.3)
+    assert rep["status"] == "succeeded", rep.get("error")
+    still = rep["outputs"]["vr180"]["stills"][0]
+    assert "LaMa" in still["metadata"]["hole_filling"]
+    img = np.asarray(Image.open(still["image"]).convert("RGB")).astype(int)
+    magenta = (img[..., 0] > 200) & (img[..., 1] < 60) & (img[..., 2] > 200)
+    assert magenta.any()
+    assert not any("LaMa) not used" in w for w in rep["warnings"])
