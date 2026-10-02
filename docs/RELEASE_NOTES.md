@@ -1,4 +1,18 @@
-# 2D2VR180 1.0.0-rc6 — visible progress for generative 3D
+# 2D2VR180 1.0.0-rc7 — generative 3D fits in 16 GB
+
+## What's new in rc7
+
+- **Fix (RTX 4080 report on rc6): generative 3D used 18.3 GB on a 16 GB card**, Windows spilled into shared
+  system memory and each diffusion step took 53 s even in Fast mode. Now:
+  - the GPU memory of the generation and training processes is capped below the card's size, so instead of
+    a silent, very slow spill the app gets an out-of-memory signal and retries automatically at a lower
+    resolution (generation) or with smaller images and fewer splats (training);
+  - the CLIP image encoder of Stable Virtual Camera runs on the CPU (it only sees a few input images):
+    ~2.5 GB less GPU memory;
+  - the generation resolution follows a pixel budget (576×576 pixels): a 4:3 photo is generated at 597×448,
+    16:9 at 683×384, instead of 768×576 / 1024×576.
+
+## rc6
 
 ## What's new in rc6
 
@@ -102,8 +116,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc6-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc6-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc7-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc7-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

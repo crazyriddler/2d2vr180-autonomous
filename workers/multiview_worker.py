@@ -332,8 +332,31 @@ def main(req):
     cfg = st.TrainConfig(steps=int(req.get("steps", 10000)), sh_degree=int(req.get("sh_degree", 3)),
                          max_gaussians=int(req.get("max_gaussians", 2_000_000)),
                          init_points=int(req.get("init_points", 400000)))
-    params, hist = st.train(train_imgs, c2ws, Ks, weights, points, colors, cfg, device="cuda",
-                            progress=lambda v, m: progress(0.37 + 0.5 * v, m))
+    # Cap the allocator below the card's size: on Windows an over-full GPU silently spills into
+    # shared system memory (10-50x slower); an out-of-memory error lets us retry smaller instead.
+    torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.94)))
+    for attempt in range(3):
+        try:
+            params, hist = st.train(train_imgs, c2ws, Ks, weights, points, colors, cfg, device="cuda",
+                                    progress=lambda v, m: progress(0.37 + 0.5 * v, m))
+            break
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            if "out of memory" not in str(e).lower() or attempt == 2:
+                raise
+            import gc
+
+            gc.collect()
+            torch.cuda.empty_cache()
+            from PIL import Image
+
+            train_imgs = [np.asarray(Image.fromarray(im).resize((max(8, im.shape[1] * 3 // 4),
+                                                                 max(8, im.shape[0] * 3 // 4)), Image.LANCZOS))
+                          for im in train_imgs]
+            Ks = Ks.copy()
+            Ks[:, :2] *= 0.75
+            cfg.max_gaussians = int(cfg.max_gaussians * 0.6)
+            log(f"out of GPU memory while training; retrying with smaller images "
+                f"({train_imgs[0].shape[1]}x{train_imgs[0].shape[0]}) and at most {cfg.max_gaussians:,} splats")
 
     # ------------------------------------------------------------ provenance
     progress(0.88, "labelling observed / inferred / generated splats")

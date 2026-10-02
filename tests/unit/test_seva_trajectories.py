@@ -32,3 +32,10 @@ def test_progress_bar_reports_diffusion_steps(capsys):
         break
     out = capsys.readouterr().out
     assert "pass 1/2, chunk 1/25, step 2/2" in out and "s/step" in out
+
+
+def test_short_sides_fit_the_pixel_budget():
+    assert sw.short_sides(576, 1.0, 576 * 576) == [576, 512, 448]
+    s = sw.short_sides(576, 4 / 3, 576 * 576)
+    assert s[0] == 448 and all(x % 64 == 0 for x in s)          # 597x448 fits, 682x512 does not
+    assert sw.short_sides(576, 16 / 9, 576 * 576)[0] == 384

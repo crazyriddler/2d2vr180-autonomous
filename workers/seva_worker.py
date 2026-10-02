@@ -25,6 +25,16 @@ from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa
 TRAJECTORIES = ("orbit", "explore", "spiral")
 
 
+def short_sides(start: int, aspect: float, budget: int) -> list[int]:
+    """Short sides (multiples of 64, as Stable Virtual Camera requires) to try, largest first,
+    keeping width x height within ``budget`` pixels."""
+    out = []
+    for s in range(start - start % 64, 255, -64):
+        if s * s * aspect <= budget * 1.02 and s not in out:
+            out.append(s)
+    return (out or [256])[:3]
+
+
 def explore_c2ws(n, yaw_deg=70.0, pitch_deg=28.0, sway=0.1):
     """Look around from the capture position (figure-of-eight in yaw/pitch) with a small sway
     for parallax. Units: the subject is at depth ~1. Zero-mean translations and an identity
@@ -179,8 +189,20 @@ def load_models(req, torch):
     model = SGMWrapper(load_model(model_version=1.1, pretrained_model_name_or_path=req["seva_dir"],
                                   weight_name="modelv1.1.safetensors", device="cpu", verbose=False).eval()).to("cuda")
     ae = LocalAE(req["vae_dir"]).to("cuda")
-    clip = LocalCLIP(req["clip_path"]).to("cuda")
-    return model, ae, clip, DiscreteDenoiser(num_idx=1000, device="cuda")
+    clip = LocalCLIP(req["clip_path"]).float().eval()   # stays on the CPU: frees ~2.5 GB of VRAM
+
+    class CPUConditioner(nn.Module):
+        """CLIP image embedding computed on the CPU (only a handful of input images per chunk)."""
+
+        def __init__(self, inner):
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, x):
+            with torch.autocast("cuda", enabled=False), torch.no_grad():
+                return self.inner(x.detach().float().cpu()).to(x.device)
+
+    return model, ae, CPUConditioner(clip), DiscreteDenoiser(num_idx=1000, device="cuda")
 
 
 def generate(req, models, short_side, torch):
@@ -242,14 +264,27 @@ def main(req):
     progress(0.02, "loading Stable Virtual Camera")
     models = load_models(req, torch)
     progress(0.1, "models loaded")
-    sizes = [int(req.get("short_side", 576)), 448, 384]
+    # Never let Windows spill GPU memory into shared system RAM (10-50x slower): cap the
+    # allocator below the card's size so an out-of-memory error triggers a smaller retry instead.
+    torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.92)))
+    from PIL import Image
+
+    with Image.open(req["image"]) as im:
+        aspect = max(im.size) / min(im.size)
+    sizes = short_sides(int(req.get("short_side", 576)), aspect, int(req.get("pixel_budget", 576 * 576)))
+    log(f"generation resolutions to try (short side): {sizes}")
     last = None
     for s in sizes:
         try:
             frames, c2ws, Ks, wh = generate(req, models, s, torch)
             break
-        except torch.cuda.OutOfMemoryError as e:  # retry smaller
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:  # retry smaller
+            if "out of memory" not in str(e).lower():
+                raise
             last = e
+            import gc
+
+            gc.collect()
             log(f"out of GPU memory at {s} px; retrying at a lower resolution")
             torch.cuda.empty_cache()
     else:
