@@ -1,4 +1,17 @@
-# 2D2VR180 1.0.0-rc5 — multi-view, generative 3D and VR fixes
+# 2D2VR180 1.0.0-rc6 — visible progress for generative 3D
+
+## What's new in rc6
+
+- **Fix: generative 3D looked frozen at "Sampling 0/50".** Stable Virtual Camera's progress bar redraws one
+  console line, which the app could not show. Every diffusion step is now reported: pass (1/2, 2/2), chunk,
+  step, seconds per step and GPU memory in use.
+- **Warning when the GPU memory is full** and steps become slow (Windows then uses shared system memory,
+  which is many times slower): close other GPU programs or use *Fast* mode (48 views, 30 steps).
+- Removed a harmless PyTorch warning about `expandable_segments` on Windows.
+- Windows CI with real models (CPU): VGGT-1B + MoGe-2 camera poses, LaMa inpainting and Stable Virtual Camera
+  loading all pass.
+
+## rc5
 
 ## What's new in rc5
 
@@ -89,8 +102,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc5-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc5-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc6-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc6-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 
