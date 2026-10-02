@@ -53,3 +53,15 @@ def test_server_binds_loopback_only(server):
 
 
 import urllib.parse  # noqa: E402
+
+
+def test_browser_choice_prefers_installed_chromium(tmp_path):
+    """Regression (user report): Edge is not always installed; Chrome must be used when present."""
+    from twod2vr180.vr_server import find_webxr_browser
+
+    edge = tmp_path / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+    chrome = tmp_path / "Google" / "Chrome" / "Application" / "chrome.exe"
+    chrome.parent.mkdir(parents=True)
+    chrome.write_text("")
+    assert find_webxr_browser([edge, chrome]) == chrome  # Edge missing -> Chrome
+    assert find_webxr_browser([edge]) is None             # nothing -> caller falls back to default browser

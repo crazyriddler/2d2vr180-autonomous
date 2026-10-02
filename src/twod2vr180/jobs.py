@@ -53,12 +53,34 @@ class JobOptions:
     renderer: str = "auto"               # auto | gpu | cpu  (VR180 splat renderer)
     allow_cpu: bool = False              # allow CPU inference for cpu-capable backends (slow)
     max_path_frames: int = 720           # cap for moving-camera VR180 videos
+    video_mode: str = "auto"             # auto | multiview (all frames → one 3D scene) | per_frame | best_frame
+    export_sequence: bool = False        # fixed-camera video: also export one .ply per frame (4D sequence)
+    generative: str = "off"              # off | orbit | explore | spiral: invent unseen views of a photo
+    ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
+
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
+
+
+def expand_inputs(paths) -> list[Path]:
+    """A file, several files, or a folder of photos → list of input files."""
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    out: list[Path] = []
+    for p in map(Path, paths):
+        if p.is_dir():
+            out += sorted(q for q in p.iterdir() if q.suffix.lower() in IMAGE_EXTS)
+        else:
+            out.append(p)
+    return out
 
 
 class Job:
-    def __init__(self, input_path: Path, options: JobOptions | None = None, jobs_root: Path | None = None):
+    def __init__(self, input_path, options: JobOptions | None = None, jobs_root: Path | None = None):
+        """``input_path``: one photo/video, a list of photos of the same scene, or a folder of photos."""
         self.id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
-        self.input = Path(input_path)
+        self.inputs = expand_inputs(input_path) or [Path(input_path)]
+        self.input = self.inputs[0]
         self.options = options or JobOptions()
         self.dir = (jobs_root or app_paths().jobs) / self.id
         self.state = "queued"
@@ -109,6 +131,9 @@ def write_export_readme(export: Path, report: dict) -> None:
              "  scene.splat  Same splat in the compact web format (antimatter15 / many web viewers)."]
     if out.get("obj"):
         lines += ["  scene.obj    Triangle mesh with scene.mtl + scene_texture.png (Blender, MeshLab, 3D printing…)."]
+    if out.get("sequence_dir") or any(v.get("sequence_dir") for v in vr.get("videos", [])):
+        lines += ["  sequence\\    One splat per video frame (frame_00000.ply …): a 4D sequence for players that",
+                  "               support splat animations, or to pick a single moment."]
     lines += ["  _2d2vr180\\   Metadata the app uses (cameras, which parts are observed/inferred). Keep it next to",
               "               scene.ply if you want to reopen the scene in 2D2VR180; other programs ignore it.", ""]
     if vr.get("stills") or vr.get("videos"):
@@ -182,6 +207,7 @@ class JobRunner:
 
         result: BackendResult | None = None
         job.state = "running"
+        final_state = "failed"
         try:
             # ---------------------------------------------------- hardware
             emit("progress", value=0.01, message="probing hardware")
@@ -191,23 +217,37 @@ class JobRunner:
             stage("hardware")
 
             # ---------------------------------------------------- ingest
-            if not job.input.exists():
-                raise MediaError(f"Input not found: {job.input}")
+            for p in job.inputs:
+                if not p.exists():
+                    raise MediaError(f"Input not found: {p}")
             kind = classify_path(job.input)
+            if len(job.inputs) > 1:
+                kinds = {classify_path(p) for p in job.inputs}
+                if kinds != {"photo"}:
+                    raise MediaError("Several inputs can only be combined when they are all photos of the same "
+                                     "scene; add videos as separate jobs.")
+                kind = "images"
             report["input"] = {"path": str(job.input), "type": kind, "size_bytes": job.input.stat().st_size,
                                "sha256": _sha256(job.input)}
+            if kind == "images":
+                report["input"]["paths"] = [str(p) for p in job.inputs]
+                report["input"]["sha256_all"] = [_sha256(p) for p in job.inputs]
             self._check_disk(hw, job.input)
             inp = JobInput(job.input, kind, job.dir)
             frames_dir = job.dir / "frames"
-            if kind == "photo":
-                img = load_image(job.input)
+            if kind in ("photo", "images"):
                 frames_dir.mkdir(parents=True, exist_ok=True)
                 from PIL import Image
 
-                ref = frames_dir / "frame_00000.png"
-                Image.fromarray(img).save(ref)
-                inp.frames = [ref]
-                report["input"]["resolution"] = [int(img.shape[1]), int(img.shape[0])]
+                for i, p in enumerate(job.inputs):
+                    img = load_image(p)
+                    ref = frames_dir / f"frame_{i:05d}.png"
+                    Image.fromarray(img).save(ref)
+                    inp.frames.append(ref)
+                    if i == 0:
+                        report["input"]["resolution"] = [int(img.shape[1]), int(img.shape[0])]
+                if kind == "images":
+                    log(f"{len(inp.frames)} photos combined into one multi-view scene")
             else:
                 emit("progress", value=0.03, message="analysing video")
                 if not find_ffmpeg():
@@ -220,11 +260,32 @@ class JobRunner:
                 inp.analysis = an.to_dict()
                 for n in an.notes:
                     log(n)
+                forced = {"multiview": "moving_camera", "per_frame": "static_camera_dynamic",
+                          "best_frame": "static_scene"}.get(opts.video_mode)
+                if forced and forced != an.kind:
+                    log(f"video mode '{opts.video_mode}' chosen by the user (analysis said '{an.kind}')")
+                    inp.video_kind = forced
+                    if forced == "moving_camera":
+                        # use evenly spaced frames over the whole video
+                        total = int(an.info.get("frames") or round((an.info.get("duration_s") or 1) * inp.fps))
+                        k = int(min(opts.max_keyframes, max(3, total)))
+                        inp.analysis["keyframes"] = [int(x) for x in np.linspace(0, max(total - 1, 0), k).round()]
+                    report["input"]["video_mode"] = opts.video_mode
             check_cancel()
             stage("ingest")
 
             # ---------------------------------------------------- select
-            sel = select(inp, hw, self.ctx, opts.mode, opts.backend)
+            sel = None
+            if (opts.generative != "off" and not opts.backend
+                    and (kind == "photo" or inp.video_kind == "static_scene")):
+                sel = select(inp, hw, self.ctx, opts.mode, "generative_scene")
+                if sel.backend is None:
+                    why = "; ".join("; ".join(r["reasons"]) for r in sel.rejected)
+                    warnings.append(f"Generative 3D was requested but cannot run: {why}. Used the regular "
+                                    "single-photo reconstruction instead.")
+                    sel = None
+            if sel is None:
+                sel = select(inp, hw, self.ctx, opts.mode, opts.backend)
             report["selection"] = sel.to_dict()
             if sel.backend is None:
                 reasons = "; ".join(f"{r['backend']}: {', '.join(r['reasons'])}" for r in sel.rejected)
@@ -260,6 +321,7 @@ class JobRunner:
             # ---------------------------------------------------- reconstruct
             ref_index = report.get("processing", {}).get("reference_frame_index", 0)
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index,
+                     "trajectory": opts.generative if opts.generative != "off" else None,
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
             if bopts["hfov_deg"]:
                 log(f"EXIF field of view: {bopts['hfov_deg']:.1f}°")
@@ -274,6 +336,7 @@ class JobRunner:
                                  "runtime": backend.runtime_id,
                                  "worker_env": result.worker_env}
             result.extra.setdefault("hfov_deg", bopts["hfov_deg"])
+            result.extra.setdefault("reference_frame_index", ref_index)
             report["models"] = result.models_used
             report["vram_peak_mib"] = result.vram_peak_mib
             warnings += result.warnings
@@ -306,6 +369,10 @@ class JobRunner:
                 outputs["vr180"] = self._vr180(job, scene, inp, result, sel.effective_kind, emit, warnings,
                                               check_cancel)
                 stage("vr180")
+            if (opts.export_sequence and result.frame_scenes and not (opts.vr180 and find_ffmpeg())):
+                for _ in self._frame_scenes(job, result, emit, check_cancel, 0.85, 0.99):
+                    pass
+                outputs["sequence_dir"] = str(job.dir / "export" / "sequence")
             report["outputs"] = outputs
             write_export_readme(job.dir / "export", report)
             if opts.output_dir:
@@ -313,22 +380,22 @@ class JobRunner:
                 shutil.copytree(job.dir / "export", dest, dirs_exist_ok=True)
                 report["outputs"]["copied_to"] = str(dest)
             report["status"] = "succeeded"
-            job.state = "succeeded"
+            final_state = "succeeded"
             emit("progress", value=1.0, message="done")
         except JobCancelled as e:
             report["status"] = "cancelled"
             report["error"] = {"code": "cancelled", "message": str(e)}
-            job.state = "cancelled"
+            final_state = "cancelled"
         except (BackendError, MediaError) as e:
             report["status"] = "failed"
             report["error"] = {"code": getattr(e, "code", "bad_input" if isinstance(e, MediaError) else "error"),
                                "message": str(e)}
-            job.state = "failed"
+            final_state = "failed"
         except Exception as e:  # noqa: BLE001 - job boundary: never crash the app
             report["status"] = "failed"
             report["error"] = {"code": "internal_error", "message": f"{type(e).__name__}: {e}",
                                "traceback": traceback.format_exc()[-4000:]}
-            job.state = "failed"
+            final_state = "failed"
         finally:
             if result is None and "backend" not in report:
                 report["backend"] = None
@@ -338,6 +405,9 @@ class JobRunner:
             report["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             report["build"] = {"python": platform.python_version(), "platform": platform.platform()}
             (job.dir / "run_report.json").write_text(json.dumps(report, indent=2, default=str))
+            # Only now, with the report on disk, does the job leave the "running" state.
+            job.report = report
+            job.state = final_state
             try:
                 if job.state == "succeeded":
                     from .backends import get_backend
@@ -425,19 +495,28 @@ class JobRunner:
         vr_dir = job.dir / "export" / "vr180"
         out: dict = {"stills": [], "videos": []}
         ffmpeg = find_ffmpeg()
-        head = scene.cameras[0].c2w if scene.cameras else np.eye(4)
+        from .align import estimate_up, level_c2w
+
+        self._lama_note = False
+        up = estimate_up(scene)
+        out["alignment"] = up.to_dict()
+        self._up = up.up
+        # Level the virtual head: VR180 with a tilted horizon is uncomfortable to watch.
+        head = level_c2w(scene.cameras[0].c2w if scene.cameras else np.eye(4), up.up)
         for i, layout in enumerate(opts.layouts):
             check_cancel()
             so = self._stereo_options(opts, layout, opts.eye_resolution)
             lo = 0.75 + 0.05 * i
             fr = next(self._stereo_frames(job, scene, result.scene_ply, so, [head], emit, lo, lo + 0.05,
                                           warnings, check_cancel, f"VR180 {layout.upper()} still"))
+            if opts.fill_holes and opts.ai_hole_fill:
+                self._ai_fill(job, [fr], emit, lo + 0.04, warnings)
             saved = save_stereo_image(fr, so, vr_dir, job.input.stem)
             out["stills"].append(saved)
             note = fr.metadata.get("honesty_note")
             if note and note not in warnings:
                 warnings.append(note)
-            if ffmpeg and (inp.kind == "photo" or kind == "video:static_scene"):
+            if ffmpeg and (inp.kind in ("photo", "images") or kind == "video:static_scene"):
                 out["videos"].append(still_to_video(fr, so, vr_dir, job.input.stem, ffmpeg,
                                                     seconds=opts.still_video_seconds))
         if not ffmpeg:
@@ -450,6 +529,25 @@ class JobRunner:
                                                         warnings))
         return out
 
+    def _ai_fill(self, job, frames, emit, at: float, warnings: list) -> None:
+        from .inpaint import lama_available, lama_fill_frames
+
+        ok, why = lama_available(self.ctx)
+        if not ok:
+            if not getattr(self, "_lama_note", False):
+                warnings.append(f"AI hole filling (LaMa) not used: {why}; holes behind objects were filled by "
+                                "stretching the background.")
+                self._lama_note = True
+            return
+        try:
+            lama_fill_frames(frames, self.ctx, job.dir / "inpaint", lambda v, m: emit("progress", value=at,
+                                                                                     message=m),
+                             lambda: job.cancelled)
+        except JobCancelled:
+            raise
+        except BackendError as e:
+            warnings.append(f"AI hole filling failed ({e.code}); kept the background fill.")
+
     @staticmethod
     def _stereo_options(opts: "JobOptions", layout: str, res: int, projection: str | None = None):
         from .vr180 import StereoOptions
@@ -457,14 +555,58 @@ class JobRunner:
         return StereoOptions(layout=layout, projection=projection or opts.projection, eye_resolution=res,
                              eye_separation_m=opts.eye_separation_m, fill_holes=opts.fill_holes)
 
-    def _dynamic_video(self, job, result, emit, check_cancel, ffmpeg) -> dict:
+    @staticmethod
+    def _depth_stabilisation(result, hfov, ref_index: int = 0) -> list[float]:
+        """Per-frame depth scale factors that remove the frame-to-frame scale jitter of monocular
+        depth: each frame is scaled to agree with the reference frame on its static pixels
+        (where the image has not changed), then the factors are median-filtered over time."""
+        from .backends.photo import load_pointmap
+
+        ref_pts, ref_img, _, _ = load_pointmap(result.frame_scenes[ref_index], hfov)
+        ref_z = ref_pts[..., 2]
+        raw = []
+        for npz in result.frame_scenes:
+            pts, img, mask, _ = load_pointmap(npz, hfov)
+            z = pts[..., 2]
+            if z.shape != ref_z.shape:
+                raw.append(1.0)
+                continue
+            static = (np.abs(img.astype(np.int16) - ref_img.astype(np.int16)).max(-1) < 12) & (z > 0) & (ref_z > 0)
+            if mask is not None:
+                static &= mask.astype(bool)
+            raw.append(float(np.median(ref_z[static] / z[static])) if static.sum() > 500 else 1.0)
+        raw_a = np.asarray(raw)
+        k = 2
+        return [float(np.median(raw_a[max(0, i - k):i + k + 1])) for i in range(len(raw_a))]
+
+    def _frame_scenes(self, job, result, emit, check_cancel, lo: float, hi: float):
+        """Per-frame splats of a fixed-camera video (depth-stabilised); optionally saved as a
+        4D sequence of .ply files in export/sequence."""
         from .backends.photo import load_pointmap
         from .rgbd import pointmap_to_gaussians
+        from .scene import write_gaussian_ply
+
+        hfov = result.extra.get("hfov_deg")
+        ref = int(result.extra.get("reference_frame_index", 0) or 0)
+        scales = self._depth_stabilisation(result, hfov, min(ref, len(result.frame_scenes) - 1))
+        n = len(result.frame_scenes)
+        seq = job.dir / "export" / "sequence"
+        for i, npz in enumerate(result.frame_scenes):
+            check_cancel()
+            pts, img, mask, cam = load_pointmap(npz, hfov)
+            sc = pointmap_to_gaussians(pts * scales[i], img, mask, cam, metric=result.metric_scale)
+            if job.options.export_sequence:
+                write_gaussian_ply(sc, seq / f"frame_{i:05d}.ply")
+            emit("progress", value=lo + (hi - lo) * i / max(n, 1), message=f"video frame {i + 1}/{n}")
+            yield sc
+
+    def _dynamic_video(self, job, result, emit, check_cancel, ffmpeg) -> dict:
+        from .align import level_c2w
+        from .backends.photo import load_pointmap
         from .vr180 import encode_video, output_suffix, render_stereo
 
         opts = job.options
         so = self._stereo_options(opts, opts.layouts[0], opts.video_eye_resolution)
-        n = len(result.frame_scenes)
         hfov = result.extra.get("hfov_deg")
         side = opts.video_eye_resolution
         w, h = (2 * side, side) if so.layout == "sbs" else (side, 2 * side)
@@ -472,20 +614,20 @@ class JobRunner:
             pts, img, mask, cam = load_pointmap(result.frame_scenes[0], hfov)
             w0 = int(round(cam.width * side / cam.height / 2)) * 2
             w, h = (2 * w0, side) if so.layout == "sbs" else (w0, 2 * side)
+        up = getattr(self, "_up", None)
+        head = level_c2w(np.eye(4), up) if up is not None and so.projection == "equirect180" else None
 
         def frames():
             # Each frame is a different scene, so the per-frame CPU renderer is used.
-            for i, npz in enumerate(result.frame_scenes):
-                check_cancel()
-                pts, img, mask, cam = load_pointmap(npz, hfov)
-                sc = pointmap_to_gaussians(pts, img, mask, cam, metric=result.metric_scale)
-                emit("progress", value=0.85 + 0.14 * i / n, message=f"VR180 video frame {i + 1}/{n}")
-                yield render_stereo(sc, so).image
+            for sc in self._frame_scenes(job, result, emit, check_cancel, 0.85, 0.99):
+                yield render_stereo(sc, so, head_c2w=head).image
 
         meta = encode_video(frames(), w, h, job.options.dynamic_fps, job.dir / "export" / "vr180" /
                             f"{job.input.stem}_dynamic{output_suffix(so)}.mp4", so, ffmpeg)
-        meta["method"] = ("per-frame monocular geometry (2.5D): each frame is reconstructed independently; "
-                          "depth may flicker between frames")
+        meta["method"] = ("per-frame monocular geometry (2.5D), depth scale stabilised over time against the "
+                          "static background; moving subjects are reconstructed frame by frame")
+        if opts.export_sequence:
+            meta["sequence_dir"] = str(job.dir / "export" / "sequence")
         return meta
 
     def _trajectory_video(self, job, scene, result, inp, emit, check_cancel, ffmpeg, warnings) -> dict:
@@ -502,6 +644,11 @@ class JobRunner:
         fps = 24.0
         n_out = int(max(len(cams), min(opts.max_path_frames, round(dur * fps))))
         heads = interpolate_poses([c.c2w for c in cams], n_out)
+        up = getattr(self, "_up", None)
+        if up is not None:
+            from .align import level_c2w
+
+            heads = [level_c2w(h, up) for h in heads]
         fps = max(1.0, n_out / max(dur, 1e-3))
         frames = (fr.image for fr in self._stereo_frames(job, scene, result.scene_ply, so, heads, emit, 0.85,
                                                           0.99, warnings, check_cancel, "VR180 camera path"))

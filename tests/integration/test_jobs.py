@@ -20,7 +20,7 @@ def run_job(ctx, hw, path, **kw):
     kw.setdefault("eye_resolution", 256)
     kw.setdefault("video_eye_resolution", 128)
     kw.setdefault("still_video_seconds", 0.5)
-    job = Job(Path(path), JobOptions(**kw))
+    job = Job(path if isinstance(path, list) else Path(path), JobOptions(**kw))
     events = []
     rep = JobRunner(ctx, hw).run(job, events.append)
     assert (job.dir / "run_report.json").exists()
@@ -155,27 +155,145 @@ def test_dynamic_video_per_frame(ctx, rtx4080, videos):
 
 
 def test_moving_camera_without_multiview_backend_falls_back(ctx, rtx4080, videos):
-    # recon3d runtime is "installed" (fake) but its VGGT/MoGe models are runtime-fetched;
-    # force unavailability by pretending the GPU is too small for it.
-    rtx4080.gpus[0].total_mib = 10_000
+    # the multi-view runtime is "installed" (fake): force unavailability with a GPU that is too small.
+    rtx4080.gpus[0].total_mib = 8_000
     job, rep, _ = run_job(ctx, rtx4080, videos["pan"], mode="fast")
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["selection"]["effective_kind"] == "video:static_scene"
     assert any("falling back" in w for w in rep["warnings"])
-    assert any(r["backend"] == "recon3d_video" for r in rep["selection"]["rejected"])
+    assert any(r["backend"] == "multiview" for r in rep["selection"]["rejected"])
 
 
 def test_moving_camera_multiview_path_video(ctx, rtx4080, videos, monkeypatch):
     from conftest import REPO
-    from twod2vr180.backends.video import Recon3DBackend
+    from twod2vr180.backends.multiview import MultiViewBackend
 
-    monkeypatch.setattr(Recon3DBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_recon3d_worker.py"))
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_multiview_worker.py"))
     job, rep, _ = run_job(ctx, rtx4080, videos["pan"], mode="fast", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
-    assert rep["backend"]["id"] == "recon3d_video"
+    assert rep["backend"]["id"] == "multiview"
     assert rep["coverage"]["by_splat"]["observed"] == 1.0
     vids = rep["outputs"]["vr180"]["videos"]
     path = [v for v in vids if "_path_" in Path(v["path"]).name]
     assert path and path[0]["frames"] >= len(rep["input"]["analysis"]["keyframes"])
     assert "interpolated" in path[0]["method"]
     assert path[0]["spherical_metadata"]["projection"] == "equirect180"
+
+
+def test_job_state_is_final_only_after_report_is_written(ctx, rtx4080, photo, monkeypatch):
+    """Regression (Windows CI): the GUI saw state 'succeeded' before run_report.json existed."""
+    import twod2vr180.jobs as jobs_mod
+
+    job = Job(photo, JobOptions(mode="fast", eye_resolution=128, still_video_seconds=0.5, layouts=["sbs"]))
+    seen = []
+    real_write = Path.write_text
+
+    def spy(self, *a, **k):
+        if self.name == "run_report.json":
+            seen.append(job.state)  # state at the moment the report is written
+        return real_write(self, *a, **k)
+
+    monkeypatch.setattr(jobs_mod.Path, "write_text", spy)
+    rep = JobRunner(ctx, rtx4080).run(job)
+    assert rep["status"] == "succeeded"
+    assert seen == ["running"] and job.state == "succeeded" and job.report is rep
+
+
+def test_several_photos_become_one_multiview_scene(ctx, rtx4080, tmp_path, monkeypatch):
+    from PIL import Image
+
+    from conftest import REPO, synthetic_image
+    from twod2vr180.backends.multiview import MultiViewBackend
+
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_multiview_worker.py"))
+    paths = []
+    for i in range(4):
+        p = tmp_path / f"shot_{i}.jpg"
+        Image.fromarray(synthetic_image(seed=i)).save(p)
+        paths.append(p)
+    job, rep, _ = run_job(ctx, rtx4080, paths, mode="fast", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["input"]["type"] == "images" and len(rep["input"]["paths"]) == 4
+    assert rep["backend"]["id"] == "multiview"
+    assert len(list((job.dir / "frames").glob("*.png"))) == 4
+    req = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert [Path(v["path"]).name for v in req["images"]][0] == "frame_00000.png"
+    assert rep["outputs"]["vr180"]["stills"]
+
+
+def test_folder_of_photos_is_expanded(tmp_path):
+    from twod2vr180.jobs import expand_inputs
+
+    for n in ("b.jpg", "a.png", "notes.txt"):
+        (tmp_path / n).write_bytes(b"x")
+    assert [p.name for p in expand_inputs(tmp_path)] == ["a.png", "b.jpg"]
+
+
+def test_video_mode_multiview_overrides_static_analysis(ctx, rtx4080, videos, monkeypatch):
+    from conftest import REPO
+    from twod2vr180.backends.multiview import MultiViewBackend
+
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_multiview_worker.py"))
+    job, rep, _ = run_job(ctx, rtx4080, videos["static"], mode="fast", layouts=["sbs"], renderer="cpu",
+                          video_mode="multiview", max_keyframes=12)
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["id"] == "multiview"
+    assert len(list((job.dir / "frames").glob("*.png"))) >= 6
+
+
+def test_generative_photo_to_3d(ctx, rtx4080, photo, monkeypatch):
+    from conftest import REPO, install_fake_model
+    from twod2vr180.backends.generative import GenerativeSceneBackend
+    from twod2vr180.backends.multiview import MultiViewBackend
+
+    fakes = REPO / "tests" / "fakes"
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(fakes / "fake_multiview_worker.py"))
+    monkeypatch.setattr(GenerativeSceneBackend, "worker_script", str(fakes / "fake_seva_worker.py"))
+    for mid in ("seva-1.1", "sd21-vae", "clip-vit-h-14"):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="explore", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["id"] == "generative_scene"
+    assert rep["coverage"]["by_splat"]["generative"] > 0.2
+    assert {m["id"] for m in rep["models"]} >= {"seva-1.1", "vggt-1b"}
+    req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
+    assert req["trajectory"] == "explore" and req["num_frames"] == 48
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["images"][0]["generated"] is False and mv["images"][0]["weight"] > 1
+    assert all(v["generated"] for v in mv["images"][1:])
+    assert any("GENERATIVE" in w for w in rep["warnings"])
+
+
+def test_generative_request_falls_back_when_models_missing(ctx, rtx4080, photo):
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="orbit", layouts=["sbs"])
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["id"] == "moge_rgbd"
+    assert any("Generative 3D was requested" in w for w in rep["warnings"])
+
+
+def test_vr180_holes_filled_by_lama_when_installed(ctx, rtx4080, photo, monkeypatch):
+    from conftest import REPO, install_fake_model
+    import twod2vr180.inpaint as inp_mod
+    from PIL import Image
+
+    monkeypatch.setattr(inp_mod, "WORKER", str(REPO / "tests" / "fakes" / "fake_inpaint_worker.py"))
+    install_fake_model(ctx.models, "big-lama")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", layouts=["sbs"], projection="flat", renderer="cpu",
+                          eye_separation_m=0.3)
+    assert rep["status"] == "succeeded", rep.get("error")
+    still = rep["outputs"]["vr180"]["stills"][0]
+    assert "LaMa" in still["metadata"]["hole_filling"]
+    img = np.asarray(Image.open(still["image"]).convert("RGB")).astype(int)
+    magenta = (img[..., 0] > 200) & (img[..., 1] < 60) & (img[..., 2] > 200)
+    assert magenta.any()
+    assert not any("LaMa) not used" in w for w in rep["warnings"])
+
+
+def test_dynamic_video_exports_4d_sequence(ctx, rtx4080, videos):
+    job, rep, _ = run_job(ctx, rtx4080, videos["dynamic"], mode="fast", dynamic_fps=5, layouts=["sbs"],
+                          export_sequence=True)
+    assert rep["status"] == "succeeded", rep.get("error")
+    seq = sorted((job.dir / "export" / "sequence").glob("frame_*.ply"))
+    assert len(seq) >= 10
+    dyn = [v for v in rep["outputs"]["vr180"]["videos"] if "dynamic" in Path(v["path"]).name][0]
+    assert "stabilised" in dyn["method"] and dyn["sequence_dir"].endswith("sequence")

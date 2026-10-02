@@ -65,6 +65,7 @@ def install_fake_model(mm, model_id, content=b"fake-weights"):
     d.mkdir(parents=True, exist_ok=True)
     files = {}
     for f in e.files:
+        (d / f.path).parent.mkdir(parents=True, exist_ok=True)
         (d / f.path).write_bytes(content)
         import hashlib
 
@@ -82,7 +83,7 @@ def ctx(app_home, monkeypatch):
     monkeypatch.setattr(MoGeRGBDBackend, "worker_script", str(FAKE_WORKER))
     monkeypatch.setattr(DepthAnythingBackend, "worker_script", str(FAKE_WORKER))
     mm = ModelManager()
-    for mid in ("moge-2-vits-normal", "moge-2-vitl-normal", "depth-anything-v2-small"):
+    for mid in ("moge-2-vits-normal", "moge-2-vitl-normal", "depth-anything-v2-small", "vggt-1b"):
         install_fake_model(mm, mid)
     return BackendContext(mm, FakeRuntimes(), "personal_research")
 

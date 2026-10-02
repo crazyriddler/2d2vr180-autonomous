@@ -23,10 +23,11 @@ class JobQueue(QObject):
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
 
-    def add(self, path: Path, options) -> object:
+    def add(self, path, options) -> object:
+        """``path``: one photo/video, or a list of photos combined into one multi-view scene."""
         from ..jobs import Job
 
-        job = Job(Path(path), options)
+        job = Job([Path(p) for p in path] if isinstance(path, (list, tuple)) else Path(path), options)
         with self._lock:
             self.jobs.append(job)
         self.event.emit({"event": "queued", "job": job.id})

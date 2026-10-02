@@ -49,7 +49,7 @@ def open_path(p: str | Path) -> None:
 
 
 VR_HELP = ("<h3>View the 3D splat in VR</h3>"
-           "<p>The scene opens in a WebXR viewer in <b>Microsoft Edge</b> (or Chrome) on this PC. "
+           "<p>The scene opens in a WebXR viewer in <b>Google Chrome</b> or <b>Microsoft Edge</b> on this PC. "
            "Nothing is uploaded: the page is served only to this computer (127.0.0.1).</p>"
            "<ol><li>Connect your headset to this PC: <b>Quest Link</b> (cable), <b>Air Link</b>, "
            "<b>Virtual Desktop</b> or <b>SteamVR</b>.</li>"
@@ -63,11 +63,8 @@ VR_HELP = ("<h3>View the 3D splat in VR</h3>"
 
 def open_in_vr(parent, ply: Path, scene=None) -> None:
     """Serve the scene to the bundled WebXR viewer and open it in a WebXR-capable browser."""
-    import subprocess
-    import sys
-
     from ..scene import load_scene
-    from ..vr_server import get_server, scene_depth
+    from ..vr_server import get_server, view_params
 
     win = parent.window()
     settings = getattr(win, "settings", None)
@@ -83,17 +80,26 @@ def open_in_vr(parent, ply: Path, scene=None) -> None:
         settings.save()
     try:
         scene = scene if scene is not None else load_scene(Path(ply))
-        url = get_server().share(Path(ply), scene_depth(scene), Path(ply).parent.parent.name)
+        depth, xf = view_params(scene)
+        url = get_server().share(Path(ply), depth, Path(ply).parent.parent.name, xf)
     except Exception as e:  # noqa: BLE001 - surfaced to the user
         QMessageBox.warning(parent, APP_NAME, f"Cannot open the VR viewer: {e}")
         return
-    if sys.platform == "win32":  # Edge ships with Windows and supports WebXR (OpenXR runtimes)
-        try:
-            subprocess.Popen(["cmd", "/c", "start", "", "msedge", url], creationflags=0x08000000)
-            return
-        except OSError:
-            pass
-    QDesktopServices.openUrl(QUrl(url))
+    from ..vr_server import open_in_browser
+
+    used = open_in_browser(url)
+    if used == "default":
+        box = QMessageBox(parent)
+        box.setWindowTitle("View in VR")
+        box.setTextFormat(Qt.RichText)
+        box.setText("Chrome or Edge was not found, so the viewer opened in your default browser. "
+                    "VR (ENTER VR) needs <b>Google Chrome</b> or <b>Microsoft Edge</b>: if the button says "
+                    f"'VR not supported', paste this address into Chrome or Edge:<br><br><code>{url}</code>")
+        copy = box.addButton("Copy address", QMessageBox.ActionRole)
+        box.addButton(QMessageBox.Ok)
+        box.exec()
+        if box.clickedButton() is copy:
+            QGuiApplication.clipboard().setText(url)
 
 
 # ============================================================ Create
@@ -194,6 +200,41 @@ class CreatePage(QWidget):
         self.backend = QComboBox()
         of.addRow("Backend", self.backend)
         opts.addWidget(obox)
+
+        gbox = QGroupBox("3D reconstruction")
+        gf = QFormLayout(gbox)
+        self.generative = QComboBox()
+        for label, val in (("Off — only what the photo shows", "off"),
+                           ("Orbit — invent the other sides of the subject (360°)", "orbit"),
+                           ("Explore — invent the surroundings (best for VR180)", "explore"),
+                           ("Spiral — small, faithful extension", "spiral")):
+            self.generative.addItem(label, val)
+        self.generative.setCurrentIndex(max(self.generative.findData(win.settings.generative), 0))
+        self.generative.setToolTip("Generative 3D (photos): Stable Virtual Camera imagines new camera views, then "
+                                   "a real 3D splat is trained from them. Invented parts are labelled "
+                                   "'generative'. Needs the Generative and Multi-view engines (12 GB+ GPU).")
+        gf.addRow("Photo: generative 3D", self.generative)
+        self.video_mode = QComboBox()
+        for label, val in (("Automatic (analyse the video)", "auto"),
+                           ("Whole video → one 3D scene (camera moves)", "multiview"),
+                           ("Frame by frame (people/animals moving)", "per_frame"),
+                           ("Sharpest frame only", "best_frame")):
+            self.video_mode.addItem(label, val)
+        self.video_mode.setCurrentIndex(max(self.video_mode.findData(win.settings.video_mode), 0))
+        gf.addRow("Video", self.video_mode)
+        self.combine = QCheckBox("Combine several photos into one 3D scene")
+        self.combine.setChecked(win.settings.combine_photos)
+        self.combine.setToolTip("Photos of the same place from different angles are reconstructed together "
+                                "(multi-view). Untick to process each photo separately.")
+        gf.addRow("Several photos", self.combine)
+        self.sequence = QCheckBox("Moving people/animals: also save one 3D splat per frame (4D sequence)")
+        self.sequence.setChecked(win.settings.export_sequence)
+        self.sequence.toggled.connect(self._save_opts)
+        gf.addRow("", self.sequence)
+        for w in (self.generative, self.video_mode):
+            w.currentIndexChanged.connect(self._save_opts)
+        self.combine.toggled.connect(self._save_opts)
+        opts.addWidget(gbox)
         top.addLayout(opts, 2)
         v.addLayout(top)
 
@@ -275,6 +316,10 @@ class CreatePage(QWidget):
         s.layout_sbs = self.sbs.isChecked()
         s.layout_tb = self.tb.isChecked()
         s.projection = self.projection.currentData()
+        s.generative = self.generative.currentData()
+        s.video_mode = self.video_mode.currentData()
+        s.combine_photos = self.combine.isChecked()
+        s.export_sequence = self.sequence.isChecked()
         self.sbs.setEnabled(s.vr180)
         self.tb.setEnabled(s.vr180)
         self.projection.setEnabled(s.vr180)
@@ -293,7 +338,10 @@ class CreatePage(QWidget):
         if ok:
             self.files = ok
             names = ", ".join(Path(p).name for p in ok[:4]) + (f" and {len(ok) - 4} more" if len(ok) > 4 else "")
-            self.selected.setText(f"Selected: {names}")
+            n_photos = sum(Path(p).suffix.lower() in IMAGE_EXTS for p in ok)
+            hint = (" — they will be combined into one 3D scene (untick 'Combine' to process them separately)"
+                    if n_photos > 1 and self.combine.isChecked() else "")
+            self.selected.setText(f"Selected: {names}{hint}")
             first = ok[0]
             if Path(first).suffix.lower() in IMAGE_EXTS:
                 pm = QPixmap(first)
@@ -306,10 +354,15 @@ class CreatePage(QWidget):
         if not self.files:
             QMessageBox.information(self, APP_NAME, "Drop or choose a photo or video first.")
             return
-        opts_base = self.win.settings.job_options(backend=self.backend.currentData())
-        for p in self.files:
-            from copy import deepcopy
+        from copy import deepcopy
 
+        opts_base = self.win.settings.job_options(backend=self.backend.currentData())
+        photos = [p for p in self.files if Path(p).suffix.lower() in IMAGE_EXTS]
+        others = [p for p in self.files if p not in photos]
+        if self.combine.isChecked() and len(photos) > 1:
+            self.win.queue.add([Path(p) for p in photos], deepcopy(opts_base))
+            photos = []
+        for p in photos + others:
             self.win.queue.add(Path(p), deepcopy(opts_base))
         self.files = []
         self.selected.setText("Added to the queue.")
@@ -324,7 +377,8 @@ class CreatePage(QWidget):
         jobs = self.win.queue.jobs
         self.table.setRowCount(len(jobs))
         for r, j in enumerate(jobs):
-            it = QTableWidgetItem(j.input.name)
+            extra = len(getattr(j, "inputs", [])) - 1
+            it = QTableWidgetItem(j.input.name + (f" + {extra} photos" if extra > 0 else ""))
             it.setData(Qt.UserRole, j.id)
             self.table.setItem(r, 0, it)
             self.table.setItem(r, 1, QTableWidgetItem(j.state))
@@ -631,6 +685,20 @@ class ComponentsPage(QWidget):
         comps = [c for c in install_order(ids) if not component_status(self.win.ctx, c)["installed"]]
         if not comps:
             return
+        mm = self.win.ctx.models
+        gated = [c for c in comps if c.kind == "model" and mm.entries[c.target].gated and not mm.is_installed(c.target)]
+        if gated and not self.win.settings.hf_token:
+            QMessageBox.information(
+                self, APP_NAME,
+                "<p>" + ", ".join(c.name for c in gated) + " is published behind a free licence agreement.</p>"
+                "<ol><li>Sign in at <a href='https://huggingface.co'>huggingface.co</a> and accept the licence on "
+                + " / ".join(f"<a href='{mm.entries[c.target].source}'>{mm.entries[c.target].source}</a>"
+                             for c in gated) + "</li><li>Create an access token (Settings → Access Tokens, type "
+                "'Read') and paste it in 2D2VR180 → Settings → Hugging Face token.</li>"
+                "<li>Install it again.</li></ol><p>The other components will be installed now.</p>")
+            comps = [c for c in comps if c not in gated]
+            if not comps:
+                return
         if not self._accept_licences(comps):
             return
         total = sum((component_status(self.win.ctx, c)["size_gb"] or 0) for c in comps)
@@ -728,6 +796,9 @@ class SettingsPage(QWidget):
         self.fill = QCheckBox("Fill small disocclusion gaps from the background (reported as interpolated)")
         self.fill.setChecked(s.fill_holes)
         form.addRow("Hole filling", self.fill)
+        self.ai_fill = QCheckBox("Use AI (LaMa) for the gaps behind objects when installed")
+        self.ai_fill.setChecked(s.ai_hole_fill)
+        form.addRow("", self.ai_fill)
         self.ipd = QDoubleSpinBox()
         self.ipd.setRange(0, 200)
         self.ipd.setSuffix(" mm")
@@ -761,7 +832,7 @@ class SettingsPage(QWidget):
         form.addRow("Also copy results to", orow)
         self.token = QLineEdit(s.hf_token)
         self.token.setEchoMode(QLineEdit.Password)
-        self.token.setPlaceholderText("only needed for gated models; stored on this computer only")
+        self.token.setPlaceholderText("needed for Stable Virtual Camera (gated); stored on this computer only")
         form.addRow("Hugging Face token", self.token)
         v.addLayout(form)
         from ..paths import app_paths
@@ -771,7 +842,7 @@ class SettingsPage(QWidget):
         v.addStretch(1)
         for w in (self.profile, self.renderer):
             w.currentIndexChanged.connect(self.save)
-        for w in (self.fill, self.cpu):
+        for w in (self.fill, self.cpu, self.ai_fill):
             w.toggled.connect(self.save)
         for w in (self.ipd, self.eye, self.veye, self.secs):
             w.valueChanged.connect(self.save)
@@ -789,6 +860,7 @@ class SettingsPage(QWidget):
         s.license_profile = self.profile.currentData()
         s.renderer = self.renderer.currentData()
         s.fill_holes = self.fill.isChecked()
+        s.ai_hole_fill = self.ai_fill.isChecked()
         s.eye_separation_mm = self.ipd.value()
         s.eye_resolution = self.eye.value()
         s.video_eye_resolution = self.veye.value()

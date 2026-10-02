@@ -1,4 +1,64 @@
-# 2D2VR180 1.0.0-rc2 — release candidate for RTX 4080 testing
+# 2D2VR180 1.0.0-rc5 — multi-view, generative 3D and VR fixes
+
+## What's new in rc5
+
+- **Fix: VR start position.** In the VR viewer you now start at eye level exactly where the camera stood,
+  with the horizon levelled (it used to start high above the scene and tilted). The gravity direction is
+  estimated from the scene's floors, ceilings and tables; the app's 3D viewer and the VR180 renders use the
+  same level orientation.
+- **New: several photos → one 3D scene.** Drop photos of the same place taken from different positions:
+  the new multi-view engine finds the cameras (VGGT), gives real-world scale (MoGe-2) and trains a real
+  3D Gaussian splat from all of them, plus a mesh.
+- **New: whole video → one 3D scene.** Videos with a moving camera now use up to 80 frames of the whole
+  video (not one frame). A *Video* option lets you force *whole video*, *frame by frame* or *sharpest frame*.
+  The previous recon3d pipeline was replaced: it trained full-resolution images with camera parameters
+  computed for 518-pixel images.
+- **New: Generative 3D from one photo.** Stable Virtual Camera (Stability AI) generates new views of the
+  photo along a camera path — *Orbit* (other sides of the subject, 360°), *Explore* (the surroundings, fills
+  a VR180) or *Spiral* — and the multi-view engine trains one consistent 3D splat from them. Invented parts are
+  labelled *generative* (pink in *Colour by provenance*).
+- **New: AI hole filling (LaMa)** for the gaps that appear behind objects in VR180 stereo.
+- **Fixed-camera video with moving people/animals:** depth is stabilised over time (less flicker), VR180
+  is levelled, and you can save one splat per frame (4D sequence).
+- **Components:** every engine and model is part of *Install recommended* (~40 GB). Stable Virtual Camera is
+  gated: accept its licence on Hugging Face and paste a token in Settings (the app explains how).
+- CLI: `run` accepts several photos or a folder, `--generative orbit|explore|spiral`,
+  `--video-mode`, `--export-sequence`, `--no-ai-fill`.
+
+### Verified automatically (no GPU)
+- 98 tests incl. the 3DGS training loop on the CPU (reference renderer), multi-view geometry (VGGT input
+  mapping, Sim(3) stitching), gravity estimation, generative and multi-photo job pipelines, LaMa
+  integration, and the WebXR viewer in Chrome (eye-level start, levelled scene, mouse controls).
+- Windows CI integration: real VGGT-1B + MoGe-2 camera poses on the CPU, real LaMa inpainting on the CPU,
+  Stable Virtual Camera import with the Windows-safe attention patch.
+- **Not yet run on an RTX 4080:** gsplat training, Stable Virtual Camera generation, GPU speeds and memory.
+
+### Requirements for the new features
+NVIDIA GPU with 10 GB+ (multi-view) or 12 GB+ (generative 3D); RTX 4080 16 GB is the target.
+Multi-view and generative 3D are **non-commercial** (VGGT-1B, Stable Virtual Camera licences); they are
+disabled in the *Commercial* licence profile.
+
+## rc4
+
+## What's new in rc4
+
+- **Fix: the camera could not be moved in the VR viewer page.** The splat library switches its mouse controls
+  off when WebXR is enabled; the page now attaches its own controls: drag = orbit, right-drag = pan,
+  wheel = zoom, arrow keys = pan, R = reset.
+- **New: move with the VR controllers.** Left stick = move (in the direction you look), right stick
+  left/right = snap-turn 30° (around your head), right stick up/down = rise/sink, A or X = back to the start.
+  Implemented by offsetting the WebXR reference space (the scene is never modified).
+- Browser tests of the viewer (page loads, mouse moves the camera, locomotion maths) now run in CI.
+
+## rc3
+
+## What's new in rc3
+
+- **Fix: "View in VR" failed when Microsoft Edge is not installed.** The app now finds Google Chrome, Edge or
+  Brave (install folders and Windows *App Paths* registry) and opens the viewer there; if none is found it uses
+  the default browser and shows the address with a *Copy address* button (VR needs Chrome or Edge).
+
+## rc2
 
 ## What's new in rc2 (from RTX 4080 feedback on rc1)
 
@@ -7,7 +67,7 @@
   RTX GPU). A splat-size slider was added. Without OpenGL the viewer falls back to the CPU preview, which now
   renders a lighter preview while dragging (~9× faster) and full quality on release.
 - **View in VR (6DoF)**: new button on Results and the 3D viewer. Opens the splat in a bundled WebXR viewer
-  (three.js + GaussianSplats3D, MIT; served only to 127.0.0.1) in Microsoft Edge — press ENTER VR with a
+  (three.js + GaussianSplats3D, MIT; served only to 127.0.0.1) in Chrome or Edge — press ENTER VR with a
   Quest Link / Air Link / Virtual Desktop / SteamVR headset. CLI: `2d2vr180-cli view-vr scene.ply`.
 - **Clearer output folder**: a `README.txt` explains every file; app metadata moved into `_2d2vr180\`.
   The VR180 videos for standalone headsets are in `export\vr180\`.
@@ -29,8 +89,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc2-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc2-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc5-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc5-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

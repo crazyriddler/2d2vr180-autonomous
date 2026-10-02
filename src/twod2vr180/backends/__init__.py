@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from .base import Backend
+from .generative import GenerativeSceneBackend
 from .photo import DepthAnythingBackend, MoGeRGBDBackend, SharpBackend
-from .video import RESEARCH_BACKENDS, Recon3DBackend
+from .multiview import MultiViewBackend
+from .video import RESEARCH_BACKENDS
 
 
 def all_backends() -> list[Backend]:
-    return [SharpBackend(), MoGeRGBDBackend(), DepthAnythingBackend(), Recon3DBackend(), *RESEARCH_BACKENDS]
+    return [SharpBackend(), MoGeRGBDBackend(), DepthAnythingBackend(), MultiViewBackend(), GenerativeSceneBackend(), *RESEARCH_BACKENDS]
 
 
 def get_backend(backend_id: str) -> Backend:

@@ -139,8 +139,10 @@ def cmd_run(a) -> int:
                       layouts=[x for x in a.layout.split(",") if x], projection=a.projection,
                       eye_resolution=a.eye_resolution, license_profile=a.license_profile,
                       output_dir=a.out, allow_cpu=a.allow_cpu, renderer=a.renderer,
-                      fill_holes=not a.no_fill_holes, video_eye_resolution=a.video_eye_resolution)
-    job = Job(Path(a.input), opts)
+                      fill_holes=not a.no_fill_holes, video_eye_resolution=a.video_eye_resolution,
+                      ai_hole_fill=not a.no_ai_fill, generative=a.generative, video_mode=a.video_mode,
+                      export_sequence=a.export_sequence)
+    job = Job([Path(p) for p in a.input] if len(a.input) > 1 else Path(a.input[0]), opts)
     runner = JobRunner(_ctx(a.license_profile))
 
     def on_event(ev):
@@ -195,14 +197,13 @@ def cmd_view_vr(a) -> int:
     """Serve a splat to the bundled WebXR viewer on 127.0.0.1 and open it."""
     import time
     import urllib.request
-    import webbrowser
-
     from .scene import load_scene
-    from .vr_server import get_server, scene_depth
+    from .vr_server import get_server, view_params
 
     ply = Path(a.scene)
     scene = load_scene(ply)
-    url = get_server().share(ply, scene_depth(scene), ply.stem)
+    depth, xf = view_params(scene)
+    url = get_server().share(ply, depth, ply.stem, xf)
     print(url, flush=True)
     if a.check:  # self-test: viewer page, modules and the scene itself are served
         base = url.split("/viewer.html")[0]
@@ -214,7 +215,9 @@ def cmd_view_vr(a) -> int:
         print("VR viewer OK")
         return 0
     if not a.no_browser:
-        webbrowser.open(url)
+        from .vr_server import open_in_browser
+
+        print(f"opened in: {open_in_browser(url)}")
     print("Serving on this computer only. Press Ctrl+C to stop.")
     try:
         while True:
@@ -255,7 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.set_defaults(fn=cmd_runtimes)
 
     j = sub.add_parser("run", help="reconstruct a photo or video")
-    j.add_argument("input")
+    j.add_argument("input", nargs="+", help="a photo or video; several photos (or a folder) make one multi-view scene")
     j.add_argument("--mode", default="auto", choices=["auto", "quality", "fast"])
     j.add_argument("--backend")
     j.add_argument("--no-vr180", action="store_true")
@@ -268,6 +271,11 @@ def build_parser() -> argparse.ArgumentParser:
     j.add_argument("--allow-cpu", action="store_true", help="run cpu-capable backends without a GPU (slow)")
     j.add_argument("--renderer", default="auto", choices=["auto", "gpu", "cpu"])
     j.add_argument("--no-fill-holes", action="store_true")
+    j.add_argument("--no-ai-fill", action="store_true", help="do not use LaMa for VR180 holes")
+    j.add_argument("--generative", default="off", choices=["off", "orbit", "explore", "spiral"],
+                   help="photos: invent unseen views with Stable Virtual Camera and train a full splat")
+    j.add_argument("--export-sequence", action="store_true", help="fixed-camera video: one .ply per frame")
+    j.add_argument("--video-mode", default="auto", choices=["auto", "multiview", "per_frame", "best_frame"])
     j.add_argument("--summary-json", help="write a compact result summary to this file")
     j.add_argument("-v", "--verbose", action="store_true")
     j.set_defaults(fn=cmd_run)

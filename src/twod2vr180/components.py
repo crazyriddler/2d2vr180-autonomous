@@ -22,23 +22,43 @@ class Component:
 
 
 COMPONENTS: list[Component] = [
-    Component("engine-photo", "Photo & fixed-camera video engine", "runtime", "photo-cu128",
-              "Required for every photo backend, fixed-camera video and the GPU VR180 renderer "
+    # ---------------------------------------------------------------- photos
+    Component("engine-photo", "Photo engine", "runtime", "photo-cu128",
+              "Required for every single-photo backend, fixed-camera video and the GPU VR180 renderer "
               "(PyTorch + CUDA, installed privately for 2D2VR180).", True),
     Component("model-moge-l", "MoGe-2 Large — quality metric depth", "model", "moge-2-vitl-normal",
-              "Quality mode for photos and fixed-camera video (metric scale, textured mesh).", True,
-              ("engine-photo",)),
+              "Quality mode for photos and fixed-camera video (metric scale, textured mesh); also gives the "
+              "multi-view engine its real-world scale.", True, ("engine-photo",)),
     Component("model-moge-s", "MoGe-2 Small — fast metric depth", "model", "moge-2-vits-normal",
               "Fast mode for photos and fixed-camera video.", True, ("engine-photo",)),
     Component("model-da2", "Depth-Anything-V2 Small — commercial-safe depth", "model", "depth-anything-v2-small",
               "Apache-2.0 fallback usable in the Commercial licence profile (relative depth).", True,
               ("engine-photo",)),
-    Component("model-sharp", "Apple SHARP — best single-photo 3D (research only)", "model", "sharp",
-              "Feed-forward 3D Gaussians from one photo. Apple research licence: non-commercial.", False,
+    Component("model-sharp", "Apple SHARP — best direct single-photo 3D (research only)", "model", "sharp",
+              "Feed-forward 3D Gaussians from one photo. Apple research licence: non-commercial.", True,
               ("engine-photo",)),
-    Component("engine-video", "Moving-camera video engine (recon3d + VGGT + gsplat)", "runtime", "recon3d-cu124",
-              "Multi-view reconstruction of videos where the camera moves. Needs an NVIDIA GPU with 12 GB+.", False,
-              note="VGGT-1B (non-commercial) and MoGe-2 weights are downloaded automatically on first use."),
+    # ---------------------------------------------------------------- multi-view
+    Component("engine-video", "Multi-view engine (several photos, moving-camera video)", "runtime", "recon3d-cu124",
+              "Turns several photos of one scene, or a video where the camera moves, into one trained 3D "
+              "Gaussian splat (VGGT + gsplat). Also used by Generative 3D. Needs an NVIDIA GPU with 10 GB+.", True),
+    Component("model-vggt", "VGGT-1B — camera poses and depth from many views (non-commercial)", "model", "vggt-1b",
+              "Finds where each photo/frame was taken and its depth.", True, ("engine-video",)),
+    # ---------------------------------------------------------------- generative
+    Component("engine-gen", "Generative engine (Stable Virtual Camera, LaMa)", "runtime", "gen-cu128",
+              "Invents the parts of a scene a photo does not show (other sides of a subject, the surroundings "
+              "for VR180) and fills holes behind objects with AI.", True),
+    Component("model-lama", "LaMa — AI hole filling for VR180", "model", "big-lama",
+              "Fills the gaps that appear behind objects in VR180 stereo with plausible texture.", True,
+              ("engine-gen",)),
+    Component("model-seva", "Stable Virtual Camera 1.1 — new views of a photo (non-commercial, gated)", "model",
+              "seva-1.1", "Generates the camera path (orbit / explore / spiral) for Generative 3D.", True,
+              ("engine-gen", "model-seva-vae", "model-clip-h", "engine-video", "model-vggt", "model-moge-l"),
+              note="Gated: first accept the licence at huggingface.co/stabilityai/stable-virtual-camera and paste "
+                   "a Hugging Face access token (read) in Settings."),
+    Component("model-seva-vae", "Stable Diffusion 2.1 VAE (for Stable Virtual Camera)", "model", "sd21-vae",
+              "Image encoder/decoder used by Stable Virtual Camera.", True, ("engine-gen",)),
+    Component("model-clip-h", "OpenCLIP ViT-H/14 (for Stable Virtual Camera)", "model", "clip-vit-h-14",
+              "Image understanding used by Stable Virtual Camera.", True, ("engine-gen",)),
 ]
 
 

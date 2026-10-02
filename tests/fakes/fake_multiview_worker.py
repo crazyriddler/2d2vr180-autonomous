@@ -1,5 +1,5 @@
-"""TEST-ONLY stand-in for workers/recon3d_worker.py: writes a synthetic 3DGS
-scene and a short camera path in the real worker's output format."""
+"""TEST-ONLY stand-in for workers/multiview_worker.py: writes a synthetic 3DGS
+scene (with provenance) and the camera of every view in the real worker's format."""
 
 import json
 import os
@@ -19,7 +19,8 @@ def main(req):
     from twod2vr180.scene import Camera, write_gaussian_ply
 
     emit("env", torch=None, cuda="12.4", cuda_available=True, device="fake")
-    frames = sorted(os.listdir(req["image_dir"]))
+    views = req["images"]
+    frames = [os.path.basename(v["path"]) for v in views]
     h, w, f = 90, 120, 100.0
     ys, xs = np.mgrid[0:h, 0:w]
     z = np.full((h, w), 3.0)
@@ -27,16 +28,22 @@ def main(req):
     img = np.stack([xs * 2, ys * 2, np.full_like(xs, 128)], -1).astype(np.uint8)
     out = req["output_dir"]
     os.makedirs(out, exist_ok=True)
-    ply = write_gaussian_ply(pointmap_to_gaussians(pts, img, None, Camera(w, h, f, f, w / 2, h / 2)),
-                             os.path.join(out, "scene.ply"))
+    sc = pointmap_to_gaussians(pts, img, None, Camera(w, h, f, f, w / 2, h / 2))
+    gen = any(v.get("generated") for v in views)
+    sc.provenance[:] = 0
+    if gen:
+        sc.provenance[: len(sc) // 3] = 2
+    ply = write_gaussian_ply(sc, os.path.join(out, "scene.ply"), include_provenance=True)
     cams = [{"width": w, "height": h, "fx": f, "fy": f, "cx": w / 2, "cy": h / 2,
              "c2w": orbit_c2w(np.array([0, 0, 3.0]), 3.0, -10 + 20 * i / max(len(frames) - 1, 1), 0).tolist(),
-             "file": fr} for i, fr in enumerate(frames)]
+             "file": fr, "generated": bool(views[i].get("generated"))} for i, fr in enumerate(frames)]
     with open(os.path.join(out, "cameras.json"), "w") as fh:
         json.dump(cams, fh)
-    progress(1.0, "fake recon3d done")
+    progress(1.0, "fake multiview done")
+    n = len(sc)
     emit("result", outputs={"ply": str(ply), "cameras": os.path.join(out, "cameras.json")}, vram_peak_mib=None,
-         metric=True)
+         metric=True, views=len(views), real_views=sum(not v.get("generated") for v in views),
+         provenance={"observed": n - (n // 3 if gen else 0), "inferred": 0, "generative": n // 3 if gen else 0})
 
 
 if __name__ == "__main__":
