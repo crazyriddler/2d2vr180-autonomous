@@ -68,14 +68,23 @@ class VRViewerServer:
     def port(self) -> int:
         return self.httpd.server_address[1]
 
-    def share(self, scene: Path, depth: float | None = None, name: str | None = None) -> str:
-        """Expose one scene file under an unguessable name; return the viewer URL."""
+    def share(self, scene: Path, depth: float | None = None, name: str | None = None,
+              transform: dict | None = None) -> str:
+        """Expose one scene file under an unguessable name; return the viewer URL.
+
+        ``transform`` (from :func:`align.viewer_transform`) levels the scene and puts the
+        capture camera at the viewer's eyes."""
         scene = Path(scene).resolve()
         token = secrets.token_hex(8) + scene.suffix.lower()
         self.httpd.shared[token] = scene  # type: ignore[attr-defined]
         q = {"scene": f"/scene/{token}", "name": name or scene.parent.parent.name}
         if depth:
             q["depth"] = f"{depth:.3f}"
+        if transform:
+            q["q"] = ",".join(f"{v:.6f}" for v in transform["quaternion"])
+            q["p"] = ",".join(f"{v:.5f}" for v in transform["position"])
+            if transform.get("target"):
+                q["t"] = ",".join(f"{v:.5f}" for v in transform["target"])
         return f"http://127.0.0.1:{self.port}/viewer.html?" + urllib.parse.urlencode(q)
 
     def stop(self) -> None:
@@ -103,6 +112,28 @@ def scene_depth(scene) -> float | None:
     z = ((scene.means.astype(np.float64) - c2w[:3, 3]) @ np.asarray(c2w)[:3, :3])[:, 2]
     z = z[z > 0]
     return float(np.median(z)) if len(z) else None
+
+
+def view_params(scene) -> tuple[float | None, dict | None]:
+    """(initial orbit depth, levelling transform) for sharing a scene with the viewer."""
+    if scene is None or len(scene) == 0:
+        return None, None
+    from .align import viewer_transform
+
+    import numpy as np
+
+    depth = scene_depth(scene)
+    try:
+        xf = viewer_transform(scene)
+        # Initial desktop orbit target: what the capture camera was looking at.
+        c2w = np.asarray(scene.cameras[0].c2w if scene.cameras else np.eye(4), np.float64)
+        look = c2w[:3, 3] + c2w[:3, 2] * (depth or 2.0)
+        from .align import quat_xyzw_to_rotmat
+
+        xf["target"] = [float(v) for v in quat_xyzw_to_rotmat(xf["quaternion"]) @ look + np.asarray(xf["position"])]
+    except Exception:  # noqa: BLE001 - levelling is a comfort feature, never block viewing
+        xf = None
+    return depth, xf
 
 
 # ------------------------------------------------------------------ browser

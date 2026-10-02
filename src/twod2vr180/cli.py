@@ -196,11 +196,12 @@ def cmd_view_vr(a) -> int:
     import time
     import urllib.request
     from .scene import load_scene
-    from .vr_server import get_server, scene_depth
+    from .vr_server import get_server, view_params
 
     ply = Path(a.scene)
     scene = load_scene(ply)
-    url = get_server().share(ply, scene_depth(scene), ply.stem)
+    depth, xf = view_params(scene)
+    url = get_server().share(ply, depth, ply.stem, xf)
     print(url, flush=True)
     if a.check:  # self-test: viewer page, modules and the scene itself are served
         base = url.split("/viewer.html")[0]

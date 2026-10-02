@@ -21,7 +21,8 @@
   <b id="title">2D2VR180 splat viewer</b><br>
   Mouse: drag = orbit · right-drag = pan · wheel = zoom · arrow keys = pan · R = reset view.<br>
   <b>VR</b>: connect your headset to this PC (Quest Link / Air Link / Virtual Desktop / SteamVR), then press
-  <b>ENTER VR</b> at the bottom of the page. You start where the original camera stood.<br>
+  <b>ENTER VR</b> at the bottom of the page. You start at eye level where the original camera stood, with the
+  horizon levelled.<br>
   <b>Controllers</b>: left stick = move · right stick left/right = turn 30° · right stick up/down = rise/sink ·
   A or X = back to the start.<br>
   Only what the camera saw exists in 3D — you will see empty space behind objects and outside the photo.
@@ -36,13 +37,21 @@ const q = new URLSearchParams(location.search);
 const scene = q.get('scene') || 'scene.ply';
 const depth = Math.max(parseFloat(q.get('depth') || '2'), 0.05);
 document.getElementById('title').textContent = '2D2VR180 — ' + (q.get('name') || scene);
+const nums = (k, n) => { const v = (q.get(k) || '').split(',').map(Number); return v.length === n && v.every(isFinite) ? v : null; };
 
-// Scenes are stored in OpenCV camera coordinates (x right, y down, z forward);
-// rotating 180° about X maps them to three.js (y up, camera looks down -z).
+// Scenes are stored in OpenCV camera coordinates (x right, y down, z forward). The app sends a
+// levelling transform (q = rotation x,y,z,w; p = translation) that maps the scene into three.js
+// coordinates with gravity up and the capture camera at the origin, looking down -z. Without it,
+// a 180° rotation about X maps the camera frame to three.js.
+const sceneRot = nums('q', 4) || [1, 0, 0, 0];
+const scenePos = nums('p', 3) || [0, 0, 0];
+const target = nums('t', 3) || [0, 0, -depth];
+const START_POS = [0, 0, 0.001];
+
 const viewer = window.viewer = new GaussianSplats3D.Viewer({
   cameraUp: [0, 1, 0],
-  initialCameraPosition: [0, 0, 0.001],
-  initialCameraLookAt: [0, 0, -depth],
+  initialCameraPosition: START_POS,
+  initialCameraLookAt: target,
   webXRMode: q.get('xr') === '0' ? GaussianSplats3D.WebXRMode.None : GaussianSplats3D.WebXRMode.VR,
   sharedMemoryForWorkers: false,     // no cross-origin isolation headers needed
   gpuAcceleratedSort: false,
@@ -50,10 +59,15 @@ const viewer = window.viewer = new GaussianSplats3D.Viewer({
   sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
   logLevel: q.get('debug') ? GaussianSplats3D.LogLevel.Debug : GaussianSplats3D.LogLevel.None,
 });
+// 'local' puts the XR origin at the headset's position when ENTER VR is pressed, so you start
+// exactly where the capture camera stood, at eye height ('local-floor' would add your standing
+// height on top and start you high above the scene).
+window.XR_SPACE = 'local';
+viewer.renderer.xr.setReferenceSpaceType(window.XR_SPACE);
 // The library disables its own mouse controls whenever WebXR is enabled, so attach
 // orbit controls ourselves (its update loop calls viewer.controls.update()).
 const controls = new GaussianSplats3D.OrbitControls(viewer.camera, viewer.renderer.domElement);
-controls.target.set(0, 0, -depth);
+controls.target.set(...target);
 controls.rotateSpeed = 0.5;
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
@@ -63,8 +77,8 @@ controls.update();
 viewer.controls = window.controls = controls;
 window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') {
-    viewer.camera.position.set(0, 0, 0.001);
-    controls.target.set(0, 0, -depth);
+    viewer.camera.position.set(...START_POS);
+    controls.target.set(...target);
     controls.update();
   }
 });
@@ -147,7 +161,8 @@ viewer.renderer.xr.addEventListener('sessionstart', () => {
 viewer.renderer.xr.addEventListener('sessionend', () => { baseSpace = null; controls.enabled = true; });
 
 viewer.addSplatScene(scene, {
-  rotation: [1, 0, 0, 0],
+  rotation: sceneRot,
+  position: scenePos,
   splatAlphaRemovalThreshold: 5,
   showLoadingUI: true,
   progressiveLoad: false,

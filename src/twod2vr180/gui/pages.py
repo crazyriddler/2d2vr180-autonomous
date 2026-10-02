@@ -64,7 +64,7 @@ VR_HELP = ("<h3>View the 3D splat in VR</h3>"
 def open_in_vr(parent, ply: Path, scene=None) -> None:
     """Serve the scene to the bundled WebXR viewer and open it in a WebXR-capable browser."""
     from ..scene import load_scene
-    from ..vr_server import get_server, scene_depth
+    from ..vr_server import get_server, view_params
 
     win = parent.window()
     settings = getattr(win, "settings", None)
@@ -80,7 +80,8 @@ def open_in_vr(parent, ply: Path, scene=None) -> None:
         settings.save()
     try:
         scene = scene if scene is not None else load_scene(Path(ply))
-        url = get_server().share(Path(ply), scene_depth(scene), Path(ply).parent.parent.name)
+        depth, xf = view_params(scene)
+        url = get_server().share(Path(ply), depth, Path(ply).parent.parent.name, xf)
     except Exception as e:  # noqa: BLE001 - surfaced to the user
         QMessageBox.warning(parent, APP_NAME, f"Cannot open the VR viewer: {e}")
         return

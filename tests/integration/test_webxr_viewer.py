@@ -28,7 +28,7 @@ def _chrome() -> str | None:
 def page(tmp_path_factory):
     from twod2vr180.rgbd import pointmap_to_gaussians
     from twod2vr180.scene import Camera, write_gaussian_ply
-    from twod2vr180.vr_server import VRViewerServer, scene_depth
+    from twod2vr180.vr_server import VRViewerServer, view_params
 
     import numpy as np
 
@@ -42,6 +42,18 @@ def page(tmp_path_factory):
     pts = np.stack([(xs + .5 - w / 2) / f * z, (ys + .5 - h / 2) / f * z, z], -1)
     img = np.stack([xs * 255 // w, ys * 255 // h, np.full_like(xs, 60)], -1).astype(np.uint8)
     sc = pointmap_to_gaussians(pts, img, None, Camera(w, h, f, f, w / 2, h / 2))
+    # a floor below the camera, seen from a camera pitched 15° down → the app levels it
+    fx, fz = np.meshgrid(np.linspace(-2, 2, 150), np.linspace(0.8, 4, 150))
+    a = np.radians(15)
+    floor_w = np.stack([fx, np.full_like(fx, 1.6), fz], -1).reshape(-1, 3)
+    rot = np.array([[1, 0, 0], [0, np.cos(a), np.sin(a)], [0, -np.sin(a), np.cos(a)]])
+    sc.means = np.concatenate([sc.means, (floor_w @ rot).astype(np.float32)])
+    k = len(floor_w)
+    sc.scales = np.concatenate([sc.scales, np.full((k, 3), 0.02, np.float32)])
+    sc.quats = np.concatenate([sc.quats, np.tile(np.float32([1, 0, 0, 0]), (k, 1))])
+    sc.opacity = np.concatenate([sc.opacity, np.ones(k, np.float32)])
+    sc.colors = np.concatenate([sc.colors, np.full((k, 3), 0.5, np.float32)])
+    sc.provenance = np.concatenate([sc.provenance, np.ones(k, np.uint8)])
     ply = write_gaussian_ply(sc, tmp_path_factory.mktemp("xr") / "scene.ply")
     srv = VRViewerServer()
     with playwright.sync_playwright() as p:
@@ -50,7 +62,9 @@ def page(tmp_path_factory):
         pg = b.new_page(viewport={"width": 800, "height": 500})
         errors = []
         pg.on("pageerror", lambda e: errors.append(str(e)))
-        pg.goto(srv.share(ply, scene_depth(sc), "test"))
+        depth, xf = view_params(sc)
+        pg.xf = xf
+        pg.goto(srv.share(ply, depth, "test", xf))
         pg.wait_for_function("window.viewer && window.viewer.splatRenderReady", timeout=60000)
         pg.errors = errors
         yield pg
@@ -91,3 +105,13 @@ def test_locomotion_offset_is_the_inverse_rig_pose(page):
     assert o["position"]["z"] == pytest.approx(-1, abs=1e-6)
     assert o["orientation"]["y"] == pytest.approx(-math.sqrt(0.5), abs=1e-6)
     assert o["orientation"]["w"] == pytest.approx(math.sqrt(0.5), abs=1e-6)
+
+
+def test_vr_starts_at_eye_level_and_level(page):
+    """Regression (user report on rc4): in VR the start point was high above the scene and tilted.
+    The XR origin must be the head ('local', not 'local-floor') and the scene must be levelled."""
+    assert page.evaluate("window.XR_SPACE") == "local"
+    assert page.xf is not None and page.xf["up"]["method"] == "geometry"
+    assert abs(page.xf["up"]["tilt_deg"] - 15) < 2
+    q = page.evaluate("window.viewer.splatMesh.getScene(0).quaternion.toArray()")
+    assert all(abs(a - b) < 1e-4 for a, b in zip(q, page.xf["quaternion"]))

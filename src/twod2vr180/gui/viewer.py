@@ -108,6 +108,12 @@ class SceneViewer(QWidget):
         self._colors = scene.colors.copy()
         cam = scene.cameras[0] if scene.cameras else None
         self.base = np.asarray(cam.c2w if cam is not None else np.eye(4), np.float64)
+        try:  # orbit around a level frame (gravity from the scene geometry)
+            from ..align import estimate_up, level_c2w
+
+            self.base = level_c2w(self.base, estimate_up(scene).up)
+        except Exception:  # noqa: BLE001 - keep the camera frame
+            pass
         rel = (scene.means - self.base[:3, 3]) @ self.base[:3, :3]
         depth = float(np.median(rel[:, 2])) if len(rel) else 1.0
         if not np.isfinite(depth) or depth <= 0:

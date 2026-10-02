@@ -429,7 +429,13 @@ class JobRunner:
         vr_dir = job.dir / "export" / "vr180"
         out: dict = {"stills": [], "videos": []}
         ffmpeg = find_ffmpeg()
-        head = scene.cameras[0].c2w if scene.cameras else np.eye(4)
+        from .align import estimate_up, level_c2w
+
+        up = estimate_up(scene)
+        out["alignment"] = up.to_dict()
+        self._up = up.up
+        # Level the virtual head: VR180 with a tilted horizon is uncomfortable to watch.
+        head = level_c2w(scene.cameras[0].c2w if scene.cameras else np.eye(4), up.up)
         for i, layout in enumerate(opts.layouts):
             check_cancel()
             so = self._stereo_options(opts, layout, opts.eye_resolution)
@@ -506,6 +512,11 @@ class JobRunner:
         fps = 24.0
         n_out = int(max(len(cams), min(opts.max_path_frames, round(dur * fps))))
         heads = interpolate_poses([c.c2w for c in cams], n_out)
+        up = getattr(self, "_up", None)
+        if up is not None:
+            from .align import level_c2w
+
+            heads = [level_c2w(h, up) for h in heads]
         fps = max(1.0, n_out / max(dur, 1e-3))
         frames = (fr.image for fr in self._stereo_frames(job, scene, result.scene_ply, so, heads, emit, 0.85,
                                                           0.99, warnings, check_cancel, "VR180 camera path"))
