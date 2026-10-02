@@ -21,7 +21,9 @@ downloads the components below. **No model weights are bundled.**
 Runtimes (config/runtime-manifest.json): PyTorch (BSD-3-Clause, bundles NVIDIA CUDA
 runtime libraries under the NVIDIA EULA), torchvision, gsplat (Apache-2.0), MoGe
 (MIT), utils3d-moge, pipeline, transformers (Apache-2.0), Apple ml-sharp (Apple Sample Code License), recon3d
-(MIT), VGGT (VGGT License v1), GTSAM (BSD), Open3D (MIT) and their dependencies.
+(MIT), VGGT (VGGT License v1), Open3D (MIT), scikit-learn (BSD-3-Clause), Stability AI stable-virtual-camera
+(Stability AI Non-Commercial Research Community License), diffusers (Apache-2.0), open_clip (MIT),
+kornia (Apache-2.0), roma (BSD-3-Clause) and their dependencies.
 
 Models (config/model-manifest.json) — shown with their license before download:
 
@@ -30,8 +32,13 @@ Models (config/model-manifest.json) — shown with their license before download
 | MoGe-2 ViT-S / ViT-L (normal) | MIT (Hugging Face model cards, verified 2026-09-27) | yes |
 | Depth-Anything-V2 Small | Apache-2.0 (Hugging Face model card) | yes |
 | Apple SHARP | Apple ML Research Model License — research only | **no** |
-| VGGT-1B (fetched by recon3d) | non-commercial | **no** |
+| VGGT-1B | CC-BY-NC-4.0 (Hugging Face model card) | **no** |
+| Stable Virtual Camera 1.1 | Stability AI Non-Commercial Research Community License (gated; outputs non-commercial) | **no** |
+| Stable Diffusion 2.1 VAE (sd2-community mirror) | CreativeML Open RAIL++-M | yes (use restrictions apply) |
+| OpenCLIP ViT-H/14 LAION-2B | MIT | yes |
+| LaMa (big-lama) | Apache-2.0 | yes |
 
 The default license profile is "Personal / research use". The "Commercial use"
 profile disables every backend whose model license does not permit commercial use
-(SHARP and the recon3d/VGGT video engine); MoGe-2 and Depth-Anything-V2 Small remain available.
+(SHARP, the VGGT multi-view engine and Stable Virtual Camera); MoGe-2, Depth-Anything-V2 Small and LaMa
+remain available.
