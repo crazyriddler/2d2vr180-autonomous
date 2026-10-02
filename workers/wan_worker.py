@@ -125,33 +125,25 @@ def sample_size(img_w, img_h, short):
 
 # ----------------------------------------------------------------------------- model
 def stub_triton():
-    """videox_fun imports a Triton kernel (sparse-linear attention) at import time; it is never used
-    here and Triton is not available on Windows, so a stand-in module lets the import succeed."""
+    """videox_fun imports a Triton kernel module (sparse-linear attention) at import time. It is
+    never used here and Triton does not exist on Windows; a fake 'triton' module would confuse
+    diffusers/transformers (they probe for it), so the kernel module itself is replaced."""
+    name = "videox_fun.models.attention_kernel"
+    if name in sys.modules:
+        return
     try:
-        import triton  # noqa: F401
+        import triton  # noqa: F401  - real Triton (Linux): nothing to do
         return
     except Exception:  # noqa: BLE001
         pass
 
-    class _Any(types.ModuleType):
-        def __getattr__(self, name):
-            if name.startswith("__"):
-                raise AttributeError(name)
-            return _anything
+    def _unavailable(*a, **k):
+        raise RuntimeError("sparse-linear attention needs Triton, which is not available on this system")
 
-    def _anything(*a, **k):
-        if len(a) == 1 and callable(a[0]) and not k:
-            return a[0]
-        return _anything
-
-    tr = _Any("triton")
-    tl = _Any("triton.language")
-    tr.language = tl
-    tr.jit = _anything
-    tr.autotune = _anything
-    tr.Config = _anything
-    sys.modules["triton"] = tr
-    sys.modules["triton.language"] = tl
+    mod = types.ModuleType(name)
+    mod._sparse_linear_attention = _unavailable
+    mod.get_block_map = _unavailable
+    sys.modules[name] = mod
 
 
 def load_pipeline(model_dir, mode, torch):
