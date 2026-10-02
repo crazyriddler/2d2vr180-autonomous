@@ -44,7 +44,7 @@ COMPONENTS: list[Component] = [
     Component("model-vggt", "VGGT-1B — camera poses and depth from many views (non-commercial)", "model", "vggt-1b",
               "Finds where each photo/frame was taken and its depth.", True, ("engine-video",)),
     # ---------------------------------------------------------------- generative
-    Component("engine-gen", "Generative engine (Wan 2.2, Stable Virtual Camera, LaMa)", "runtime", "gen-cu128",
+    Component("engine-gen", "Generative engine (Qwen-Image-Edit, Wan 2.2, Stable Virtual Camera, LaMa)", "runtime", "gen-cu128",
               "Invents the parts of a scene a photo does not show (other sides of a subject, the surroundings "
               "for VR180) and fills holes behind objects with AI.", True),
     Component("model-lama", "LaMa — AI hole filling for VR180", "model", "big-lama",
@@ -54,6 +54,19 @@ COMPONENTS: list[Component] = [
               "wan2.2-fun-5b-camera", "Video model that films new camera moves around your photo for Generative 3D. "
               "Keeps people and animals intact. ~25 GB; needs ~32 GB of RAM.", True,
               ("engine-gen", "engine-video", "model-vggt", "model-moge-l")),
+    Component("model-qwen", "Qwen-Image-Edit-2511 + Multiple-Angles — sharp generative views (Apache-2.0)", "model",
+              "qwen-image-edit-2511-q5", "Image model that redraws your photo from other camera angles (45°, 90°, "
+              "the back, above, below) at about 1 megapixel — sharper than video frames. ~33 GB with its text "
+              "encoder and LoRAs; needs ~32 GB of RAM.", False,
+              ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning", "engine-video",
+               "model-vggt", "model-moge-l")),
+    Component("model-qwen-base", "Qwen-Image-Edit-2511 text encoder and VAE (for Qwen views)", "model",
+              "qwen-image-edit-2511-base", "Qwen2.5-VL-7B text/image encoder, VAE and configuration.", False,
+              ("engine-gen",)),
+    Component("model-qwen-angles", "Multiple-Angles LoRA (for Qwen views)", "model", "qwen-edit-2511-angles-lora",
+              "Camera-angle control: 8 directions × 4 heights × 3 distances.", False, ("engine-gen",)),
+    Component("model-qwen-lightning", "Qwen-Image-Edit Lightning LoRA (4 steps)", "model", "qwen-edit-2511-lightning",
+              "Makes each Qwen view take 4 sampling steps instead of 40.", False, ("engine-gen",)),
     Component("model-seva", "Stable Virtual Camera 1.1 — alternative generative engine (non-commercial, gated)",
               "model", "seva-1.1", "Multi-view diffusion for scenes and objects without people (used only when Wan "
               "2.2 is not installed). Distorts people.", False,

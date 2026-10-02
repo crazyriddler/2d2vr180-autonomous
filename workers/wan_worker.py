@@ -20,7 +20,7 @@ import types
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
-TRAJECTORIES = ("arc", "orbit", "explore", "spiral")
+TRAJECTORIES = ("capture", "capture_full", "arc", "orbit", "explore", "spiral")
 
 PROMPT = ("A still moment captured on camera; the camera slowly moves around the scene while everything in it "
           "stays perfectly still, frozen in time. Realistic, sharp, highly detailed, natural anatomy, the same "
@@ -80,13 +80,22 @@ def crane_c2w(alpha, radius=2.0):
     return about_target(_yaw_pitch(0.0, alpha), radius)
 
 
-# (label, kind, degrees): yaw = horizontal orbit, crane = vertical orbit, look = rotation in place
+# (label, kind, degrees, key angles): yaw = horizontal orbit (+ = to the right), crane = vertical orbit
+# (- = above, looking down). Key angles are the views used by sharp fusion (None: 1/4, 1/2, 3/4, all).
 SHOT_PLANS = {
-    "arc": [("right", "yaw", 45), ("left", "yaw", -45), ("from above", "crane", -35), ("from below", "crane", 25)],
-    "orbit": [("right", "yaw", 100), ("left", "yaw", -100), ("from above", "crane", -50),
-              ("from below", "crane", 30)],
+    "arc": [("right", "yaw", 45, None), ("left", "yaw", -45, None), ("from above", "crane", -35, None),
+            ("from below", "crane", 25, None)],
+    "orbit": [("right", "yaw", 100, None), ("left", "yaw", -100, None), ("from above", "crane", -50, None),
+              ("from below", "crane", 30, None)],
+    # 360-degree photo capture: 45, 90, 135, 180 and 270 degrees, overhead, from below
+    "capture": [("orbit to 180°", "yaw", 180, (45, 90, 135, 180)), ("orbit to 270°", "yaw", -90, (-90,)),
+                ("overhead", "crane", -60, (-60,)), ("from below", "crane", 30, (30,))],
+    # ... plus the intermediate angles: 225 and 315 degrees, 30 degrees above
+    "capture_full": [("orbit to 180°", "yaw", 180, (45, 90, 135, 180)),
+                     ("orbit to 225°", "yaw", -135, (-45, -90, -135)),
+                     ("overhead", "crane", -60, (-30, -60)), ("from below", "crane", 30, (30,))],
 }
-KEY_FRACTIONS = (0.25, 0.5, 0.75, 1.0)   # of each shot's full angle: the views used by sharp fusion
+KEY_FRACTIONS = (0.25, 0.5, 0.75, 1.0)   # default key views: fractions of each shot's full angle
 
 
 def ease_curve(n):
@@ -96,17 +105,26 @@ def ease_curve(n):
     return 0.5 - 0.5 * np.cos(np.pi * t)            # smooth start and stop
 
 
-def key_frames(n):
-    """Frame indices where a shot reaches 1/4, 1/2, 3/4 and all of its angle."""
+def key_frames(n, fractions=KEY_FRACTIONS):
+    """Frame indices where a shot reaches the given fractions of its full angle."""
     import numpy as np
 
     e = ease_curve(n)
-    return sorted({int(np.argmin(np.abs(e - f))) for f in KEY_FRACTIONS} - {0})
+    return sorted({int(np.argmin(np.abs(e - f))) for f in fractions} - {0})
+
+
+def shot_key_frames(kind, si, n):
+    """Key frames of shot si: at its key angles (capture) or at 1/4 ... 1 of its angle."""
+    if kind in SHOT_PLANS:
+        _, _, deg, keys = SHOT_PLANS[kind][si]
+        if keys:
+            return key_frames(n, [k / deg for k in keys])
+    return key_frames(n)
 
 
 def shot_labels(kind):
     if kind in SHOT_PLANS:
-        return [label for label, _, _ in SHOT_PLANS[kind]]
+        return [plan[0] for plan in SHOT_PLANS[kind]]
     if kind == "explore":
         return ["look right", "look left", "look up", "look down"]
     return ["spiral"]
@@ -120,7 +138,7 @@ def shots(kind, n):
     ease = ease_curve(n)
     if kind in SHOT_PLANS:
         out = []
-        for _, how, deg in SHOT_PLANS[kind]:
+        for _, how, deg, _ in SHOT_PLANS[kind]:
             f = orbit_c2w if how == "yaw" else crane_c2w
             out.append([f(math.radians(deg) * e) for e in ease])
         return out
@@ -237,6 +255,33 @@ def text_embeddings(model_dir, texts, torch):
     return embeds
 
 
+def cached_embeddings(model_dir, texts, out_dir, torch):
+    """text_embeddings(), stored next to the shots so a restarted attempt does not reload umT5-XXL."""
+    import hashlib
+
+    path = os.path.join(out_dir, "prompt_embeds.pt")
+    key = hashlib.sha256("\x00".join(texts).encode("utf-8")).hexdigest()
+    if os.path.exists(path):
+        try:
+            d = torch.load(path, map_location="cpu", weights_only=True)
+            if d.get("key") == key:
+                return d["embeds"]
+        except Exception:  # noqa: BLE001 - recompute
+            pass
+    progress(0.0, "encoding the prompt (umT5-XXL)")
+    embeds = text_embeddings(model_dir, texts, torch)
+    torch.save({"key": key, "embeds": embeds}, path)
+    return embeds
+
+
+def memory_attempts(vram_total_mib, short_side):
+    """Memory settings to try, lightest last. Below 20 GB the bf16 transformer (10 GB) plus a shot's
+    activations does not fit, so 16 GB cards start with FP8 weights (half the size)."""
+    full = [("model_cpu_offload", short_side)] if vram_total_mib >= 20000 else []
+    return full + [("model_cpu_offload_and_qfloat8", short_side), ("model_cpu_offload_and_qfloat8", 544),
+                   ("sequential_cpu_offload", 480)]
+
+
 class _EncodedPrompt:
     """Stands in for the text encoder: the pipeline only reads its dtype (prompts are pre-encoded)."""
 
@@ -345,50 +390,57 @@ def main(req):
     plan = shots(kind, n)
     labels = shot_labels(kind)
     torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.92)))
-    attempts = [("model_cpu_offload", int(req.get("short_side", 704))),
-                ("model_cpu_offload_and_qfloat8", int(req.get("short_side", 704))),
-                ("model_cpu_offload_and_qfloat8", 544), ("sequential_cpu_offload", 480)]
-    import gc
-
+    # One memory setting per process: a failed attempt's memory (VRAM and RAM) is only reliably
+    # released when its process exits, so the app restarts the worker with the next attempt.
+    # Finished shots and the encoded prompt are kept on disk and reused.
+    attempts = memory_attempts(env.get("vram_total_mib") or 16000, int(req.get("short_side", 704)))
+    k = int(req.get("attempt", 0))
+    if k >= len(attempts):
+        emit("error", code="oom", message="Wan 2.2 does not fit in this GPU's memory at any setting.")
+        sys.exit(1)
+    m, short = attempts[k]
     prompt = req.get("prompt") or PROMPT
-    progress(0.0, "encoding the prompt (umT5-XXL)")
-    embeds = text_embeddings(req["model_dir"], [prompt, req.get("negative_prompt") or NEGATIVE], torch)
-    pipe, mode = None, None
+    embeds = cached_embeddings(req["model_dir"], [prompt, req.get("negative_prompt") or NEGATIVE], out_dir, torch)
     views = [{"path": req["image"], "generated": False}]
     every = max(1, int(req.get("every", 2)))
+    pipe = None
     for si, c2ws in enumerate(plan):
-        frames = None
-        for ai, (m, short) in enumerate(attempts):
-            if pipe is None or mode != m:
-                pipe = None
-                gc.collect()
-                torch.cuda.empty_cache()
-                progress(0.0, f"loading Wan 2.2 Fun 5B ({m})")
-                pipe, mode = load_pipeline(req["model_dir"], m, torch, embeds), m
-            size = sample_size(image.width, image.height, short)
-            log(f"shot {si + 1}/{len(plan)} ({labels[si]}): {size[1]}x{size[0]}, {len(c2ws)} frames, {m}")
-            oom = None
-            try:
-                frames = generate_shot(pipe, req["image"], c2ws, hfov, size, steps, int(req.get("seed", 42)) + si,
-                                       prompt, torch, f"shot {si + 1}/{len(plan)} ({labels[si]})")
-            except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-                if "out of memory" not in str(e).lower() or ai == len(attempts) - 1:
-                    raise
-                oom = str(e).splitlines()[0][:200]
-            if frames is not None:
-                attempts = attempts[ai:]          # keep the setting that worked for the next shots
-                break
-            # Freed here, after the except block: the exception's traceback keeps every tensor of the
-            # failed attempt alive until then (VRAM and RAM).
-            log(f"out of GPU memory ({m}, {short} px): {oom}; trying a lighter setting")
-            pipe = None
-            gc.collect()
-            torch.cuda.empty_cache()
-        keys = set(key_frames(len(frames)))
+        done = os.path.join(out_dir, f"shot{si}.json")
+        if os.path.exists(done):
+            with open(done) as f:
+                views += json.load(f)
+            log(f"shot {si + 1}/{len(plan)} ({labels[si]}): already generated, reused")
+            continue
+        if pipe is None:
+            progress(0.0, f"loading Wan 2.2 Fun 5B ({m}, attempt {k + 1}/{len(attempts)})")
+            pipe = load_pipeline(req["model_dir"], m, torch, embeds)
+        size = sample_size(image.width, image.height, short)
+        log(f"shot {si + 1}/{len(plan)} ({labels[si]}): {size[1]}x{size[0]}, {len(c2ws)} frames, {m}")
+        oom = None
+        try:
+            frames = generate_shot(pipe, req["image"], c2ws, hfov, size, steps, int(req.get("seed", 42)) + si,
+                                   prompt, torch, f"shot {si + 1}/{len(plan)} ({labels[si]})")
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            if "out of memory" not in str(e).lower():
+                raise
+            oom = str(e).splitlines()[0][:300]
+        if oom:
+            more = k + 1 < len(attempts)
+            emit("error", code="oom_retry" if more else "oom",
+                 message=f"out of GPU memory ({m}, {short} px): {oom}" +
+                         ("; retrying with a lighter setting" if more else ""))
+            sys.exit(1)
+        keys = set(shot_key_frames(kind, si, len(frames)))
+        shot_views = []
         for fi in sorted(set(range(every, len(frames), every)) | keys):      # frame 0 is the photo itself
             p = os.path.join(out_dir, f"shot{si}_{fi:03d}.png")
             Image.fromarray((frames[fi] * 255).round().astype(np.uint8)).save(p)
-            views.append({"path": p, "generated": True, "shot": si, "frame": fi, "key": fi in keys})
+            shot_views.append({"path": p, "generated": True, "shot": si, "frame": fi, "key": fi in keys})
+        with open(done, "w") as f:
+            json.dump(shot_views, f)
+        views += shot_views
+        frames = None
+    mode = m
     with open(os.path.join(out_dir, "views.json"), "w") as f:
         json.dump(views, f)
     emit("result", views=views, vram_peak_mib=vram_peak_mib(torch), trajectory=kind, mode=mode)

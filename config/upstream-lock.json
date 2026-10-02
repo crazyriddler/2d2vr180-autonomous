@@ -244,6 +244,21 @@
    "gpu_smoke_test": "not run",
    "integration": "workers/wan_worker.py: camera-controlled image-to-video shots from the photo (CameraCtrl poses -> Plucker), frames reconstructed by the multi-view engine.",
    "findings": "Stable Virtual Camera distorts people (documented upstream limitation, confirmed by the owner on RTX 4080); Wan 2.2 is trained on large amounts of real video including people."
+  },
+  {
+   "name": "qwen-image-edit",
+   "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511",
+   "role": "backend",
+   "commit": "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9",
+   "commit_date": "2026-10-02",
+   "code_license": "Apache-2.0 (diffusers 0.37.1 QwenImageEditPlusPipeline)",
+   "model_license": "Apache-2.0 (Qwen/Qwen-Image-Edit-2511; unsloth GGUF Q5_K_M rev 0d33d9692b4b26212297240d87b0d4719aa4fd06; fal Multiple-Angles LoRA rev e3066224ab74263f4a5b6179cd1a3b0a15577e44; lightx2v Lightning LoRA rev d74eba145674fd7e31b949324e148e21e7118abd)",
+   "category": "redistributable",
+   "windows": "pure PyTorch via diffusers; GGUF dequantised on the fly; text encoder 4-bit (bitsandbytes Windows wheel) with bf16/offload fallback",
+   "vram": "Q5_K_M transformer 15 GB streamed block by block (group offload); text encoder 4-bit ~5.5 GB in a separate process",
+   "gpu_smoke_test": "not run",
+   "integration": "workers/qwen_views_worker.py: '<sks> [azimuth] [elevation] [distance]' prompts, one ~1 MP view per camera position from the photo, 4 Lightning steps; views assembled by sharp fusion.",
+   "findings": "Owner asked for fewer, more widely spaced views (45/90/135/180/270, overhead, below) and an image model with higher per-view resolution than Wan video frames."
   }
  ],
  "auxiliary_archives": [

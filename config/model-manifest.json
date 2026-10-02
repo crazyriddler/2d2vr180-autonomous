@@ -333,6 +333,223 @@
     }
    ],
    "notes": "About 24.7 GB. Needs ~32 GB of system RAM (parts of the model wait in RAM while others run on the GPU)."
+  },
+  {
+   "id": "qwen-image-edit-2511-base",
+   "display_name": "Qwen-Image-Edit-2511 — text encoder (Qwen2.5-VL-7B), VAE and configs",
+   "source": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511",
+   "revision": "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9",
+   "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
+   "license_url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 6,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "model_index.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/model_index.json",
+     "sha256": null,
+     "size_bytes": 516
+    },
+    {
+     "path": "processor/added_tokens.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/processor/added_tokens.json",
+     "sha256": null,
+     "size_bytes": 605
+    },
+    {
+     "path": "processor/chat_template.jinja",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/processor/chat_template.jinja",
+     "sha256": null,
+     "size_bytes": 1017
+    },
+    {
+     "path": "processor/merges.txt",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/processor/merges.txt",
+     "sha256": null,
+     "size_bytes": 1671853
+    },
+    {
+     "path": "processor/preprocessor_config.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/processor/preprocessor_config.json",
+     "sha256": null,
+     "size_bytes": 826
+    },
+    {
+     "path": "processor/special_tokens_map.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/processor/special_tokens_map.json",
+     "sha256": null,
+     "size_bytes": 613
+    },
+    {
+     "path": "processor/tokenizer.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/processor/tokenizer.json",
+     "sha256": "9c5ae00e602b8860cbd784ba82a8aa14e8feecec692e7076590d014d7b7fdafa",
+     "size_bytes": 11421896
+    },
+    {
+     "path": "processor/tokenizer_config.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/processor/tokenizer_config.json",
+     "sha256": null,
+     "size_bytes": 4727
+    },
+    {
+     "path": "processor/video_preprocessor_config.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/processor/video_preprocessor_config.json",
+     "sha256": null,
+     "size_bytes": 910
+    },
+    {
+     "path": "processor/vocab.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/processor/vocab.json",
+     "sha256": null,
+     "size_bytes": 2776833
+    },
+    {
+     "path": "scheduler/scheduler_config.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/scheduler/scheduler_config.json",
+     "sha256": null,
+     "size_bytes": 485
+    },
+    {
+     "path": "text_encoder/config.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/text_encoder/config.json",
+     "sha256": null,
+     "size_bytes": 3146
+    },
+    {
+     "path": "text_encoder/generation_config.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/text_encoder/generation_config.json",
+     "sha256": null,
+     "size_bytes": 244
+    },
+    {
+     "path": "text_encoder/model-00001-of-00004.safetensors",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/text_encoder/model-00001-of-00004.safetensors",
+     "sha256": "d725335e4ea2399be706469e4b8807716a8fa64bd03468252e9f7acf2415fee4",
+     "size_bytes": 4968243304
+    },
+    {
+     "path": "text_encoder/model-00002-of-00004.safetensors",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/text_encoder/model-00002-of-00004.safetensors",
+     "sha256": "b1830db6908dcc76df3a71492acbcf2b8cac130114cf1f3c2d9edae8de8c6de3",
+     "size_bytes": 4991495816
+    },
+    {
+     "path": "text_encoder/model-00003-of-00004.safetensors",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/text_encoder/model-00003-of-00004.safetensors",
+     "sha256": "09c1807c6d00d7cab94f7db39d4c02ebb8537225ccde383861ac48db97945aa6",
+     "size_bytes": 4932751040
+    },
+    {
+     "path": "text_encoder/model-00004-of-00004.safetensors",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/text_encoder/model-00004-of-00004.safetensors",
+     "sha256": "5dd068336d14d45ffb43cef374d286cc6ba9d8741b028f90a7d040d847961f4a",
+     "size_bytes": 1691924384
+    },
+    {
+     "path": "text_encoder/model.safetensors.index.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/text_encoder/model.safetensors.index.json",
+     "sha256": null,
+     "size_bytes": 57655
+    },
+    {
+     "path": "transformer/config.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/transformer/config.json",
+     "sha256": null,
+     "size_bytes": 362
+    },
+    {
+     "path": "vae/config.json",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/vae/config.json",
+     "sha256": null,
+     "size_bytes": 730
+    },
+    {
+     "path": "vae/diffusion_pytorch_model.safetensors",
+     "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511/resolve/6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9/vae/diffusion_pytorch_model.safetensors",
+     "sha256": "0c8bc8b758c649abef9ea407b95408389a3b2f610d0d10fcb054fe171d0a8344",
+     "size_bytes": 253806966
+    }
+   ],
+   "notes": "The 20B transformer is not downloaded from this repository: the GGUF Q5_K_M weights (qwen-image-edit-2511-q5) are used instead."
+  },
+  {
+   "id": "qwen-image-edit-2511-q5",
+   "display_name": "Qwen-Image-Edit-2511 transformer, GGUF Q5_K_M (20B parameters, 5-bit)",
+   "source": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF",
+   "revision": "0d33d9692b4b26212297240d87b0d4719aa4fd06",
+   "license": "Apache-2.0 (quantisation of Qwen/Qwen-Image-Edit-2511; model card: license: apache-2.0)",
+   "license_url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 10,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "qwen-image-edit-2511-Q5_K_M.gguf",
+     "url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/0d33d9692b4b26212297240d87b0d4719aa4fd06/qwen-image-edit-2511-Q5_K_M.gguf",
+     "sha256": "c257def934d25562e1dcb7e8710eb5457a23c1ae7218f7a5ea3174e773421d29",
+     "size_bytes": 15027501664
+    }
+   ]
+  },
+  {
+   "id": "qwen-edit-2511-angles-lora",
+   "display_name": "Multiple-Angles LoRA for Qwen-Image-Edit-2511 (96 camera poses, fal)",
+   "source": "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
+   "revision": "e3066224ab74263f4a5b6179cd1a3b0a15577e44",
+   "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
+   "license_url": "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 0,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+     "url": "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA/resolve/e3066224ab74263f4a5b6179cd1a3b0a15577e44/qwen-image-edit-2511-multiple-angles-lora.safetensors",
+     "sha256": "42426ded4e25fd22879d9e198b857556445ef4ca56e8da3246d0345155bb6765",
+     "size_bytes": 295140688
+    }
+   ]
+  },
+  {
+   "id": "qwen-edit-2511-lightning",
+   "display_name": "Qwen-Image-Edit-2511 Lightning LoRA, 4 steps (lightx2v)",
+   "source": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
+   "revision": "d74eba145674fd7e31b949324e148e21e7118abd",
+   "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
+   "license_url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 0,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+     "url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/d74eba145674fd7e31b949324e148e21e7118abd/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+     "sha256": "22226e8d05d354bb356627d428809f5afd7819399b077238a2b70a82883a904f",
+     "size_bytes": 849608296
+    }
+   ]
   }
  ]
 }

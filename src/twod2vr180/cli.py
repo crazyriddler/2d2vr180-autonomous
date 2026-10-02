@@ -140,7 +140,7 @@ def cmd_run(a) -> int:
                       eye_resolution=a.eye_resolution, license_profile=a.license_profile,
                       output_dir=a.out, allow_cpu=a.allow_cpu, renderer=a.renderer,
                       fill_holes=not a.no_fill_holes, video_eye_resolution=a.video_eye_resolution,
-                      ai_hole_fill=not a.no_ai_fill, generative=a.generative, gen_assembly=a.assembly,
+                      ai_hole_fill=not a.no_ai_fill, generative=a.generative, gen_assembly=a.assembly, gen_engine=a.engine,
                       video_mode=a.video_mode,
                       export_sequence=a.export_sequence)
     job = Job([Path(p) for p in a.input] if len(a.input) > 1 else Path(a.input[0]), opts)
@@ -273,8 +273,10 @@ def build_parser() -> argparse.ArgumentParser:
     j.add_argument("--renderer", default="auto", choices=["auto", "gpu", "cpu"])
     j.add_argument("--no-fill-holes", action="store_true")
     j.add_argument("--no-ai-fill", action="store_true", help="do not use LaMa for VR180 holes")
-    j.add_argument("--generative", default="off", choices=["off", "arc", "orbit", "explore", "spiral"],
+    j.add_argument("--generative", default="off", choices=["off", "capture", "arc", "orbit", "explore", "spiral"],
                    help="photos: invent unseen views (Wan 2.2 / Stable Virtual Camera) and build a full 3D scene")
+    j.add_argument("--engine", default="auto", choices=["auto", "qwen", "wan", "seva"],
+                   help="generative 3D: model that invents the other views (auto: Qwen, then Wan, then SEVA)")
     j.add_argument("--assembly", default="fusion", choices=["fusion", "train"],
                    help="generative 3D: sharp fusion of per-view MoGe-2 geometry (default) or one trained splat")
     j.add_argument("--export-sequence", action="store_true", help="fixed-camera video: one .ply per frame")

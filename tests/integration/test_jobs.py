@@ -314,7 +314,7 @@ def test_generative_prefers_wan_when_installed(ctx, rtx4080, photo, monkeypatch)
     assert {m["id"] for m in rep["models"]} >= {"wan2.2-fun-5b-camera", "vggt-1b"}
     assert "seva-1.1" not in {m["id"] for m in rep["models"]}
     req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
-    assert req["trajectory"] == "arc" and req["frames"] == 33 and req["model_dir"].endswith("wan2.2-fun-5b-camera")
+    assert req["trajectory"] == "arc" and req["frames"] == 25 and req["model_dir"].endswith("wan2.2-fun-5b-camera")
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     # sharp fusion (default): the photo + a few key views, not every generated frame
     assert mv["assembly"] == "fusion" and mv["fuse_ref_side"] == 1024
@@ -338,3 +338,81 @@ def test_generative_trained_assembly_uses_every_frame(ctx, rtx4080, photo, monke
     assert req["frames"] == 49 and req["steps"] == 30
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     assert mv["assembly"] == "train" and len(mv["images"]) == 50
+
+
+def test_wan_out_of_memory_retries_in_a_fresh_process(ctx, rtx4080, photo, monkeypatch):
+    from conftest import REPO, install_fake_model
+    from twod2vr180.backends.generative import GenerativeSceneBackend
+    from twod2vr180.backends.multiview import MultiViewBackend
+
+    fakes = REPO / "tests" / "fakes"
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(fakes / "fake_multiview_worker.py"))
+    monkeypatch.setattr(GenerativeSceneBackend, "wan_script", str(fakes / "fake_seva_worker.py"))
+    monkeypatch.setenv("FAKE_WAN_OOM_ATTEMPTS", "2")
+    install_fake_model(ctx.models, "wan2.2-fun-5b-camera")
+    job, rep, log = run_job(ctx, rtx4080, photo, mode="fast", generative="arc", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
+    assert req["attempt"] == 2
+
+
+def _fake_generative(monkeypatch):
+    from conftest import REPO
+    from twod2vr180.backends.generative import GenerativeSceneBackend
+    from twod2vr180.backends.multiview import MultiViewBackend
+
+    fakes = REPO / "tests" / "fakes"
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(fakes / "fake_multiview_worker.py"))
+    monkeypatch.setattr(GenerativeSceneBackend, "wan_script", str(fakes / "fake_seva_worker.py"))
+    monkeypatch.setattr(GenerativeSceneBackend, "qwen_script", str(fakes / "fake_qwen_worker.py"))
+
+
+QWEN_IDS = ("qwen-image-edit-2511-q5", "qwen-image-edit-2511-base", "qwen-edit-2511-angles-lora",
+            "qwen-edit-2511-lightning")
+
+
+@pytest.mark.parametrize("mode,n_views", [("fast", 7), ("quality", 13)])
+def test_qwen_360_capture(ctx, rtx4080, photo, monkeypatch, mode, n_views):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS + ("wan2.2-fun-5b-camera",):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode=mode, generative="capture", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["extra"]["engine"] == "qwen"     # auto prefers Qwen when installed
+    gen = job.dir / "generated_views"
+    enc = json.loads((gen / "stage_encode.json").read_text())
+    angles = [(v["azimuth"], v["elevation"]) for v in enc["views"]]
+    assert angles[:7] == [(45, 0), (90, 0), (135, 0), (180, 0), (270, 0), (0, 60), (0, -30)]
+    assert len(angles) == n_views
+    assert enc["gguf"].endswith("qwen-image-edit-2511-Q5_K_M.gguf") and enc["base_dir"].endswith(
+        "qwen-image-edit-2511-base")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["assembly"] == "fusion" and len(mv["images"]) == n_views + 1
+    assert {m["id"] for m in rep["models"]} >= set(QWEN_IDS)
+
+
+def test_wan_360_capture_when_chosen(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS + ("wan2.2-fun-5b-camera",):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality", generative="capture", gen_engine="wan",
+                          layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
+    assert req["trajectory"] == "capture_full" and req["frames"] == 49
+    assert rep["backend"]["extra"]["engine"] == "wan"
+
+
+def test_qwen_cannot_explore_falls_back_to_wan(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS + ("wan2.2-fun-5b-camera",):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="explore", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["extra"]["engine"] == "wan"

@@ -12,6 +12,9 @@ from _protocol import emit, progress, run  # noqa: E402
 
 def main(req):
     emit("env", torch=None, cuda="12.8", cuda_available=True, device="fake")
+    if os.environ.get("FAKE_WAN_OOM_ATTEMPTS") and int(req.get("attempt", 0)) < int(os.environ["FAKE_WAN_OOM_ATTEMPTS"]):
+        emit("error", code="oom_retry", message=f"out of GPU memory (attempt {req['attempt']})")
+        sys.exit(1)
     out = req["output_dir"]
     os.makedirs(out, exist_ok=True)
     views = []

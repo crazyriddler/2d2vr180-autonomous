@@ -37,6 +37,7 @@ You can also open **Components** at any time and install only what you need.
 | Generative engine | Stable Virtual Camera and LaMa | ~5.5 GB |
 | LaMa | AI filling of the gaps behind objects in VR180 | 0.2 GB |
 | Wan 2.2 Fun 5B Control-Camera | generative 3D: films new camera moves around your photo (Apache-2.0; keeps people intact) | ~25 GB (needs ~32 GB RAM) |
+| Qwen-Image-Edit-2511 + Multiple-Angles + Lightning *(optional)* | generative 3D: redraws your photo from other camera angles, sharp ~1 MP stills (Apache-2.0) | ~33 GB (needs ~32 GB RAM) |
 | Stable Virtual Camera 1.1 *(optional)* | alternative generative engine for scenes/objects without people (**non-commercial, gated**) | 5 GB + 0.3 GB + 3.9 GB |
 
 Stable Virtual Camera is optional and needs a free Hugging Face account (accept the licence at
@@ -51,10 +52,15 @@ verified (SHA256) before use.
 2. Choose **Auto** (recommended), **Quality** or **Fast**.
 3. Choose outputs: VR180 side-by-side and/or top/bottom, VR180 or flat 3D projection.
 4. Under **3D reconstruction**:
-   - **Photo: generative 3D** — *Off* uses only what the photo shows. *Around the subject* films four short
+   - **Photo: generative 3D** — *Off* uses only what the photo shows. *360° photo capture* makes a few widely
+     spaced views starting from your photo: 45°, 90°, 135°, 180° (the back is invented), 270°, overhead and
+     from below; in Quality mode it adds 225°, 315° and four raised diagonals. *Around the subject* films four short
      camera moves (45° to each side, from above, from below) and is the best choice for people; *Wide orbit* also
      invents the back (objects), *Explore* invents the surroundings so a VR180 is filled (best for VR180),
      *Spiral* adds a small, faithful extension.
+   - **Generative engine** — *Qwen-Image-Edit* (with the Multiple-Angles LoRA) draws every angle as a sharp
+     ~1 megapixel image; *Wan 2.2* films the camera moving around the subject and takes the frames at those
+     angles (smoother, 704 px); *Automatic* uses Qwen when it is installed, then Wan 2.2.
    - **Generative 3D assembly** — *Sharp fusion* (default) gives every view MoGe-2's crisp per-pixel geometry,
      keeps the photo exactly as it is and adds only what the other views show (sides, top, underside): as
      sharp as a single photo from any angle. *Trained splat* fits one model to every generated frame: smoother

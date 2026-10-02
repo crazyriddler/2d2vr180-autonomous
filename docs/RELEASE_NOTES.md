@@ -1,3 +1,38 @@
+# 2D2VR180 1.0.0-rc14 — 360° photo capture, Qwen-Image-Edit engine
+
+## What's new in rc14
+
+- **360° photo capture (new generative mode).** A few widely spaced views starting from your photo: 45°, 90°,
+  135°, 180° (the back is invented), 270°, overhead and from below. That is 7 views in Fast and Auto. Quality
+  adds 225°, 315° and four raised diagonals (13 views). They are assembled with sharp fusion.
+- **New generative engine: Qwen-Image-Edit-2511 + Multiple-Angles LoRA** (Alibaba Qwen and fal, Apache-2.0).
+  It redraws your photo from each requested camera angle as a sharp ~1 megapixel image: sharper than video
+  frames, and only 4 sampling steps per view thanks to the Lightning LoRA.
+  - **Memory:**
+    - The 20B transformer (GGUF, 5-bit) streams block by block from RAM to the GPU.
+    - The text encoder (Qwen2.5-VL-7B, 4-bit) runs first, in its own process, then releases everything.
+  - **To install:** Components → *Qwen-Image-Edit-2511 + Multiple-Angles*, about 33 GB.
+  - **To use it:** pick *Generative engine*: Automatic (Qwen first), Qwen, Wan 2.2 or Stable Virtual Camera.
+    Qwen does 360° capture, Around the subject and Wide orbit. Explore and Spiral use Wan 2.2.
+- **Wan 2.2 also does 360° capture.** It films an orbit to 180°, a turn to 270°, a crane shot above and one
+  below, and keeps exactly the frame at each requested angle.
+- **The generative engine must be installed again** (diffusers 0.37.1, peft, gguf and bitsandbytes were
+  added). The app shows it as needing an update.
+
+# 2D2VR180 1.0.0-rc13 — Wan 2.2 memory: one process per attempt, fewer frames
+
+## What's new in rc13
+
+- **Fix: Wan 2.2 still ran out of GPU memory and filled the 32 GB of RAM (rc12, Quality).** Each failed
+  memory setting left about 8 GB of VRAM and a lot of RAM behind inside the same process. Now:
+  - **Separate process per attempt.** Each memory setting runs in its own process, and only exiting the
+    process frees everything for certain.
+  - **Nothing is redone.** Shots that are already finished, and the encoded prompt, are reused.
+  - **16 GB cards start directly with FP8 weights.** That is the setting that fits; a 24 GB+ card still
+    starts with full precision.
+- **Fewer frames for sharp fusion.** Fusion only uses 4 key views per shot, so the shots are now 25 frames
+  (Fast), 33 (Auto) or 49 (Quality), instead of up to 81. Faster and lighter.
+
 # 2D2VR180 1.0.0-rc12 — generative 3D: sharp fusion, views from above and below
 
 ## What's new in rc12
@@ -15,7 +50,6 @@
   - The previous behaviour is still available as *Generative 3D assembly → Trained splat*.
 - **Views from above and below.** *Around the subject* now films four shots: 45° to the right, 45° to the
   left, 35° from above, and 25° from below. *Wide orbit* does the same at ±100°, 50° above and 30° below.
-- Shorter Wan shots for fusion: 33 frames / 25 steps (Fast), 49 / 30 (Auto), 81 / 50 (Quality).
 - `run_report.json` now includes the backend details: assembly, engine, views, splats.
 - CI: the real VGGT + MoGe-2 + fusion pipeline runs on Windows (CPU) on every integration build.
 
@@ -188,8 +222,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc12-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc12-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc14-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc14-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

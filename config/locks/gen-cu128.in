@@ -9,7 +9,7 @@ einops
 roma
 kornia
 open-clip-torch==3.2.0
-diffusers==0.35.2
+diffusers==0.37.1
 splines
 colorama
 imageio[ffmpeg]
@@ -24,3 +24,7 @@ omegaconf
 sentencepiece
 librosa
 func_timeout
+# Qwen-Image-Edit-2511 multi-angle views (diffusers >= 0.37: 2511 transformer; GGUF weights; LoRAs; 4-bit text encoder)
+peft==0.17.1
+gguf>=0.10.0
+bitsandbytes
