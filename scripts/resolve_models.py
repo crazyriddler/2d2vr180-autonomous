@@ -1,67 +1,70 @@
-"""Fill revision / sha256 / size in config/model-manifest.json from the
-Hugging Face API (LFS metadata), for entries hosted on huggingface.co.
+"""Resolve model metadata (exact revision, file sizes, LFS SHA256, licence, gating) from
+Hugging Face and GitHub release assets. Runs in CI (the dev container has no HF access);
+the JSON it prints is copied into config/model-manifest.json.
 
-    python scripts/resolve_models.py --write
-
-Requires network access to huggingface.co (blocked in the reconnaissance
-sandbox; run on a normal machine). Non-HF hosts (Apple CDN) are hashed by
-downloading once with --download-other.
+    python scripts/resolve_models.py > resolved.json
 """
 
-import argparse
+from __future__ import annotations
+
 import hashlib
 import json
-import re
 import sys
 import urllib.request
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
-HF = re.compile(r"https://huggingface.co/([^/]+/[^/]+)/resolve/([^/]+)/(.+)")
+HF_REPOS = [
+    "facebook/VGGT-1B", "facebook/VGGT-1B-Commercial",
+    "stabilityai/stable-virtual-camera",
+    "stabilityai/stable-diffusion-2-1-base", "sd2-community/stable-diffusion-2-1-base",
+    "Manojb/stable-diffusion-2-1-base",
+    "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+    "Ruicheng/moge-2-vitl-normal",
+    "fashn-ai/LaMa", "smartywu/big-lama", "Carve/LaMa-ONNX",
+    "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
+]
+URLS = [  # non-HF downloads: hashed by streaming
+    "https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt",
+]
 
 
-def api(url):
-    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "2d2vr180"}), timeout=60) as r:
+def get(url: str):
+    req = urllib.request.Request(url, headers={"User-Agent": "2D2VR180-resolver"})
+    with urllib.request.urlopen(req, timeout=120) as r:
         return json.load(r)
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--write", action="store_true")
-    ap.add_argument("--download-other", action="store_true")
-    a = ap.parse_args()
-    path = REPO / "config" / "model-manifest.json"
-    man = json.loads(path.read_text())
-    for m in man["models"]:
-        for f in m.get("files", []):
-            mt = HF.match(f["url"])
-            if mt:
-                repo, rev, fname = mt.groups()
-                info = api(f"https://huggingface.co/api/models/{repo}/revision/{rev}?blobs=true")
-                sib = {s["rfilename"]: s for s in info.get("siblings", [])}.get(fname)
-                if not sib:
-                    print(f"{m['id']}: {fname} not found in {repo}", file=sys.stderr)
-                    continue
-                sha = info["sha"]
-                f["url"] = f"https://huggingface.co/{repo}/resolve/{sha}/{fname}"
-                f["sha256"] = (sib.get("lfs") or {}).get("sha256")
-                f["size_bytes"] = (sib.get("lfs") or {}).get("size") or sib.get("size")
-                m["revision"] = sha
-                card = (info.get("cardData") or {}).get("license")
-                print(f"{m['id']}: rev {sha[:10]} size {f['size_bytes']} sha {str(f['sha256'])[:12]} "
-                      f"card-license={card}")
-            elif a.download_other:
-                h = hashlib.sha256()
-                n = 0
-                with urllib.request.urlopen(f["url"], timeout=120) as r:
-                    for b in iter(lambda: r.read(1 << 20), b""):
-                        h.update(b)
-                        n += len(b)
-                f["sha256"], f["size_bytes"] = h.hexdigest(), n
-                print(f"{m['id']}: {n} bytes sha {f['sha256'][:12]}")
-    if a.write:
-        path.write_text(json.dumps(man, indent=2) + "\n")
-        print("manifest updated — review license fields manually before committing")
+    out = {"hf": {}, "urls": {}}
+    for repo in HF_REPOS:
+        try:
+            info = get(f"https://huggingface.co/api/models/{repo}?blobs=true")
+            files = {}
+            for s in info.get("siblings", []):
+                lfs = s.get("lfs") or {}
+                files[s["rfilename"]] = {"size": lfs.get("size") or s.get("size"), "sha256": lfs.get("sha256")}
+            out["hf"][repo] = {"revision": info.get("sha"), "gated": info.get("gated"),
+                               "license": (info.get("cardData") or {}).get("license"),
+                               "license_name": (info.get("cardData") or {}).get("license_name"),
+                               "license_link": (info.get("cardData") or {}).get("license_link"),
+                               "files": files}
+        except Exception as e:  # noqa: BLE001
+            out["hf"][repo] = {"error": f"{type(e).__name__}: {e}"}
+    for url in URLS:
+        try:
+            h = hashlib.sha256()
+            n = 0
+            req = urllib.request.Request(url, headers={"User-Agent": "2D2VR180-resolver"})
+            with urllib.request.urlopen(req, timeout=300) as r:
+                while True:
+                    b = r.read(1 << 22)
+                    if not b:
+                        break
+                    h.update(b)
+                    n += len(b)
+            out["urls"][url] = {"size": n, "sha256": h.hexdigest()}
+        except Exception as e:  # noqa: BLE001
+            out["urls"][url] = {"error": f"{type(e).__name__}: {e}"}
+    json.dump(out, sys.stdout, indent=1)
     return 0
 
 

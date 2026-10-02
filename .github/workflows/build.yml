@@ -7,6 +7,10 @@ on:
         description: "Also run the real-model integration jobs (runtime install, model download, CPU inference)"
         type: boolean
         default: false
+      resolve_models:
+        description: "Only resolve model metadata (revisions, SHA256, licences) from Hugging Face"
+        type: boolean
+        default: false
       release_tag:
         description: "Create a release with this tag (e.g. v1.0.0-rc1) from the dispatched commit; -rc tags become pre-releases"
         type: string
@@ -20,6 +24,17 @@ permissions:
   contents: read
 
 jobs:
+  resolve-models:
+    if: github.event_name == 'workflow_dispatch' && inputs.resolve_models
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/resolve_models.py | tee resolved-models.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resolved-models
+          path: resolved-models.json
+
   test-linux:
     # GPU-free tests: scene I/O, VR180 geometry, media analysis, model manager,
     # job pipeline with a test-only fake worker, GUI offscreen.
