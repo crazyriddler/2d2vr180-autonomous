@@ -211,6 +211,10 @@ def generative_selftest(a, env, log, out) -> dict:
     p = subprocess.run([str(runtime_python(env, "gen-cu128")), "-c", code], capture_output=True, text=True, env=env)
     print(p.stdout[-2000:], p.stderr[-4000:], flush=True)
     r["wan_import"] = {"ok": "WAN_OK (49, 1056, 704, 6)" in p.stdout, "stderr": p.stderr[-1500:]}
+    p = subprocess.run([str(runtime_python(env, "gen-cu128")), str(REPO / "scripts" / "wan_assembly_check.py"),
+                        str(REPO / "workers")], capture_output=True, text=True, env=env)
+    print(p.stdout[-2000:], p.stderr[-4000:], flush=True)
+    r["wan_pipeline"] = {"ok": "WAN_PIPELINE_OK" in p.stdout, "stderr": p.stderr[-1500:]}
     return r
 
 

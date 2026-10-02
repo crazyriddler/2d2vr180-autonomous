@@ -1,4 +1,16 @@
-# 2D2VR180 1.0.0-rc10 — new generative engine: Wan 2.2 (keeps people intact)
+# 2D2VR180 1.0.0-rc11 — Wan 2.2 fits in 16 GB VRAM / 32 GB RAM
+
+## What's new in rc11
+
+- **Fix: Wan 2.2 ran out of GPU memory and filled the RAM on an RTX 4080 with 32 GB.**
+  - The 11 GB text encoder (umT5-XXL) now runs once, at the start, and is then released. Before, it stayed in
+    VRAM while the photo was encoded and in RAM for the whole run.
+  - The video VAE leaves the GPU while sampling, and the camera-control tensor is half the size.
+  - When a setting does not fit, the failed attempt's memory is now really freed before the next one. Before,
+    every retry stacked another copy of the model on top, until the RAM was full.
+  - No reinstall needed; just update the application.
+- CI: new Windows check that assembles the Wan 2.2 pipeline exactly as the worker uses it.
+
 
 ## What's new in rc10
 
@@ -155,8 +167,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc10-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc10-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc11-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc11-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

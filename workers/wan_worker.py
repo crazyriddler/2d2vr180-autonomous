@@ -146,10 +146,62 @@ def stub_triton():
     sys.modules[name] = mod
 
 
-def load_pipeline(model_dir, mode, torch):
+def text_embeddings(model_dir, texts, torch):
+    """Encode the prompts once with umT5-XXL (11 GB), then release it.
+
+    Inside the pipeline the text encoder would stay resident - in VRAM while the VAE encodes the
+    shot (model offload only evicts it when the transformer starts) and in RAM for the whole run.
+    It runs here on the still-empty GPU, or on the CPU if that is not possible."""
+    import gc
+
+    from videox_fun.models import AutoTokenizer, WanT5EncoderModel
+
+    cfg = CONFIG["text_encoder_kwargs"]
+    tok = AutoTokenizer.from_pretrained(os.path.join(model_dir, cfg["tokenizer_subpath"]))
+    enc = WanT5EncoderModel.from_pretrained(
+        os.path.join(model_dir, cfg["text_encoder_subpath"]), additional_kwargs=dict(cfg), low_cpu_mem_usage=True,
+        torch_dtype=torch.bfloat16).eval()
+
+    def encode(enc, dev):
+        enc.to(dev)
+        out = []
+        for text in texts:
+            ids = tok([text], padding="max_length", max_length=cfg["text_length"], truncation=True,
+                      add_special_tokens=True, return_tensors="pt")
+            n = int(ids.attention_mask.gt(0).sum())
+            with torch.no_grad():
+                e = enc(ids.input_ids.to(dev), attention_mask=ids.attention_mask.to(dev))[0]
+            out.append(e[0, :n].to("cpu", torch.bfloat16))
+        return out
+
+    embeds = None
+    try:
+        embeds = encode(enc, "cuda")
+    except torch.cuda.OutOfMemoryError:
+        pass
+    if embeds is None:  # outside the except block, so the failed attempt's tensors can be freed
+        log("text encoder does not fit on the GPU; encoding the prompt on the CPU")
+        enc.to("cpu")
+        gc.collect()
+        torch.cuda.empty_cache()
+        embeds = encode(enc, "cpu")
+    del enc
+    gc.collect()
+    torch.cuda.empty_cache()
+    return embeds
+
+
+class _EncodedPrompt:
+    """Stands in for the text encoder: the pipeline only reads its dtype (prompts are pre-encoded)."""
+
+    def __init__(self, dtype):
+        self.dtype = dtype
+
+
+def load_pipeline(model_dir, mode, torch, embeds):
     from diffusers import FlowMatchEulerDiscreteScheduler
     from omegaconf import OmegaConf
-    from videox_fun.models import AutoencoderKLWan3_8, AutoTokenizer, Wan2_2Transformer3DModel, WanT5EncoderModel
+    from videox_fun.models import AutoencoderKLWan3_8, Wan2_2Transformer3DModel
     from videox_fun.pipeline import Wan2_2FunControlPipeline
     from videox_fun.utils import apply_gpu_memory_mode, filter_kwargs
 
@@ -161,20 +213,36 @@ def load_pipeline(model_dir, mode, torch):
     vae = AutoencoderKLWan3_8.from_pretrained(
         os.path.join(model_dir, cfg["vae_kwargs"]["vae_subpath"]),
         additional_kwargs=OmegaConf.to_container(cfg["vae_kwargs"])).to(dtype)
-    tokenizer = AutoTokenizer.from_pretrained(os.path.join(model_dir, cfg["text_encoder_kwargs"]["tokenizer_subpath"]))
-    text_encoder = WanT5EncoderModel.from_pretrained(
-        os.path.join(model_dir, cfg["text_encoder_kwargs"]["text_encoder_subpath"]),
-        additional_kwargs=OmegaConf.to_container(cfg["text_encoder_kwargs"]), low_cpu_mem_usage=True,
-        torch_dtype=dtype).eval()
     scheduler = FlowMatchEulerDiscreteScheduler(
         **filter_kwargs(FlowMatchEulerDiscreteScheduler, OmegaConf.to_container(cfg["scheduler_kwargs"])))
-    pipe = Wan2_2FunControlPipeline(transformer=transformer, transformer_2=None, vae=vae, tokenizer=tokenizer,
-                                    text_encoder=text_encoder, scheduler=scheduler)
+    pipe = Wan2_2FunControlPipeline(transformer=transformer, transformer_2=None, vae=vae, tokenizer=None,
+                                    text_encoder=None, scheduler=scheduler)
+    pipe.text_encoder = _EncodedPrompt(dtype)
+    pos, neg = embeds
+
+    def encode_prompt(*a, device=None, **k):
+        dev = device or torch.device("cuda")
+        return [pos.to(dev)], [neg.to(dev)]
+
+    pipe.encode_prompt = encode_prompt
     apply_gpu_memory_mode(pipe, mode, torch.device("cuda"), dtype)
+    if mode.startswith("model_cpu_offload"):
+        # Model offload evicts a model only when the *next* one in the sequence runs, so the VAE
+        # (used first, to encode the photo) would sit in VRAM through every denoising step.
+        # Its offload hook moves it back to the GPU for the final decode.
+        prepare = pipe.prepare_mask_latents
+
+        def prepare_and_evict(*a, **k):
+            out = prepare(*a, **k)
+            pipe.vae.to("cpu")
+            torch.cuda.empty_cache()
+            return out
+
+        pipe.prepare_mask_latents = prepare_and_evict
     return pipe
 
 
-def generate_shot(pipe, image_path, c2ws, hfov, size, steps, seed, prompt, negative, torch, label):
+def generate_shot(pipe, image_path, c2ws, hfov, size, steps, seed, prompt, torch, label):
     from videox_fun.data import process_pose_params
     from videox_fun.utils import get_image_to_video_latent
 
@@ -184,7 +252,7 @@ def generate_shot(pipe, image_path, c2ws, hfov, size, steps, seed, prompt, negat
     video, mask, _ = get_image_to_video_latent(image_path, None, video_length=n, sample_size=[h, w])
     cam = process_pose_params(pose_rows(c2ws[:n], hfov, w, h), width=w, height=h, original_pose_width=w,
                               original_pose_height=h)
-    cam = cam[:n].permute([3, 0, 1, 2]).unsqueeze(0)
+    cam = cam[:n].permute([3, 0, 1, 2]).unsqueeze(0).to(torch.bfloat16)   # halves a ~1.5 GB per-step copy
     t0 = [time.time()]
 
     def on_step(p, i, t, kw):
@@ -197,7 +265,7 @@ def generate_shot(pipe, image_path, c2ws, hfov, size, steps, seed, prompt, negat
 
     gen = torch.Generator(device="cuda").manual_seed(seed)
     with torch.no_grad():
-        out = pipe(prompt, num_frames=n, negative_prompt=negative, height=h, width=w, generator=gen,
+        out = pipe(prompt, num_frames=n, height=h, width=w, generator=gen,
                    guidance_scale=6.0, num_inference_steps=steps, video=video, mask_video=mask, control_video=None,
                    control_camera_video=cam, ref_image=None, boundary=0.875, shift=5,
                    callback_on_step_end=on_step).videos
@@ -233,33 +301,42 @@ def main(req):
     attempts = [("model_cpu_offload", int(req.get("short_side", 704))),
                 ("model_cpu_offload_and_qfloat8", int(req.get("short_side", 704))),
                 ("model_cpu_offload_and_qfloat8", 544), ("sequential_cpu_offload", 480)]
+    import gc
+
+    prompt = req.get("prompt") or PROMPT
+    progress(0.0, "encoding the prompt (umT5-XXL)")
+    embeds = text_embeddings(req["model_dir"], [prompt, req.get("negative_prompt") or NEGATIVE], torch)
     pipe, mode = None, None
     views = [{"path": req["image"], "generated": False}]
     every = max(1, int(req.get("every", 2)))
     for si, c2ws in enumerate(plan):
+        frames = None
         for ai, (m, short) in enumerate(attempts):
+            if pipe is None or mode != m:
+                pipe = None
+                gc.collect()
+                torch.cuda.empty_cache()
+                progress(0.0, f"loading Wan 2.2 Fun 5B ({m})")
+                pipe, mode = load_pipeline(req["model_dir"], m, torch, embeds), m
+            size = sample_size(image.width, image.height, short)
+            log(f"shot {si + 1}/{len(plan)}: {size[1]}x{size[0]}, {len(c2ws)} frames, {m}")
+            oom = None
             try:
-                if pipe is None or mode != m:
-                    pipe = None
-                    torch.cuda.empty_cache()
-                    progress(0.0, f"loading Wan 2.2 Fun 5B ({m})")
-                    pipe, mode = load_pipeline(req["model_dir"], m, torch), m
-                size = sample_size(image.width, image.height, short)
-                log(f"shot {si + 1}/{len(plan)}: {size[1]}x{size[0]}, {len(c2ws)} frames, {m}")
                 frames = generate_shot(pipe, req["image"], c2ws, hfov, size, steps, int(req.get("seed", 42)) + si,
-                                       req.get("prompt") or PROMPT, req.get("negative_prompt") or NEGATIVE, torch,
-                                       f"shot {si + 1}/{len(plan)}")
-                attempts = attempts[ai:]          # keep the setting that worked for the next shots
-                break
+                                       prompt, torch, f"shot {si + 1}/{len(plan)}")
             except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
                 if "out of memory" not in str(e).lower() or ai == len(attempts) - 1:
                     raise
-                log(f"out of GPU memory ({m}, {short} px); trying a lighter setting")
-                pipe = None
-                import gc
-
-                gc.collect()
-                torch.cuda.empty_cache()
+                oom = str(e).splitlines()[0][:200]
+            if frames is not None:
+                attempts = attempts[ai:]          # keep the setting that worked for the next shots
+                break
+            # Freed here, after the except block: the exception's traceback keeps every tensor of the
+            # failed attempt alive until then (VRAM and RAM).
+            log(f"out of GPU memory ({m}, {short} px): {oom}; trying a lighter setting")
+            pipe = None
+            gc.collect()
+            torch.cuda.empty_cache()
         for fi in range(every, len(frames), every):      # frame 0 is the photo itself
             p = os.path.join(out_dir, f"shot{si}_{fi:03d}.png")
             Image.fromarray((frames[fi] * 255).round().astype(np.uint8)).save(p)
