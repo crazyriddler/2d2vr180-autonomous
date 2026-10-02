@@ -1,4 +1,20 @@
-# 2D2VR180 1.0.0-rc9 — better generated views
+# 2D2VR180 1.0.0-rc10 — new generative engine: Wan 2.2 (keeps people intact)
+
+## What's new in rc10
+
+- **New default generative engine: Wan 2.2 Fun 5B Control-Camera** (Alibaba PAI, Apache-2.0). RTX 4080 tests of
+  rc9 showed that Stable Virtual Camera deforms people from the very first generated view (extra limbs,
+  distorted faces) - a limitation its authors document. Wan 2.2 is a video model trained on real footage:
+  it "films" camera moves that start at your photo (one shot to each side for *Around the subject*, wider
+  ones for *Orbit*, four for *Explore*), and the multi-view engine reconstructs the frames into one splat.
+- **No Hugging Face account needed** any more: Wan 2.2 is a public download (~25 GB, needs ~32 GB of RAM).
+  Stable Virtual Camera becomes optional (used only if Wan 2.2 is not installed).
+- The generative engine runtime changes: open **Components** and install **Generative engine** again, then
+  **Wan 2.2 Fun 5B Control-Camera** (or press *Install recommended*).
+- Progress shows each shot and diffusion step with seconds per step and GPU memory; out-of-memory falls back
+  automatically to fp8 weights, a lower resolution, or sequential offloading.
+
+## rc9
 
 ## What's new in rc9
 
@@ -139,8 +155,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc9-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc9-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc10-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc10-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

@@ -36,12 +36,11 @@ You can also open **Components** at any time and install only what you need.
 | Multi-view engine + VGGT-1B | several photos of one place, videos where the camera moves, Generative 3D (**non-commercial**) | ~7 GB + 5 GB |
 | Generative engine | Stable Virtual Camera and LaMa | ~5.5 GB |
 | LaMa | AI filling of the gaps behind objects in VR180 | 0.2 GB |
-| Stable Virtual Camera 1.1 (+ SD 2.1 VAE, OpenCLIP ViT-H) | invents unseen views of a photo (**non-commercial, gated**) | 5 GB + 0.3 GB + 3.9 GB |
+| Wan 2.2 Fun 5B Control-Camera | generative 3D: films new camera moves around your photo (Apache-2.0; keeps people intact) | ~25 GB (needs ~32 GB RAM) |
+| Stable Virtual Camera 1.1 *(optional)* | alternative generative engine for scenes/objects without people (**non-commercial, gated**) | 5 GB + 0.3 GB + 3.9 GB |
 
-**Stable Virtual Camera needs a free Hugging Face account**: sign in at huggingface.co, open
-https://huggingface.co/stabilityai/stable-virtual-camera and accept the licence, create an access token
-(Settings → Access Tokens → *Read*), and paste it in 2D2VR180 → **Settings → Hugging Face token**. Then
-install it from **Components**.
+Stable Virtual Camera is optional and needs a free Hugging Face account (accept the licence at
+https://huggingface.co/stabilityai/stable-virtual-camera, create a *Read* token, paste it in Settings).
 
 Every model shows its licence before downloading. Downloads resume if interrupted and are
 verified (SHA256) before use.
@@ -82,7 +81,7 @@ When a job finishes, **Results** shows it. From there you can:
 | Input | What happens |
 |---|---|
 | Photo | Single-image 3D (SHARP if installed and allowed, otherwise MoGe-2, otherwise Depth-Anything). |
-| Photo + generative 3D | Stable Virtual Camera generates 48–110 new views along the chosen path; the multi-view engine trains one 3D splat from all of them. |
+| Photo + generative 3D | Wan 2.2 films 1–4 short camera moves that start at your photo (Stable Virtual Camera if Wan is not installed); the multi-view engine trains one 3D splat from all frames. |
 | Several photos | Multi-view engine: VGGT finds where each photo was taken, MoGe-2 gives real-world scale, a 3D Gaussian splat is trained on all photos. |
 | Video, camera moves | Multi-view engine on up to 80 keyframes of the whole video. |
 | Video, fixed camera, people/animals move | Each frame is reconstructed (depth stabilised over time) → a VR180 video of the motion, optional 4D sequence. |
@@ -95,7 +94,7 @@ Speed on an RTX 4080 (estimates): photo 20–60 s; several photos / video 5–15
 2D2VR180 can invent missing content when you ask it to, and it always tells you which parts are real:
 - **Observed** geometry: seen in two or more of your photos/frames.
 - **Inferred**: seen in one input image, depth predicted by a network.
-- **Generative**: invented by Stable Virtual Camera (only when *Photo: generative 3D* is on). Plausible, not measured.
+- **Generative**: invented by the generative engine (only when *Photo: generative 3D* is on). Plausible, not measured.
 - **Interpolated**: gaps behind objects in VR180 filled from the background or by LaMa.
 - **Unknown**: never seen — black in VR180.
 
