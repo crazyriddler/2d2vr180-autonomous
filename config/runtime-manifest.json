@@ -78,11 +78,11 @@
     },
     {
       "id": "gen-cu128",
-      "description": "Generative engine: Wan 2.2 Fun 5B camera control (video diffusion, people-safe), Stable Virtual Camera, LaMa hole filling",
+      "description": "Generative engine: Qwen-Image-Edit-2511 multi-angle views, Wan 2.2 Fun 5B camera control (video diffusion, people-safe), Stable Virtual Camera, LaMa hole filling",
       "python": "3.12",
       "torch_index": "https://download.pytorch.org/whl/cu128",
       "min_driver": "570.00",
-      "approx_size_gb": 5.5,
+      "approx_size_gb": 6.0,
       "status": "unverified: install and GPU smoke test not yet run on Windows/RTX 4080",
       "archives_no_deps": [
         {
@@ -96,7 +96,7 @@
           "copy_package": "videox_fun"
         }
       ],
-      "smoke_test": "import sys, types; sys.modules['gradio'] = types.SimpleNamespace(Progress=object); import torch, open_clip, diffusers, kornia, transformers, omegaconf, seva.model, seva.eval; print('cuda', torch.cuda.is_available())",
+      "smoke_test": "import sys, types; sys.modules['gradio'] = types.SimpleNamespace(Progress=object); import torch, open_clip, diffusers, kornia, transformers, omegaconf, peft, gguf, seva.model, seva.eval; from diffusers import QwenImageEditPlusPipeline, GGUFQuantizationConfig; print('cuda', torch.cuda.is_available())",
       "lock": "locks/gen-cu128.txt",
       "local_versions": {
         "torch": "+cu128",

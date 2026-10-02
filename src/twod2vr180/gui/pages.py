@@ -205,6 +205,8 @@ class CreatePage(QWidget):
         gf = QFormLayout(gbox)
         self.generative = QComboBox()
         for label, val in (("Off — only what the photo shows", "off"),
+                           ("360° photo capture — 45°, 90°, 135°, 180°, 270°, above, below (Quality: more)",
+                            "capture"),
                            ("Around the subject — sides, above and below (best for people)", "arc"),
                            ("Wide orbit — invent the back too (objects; less reliable)", "orbit"),
                            ("Explore — invent the surroundings (best for VR180)", "explore"),
@@ -225,6 +227,16 @@ class CreatePage(QWidget):
                                  "fits one model to every view: smoother transitions, but generated views' small "
                                  "differences blur it.")
         gf.addRow("Generative 3D assembly", self.assembly)
+        self.engine = QComboBox()
+        for label, val in (("Automatic — Qwen if installed, then Wan 2.2", "auto"),
+                           ("Qwen-Image-Edit — sharp ~1 MP images per angle", "qwen"),
+                           ("Wan 2.2 — video camera moves (smooth, 704 px)", "wan"),
+                           ("Stable Virtual Camera — scenes/objects (not people)", "seva")):
+            self.engine.addItem(label, val)
+        self.engine.setCurrentIndex(max(self.engine.findData(win.settings.gen_engine), 0))
+        self.engine.setToolTip("Which model invents the other views. Qwen draws each angle as a sharp still "
+                               "image; Wan films the camera moving and the frames at those angles are used.")
+        gf.addRow("Generative engine", self.engine)
         self.video_mode = QComboBox()
         for label, val in (("Automatic (analyse the video)", "auto"),
                            ("Whole video → one 3D scene (camera moves)", "multiview"),
@@ -242,7 +254,7 @@ class CreatePage(QWidget):
         self.sequence.setChecked(win.settings.export_sequence)
         self.sequence.toggled.connect(self._save_opts)
         gf.addRow("", self.sequence)
-        for w in (self.generative, self.assembly, self.video_mode):
+        for w in (self.generative, self.assembly, self.engine, self.video_mode):
             w.currentIndexChanged.connect(self._save_opts)
         self.combine.toggled.connect(self._save_opts)
         opts.addWidget(gbox)
@@ -329,6 +341,7 @@ class CreatePage(QWidget):
         s.projection = self.projection.currentData()
         s.generative = self.generative.currentData()
         s.gen_assembly = self.assembly.currentData()
+        s.gen_engine = self.engine.currentData()
         s.video_mode = self.video_mode.currentData()
         s.combine_photos = self.combine.isChecked()
         s.export_sequence = self.sequence.isChecked()

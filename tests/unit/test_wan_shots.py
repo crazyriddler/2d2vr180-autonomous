@@ -35,3 +35,22 @@ def test_16gb_cards_start_with_fp8_weights():
     a16 = w.memory_attempts(16376, 704)
     assert a16[0] == ("model_cpu_offload_and_qfloat8", 704) and a16[-1][0] == "sequential_cpu_offload"
     assert w.memory_attempts(24576, 704)[0] == ("model_cpu_offload", 704)
+
+
+def test_capture_key_frames_hit_the_requested_angles():
+    import math
+
+    for kind, expected in (("capture", [45, 90, 135, 180, -90, -60, 30]),
+                           ("capture_full", [45, 90, 135, 180, -45, -90, -135, -30, -60, 30])):
+        plan = w.shots(kind, 49)
+        got = []
+        for si, shot in enumerate(plan):
+            for fi in w.shot_key_frames(kind, si, 49):
+                m = shot[fi]
+                fwd = m[:3, :3] @ np.array([0, 0, 1.0])
+                if w.SHOT_PLANS[kind][si][1] == "yaw":
+                    got.append(-math.degrees(math.atan2(fwd[0], fwd[2])))
+                else:
+                    got.append(-math.degrees(math.asin(fwd[1])))
+        diff = (np.array(got) - np.array(expected) + 180) % 360 - 180
+        assert np.abs(diff).max() < 6, (kind, got)

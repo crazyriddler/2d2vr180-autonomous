@@ -20,7 +20,7 @@ import types
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
-TRAJECTORIES = ("arc", "orbit", "explore", "spiral")
+TRAJECTORIES = ("capture", "capture_full", "arc", "orbit", "explore", "spiral")
 
 PROMPT = ("A still moment captured on camera; the camera slowly moves around the scene while everything in it "
           "stays perfectly still, frozen in time. Realistic, sharp, highly detailed, natural anatomy, the same "
@@ -80,13 +80,22 @@ def crane_c2w(alpha, radius=2.0):
     return about_target(_yaw_pitch(0.0, alpha), radius)
 
 
-# (label, kind, degrees): yaw = horizontal orbit, crane = vertical orbit, look = rotation in place
+# (label, kind, degrees, key angles): yaw = horizontal orbit (+ = to the right), crane = vertical orbit
+# (- = above, looking down). Key angles are the views used by sharp fusion (None: 1/4, 1/2, 3/4, all).
 SHOT_PLANS = {
-    "arc": [("right", "yaw", 45), ("left", "yaw", -45), ("from above", "crane", -35), ("from below", "crane", 25)],
-    "orbit": [("right", "yaw", 100), ("left", "yaw", -100), ("from above", "crane", -50),
-              ("from below", "crane", 30)],
+    "arc": [("right", "yaw", 45, None), ("left", "yaw", -45, None), ("from above", "crane", -35, None),
+            ("from below", "crane", 25, None)],
+    "orbit": [("right", "yaw", 100, None), ("left", "yaw", -100, None), ("from above", "crane", -50, None),
+              ("from below", "crane", 30, None)],
+    # 360-degree photo capture: 45, 90, 135, 180 and 270 degrees, overhead, from below
+    "capture": [("orbit to 180°", "yaw", 180, (45, 90, 135, 180)), ("orbit to 270°", "yaw", -90, (-90,)),
+                ("overhead", "crane", -60, (-60,)), ("from below", "crane", 30, (30,))],
+    # ... plus the intermediate angles: 225 and 315 degrees, 30 degrees above
+    "capture_full": [("orbit to 180°", "yaw", 180, (45, 90, 135, 180)),
+                     ("orbit to 225°", "yaw", -135, (-45, -90, -135)),
+                     ("overhead", "crane", -60, (-30, -60)), ("from below", "crane", 30, (30,))],
 }
-KEY_FRACTIONS = (0.25, 0.5, 0.75, 1.0)   # of each shot's full angle: the views used by sharp fusion
+KEY_FRACTIONS = (0.25, 0.5, 0.75, 1.0)   # default key views: fractions of each shot's full angle
 
 
 def ease_curve(n):
@@ -96,17 +105,26 @@ def ease_curve(n):
     return 0.5 - 0.5 * np.cos(np.pi * t)            # smooth start and stop
 
 
-def key_frames(n):
-    """Frame indices where a shot reaches 1/4, 1/2, 3/4 and all of its angle."""
+def key_frames(n, fractions=KEY_FRACTIONS):
+    """Frame indices where a shot reaches the given fractions of its full angle."""
     import numpy as np
 
     e = ease_curve(n)
-    return sorted({int(np.argmin(np.abs(e - f))) for f in KEY_FRACTIONS} - {0})
+    return sorted({int(np.argmin(np.abs(e - f))) for f in fractions} - {0})
+
+
+def shot_key_frames(kind, si, n):
+    """Key frames of shot si: at its key angles (capture) or at 1/4 ... 1 of its angle."""
+    if kind in SHOT_PLANS:
+        _, _, deg, keys = SHOT_PLANS[kind][si]
+        if keys:
+            return key_frames(n, [k / deg for k in keys])
+    return key_frames(n)
 
 
 def shot_labels(kind):
     if kind in SHOT_PLANS:
-        return [label for label, _, _ in SHOT_PLANS[kind]]
+        return [plan[0] for plan in SHOT_PLANS[kind]]
     if kind == "explore":
         return ["look right", "look left", "look up", "look down"]
     return ["spiral"]
@@ -120,7 +138,7 @@ def shots(kind, n):
     ease = ease_curve(n)
     if kind in SHOT_PLANS:
         out = []
-        for _, how, deg in SHOT_PLANS[kind]:
+        for _, how, deg, _ in SHOT_PLANS[kind]:
             f = orbit_c2w if how == "yaw" else crane_c2w
             out.append([f(math.radians(deg) * e) for e in ease])
         return out
@@ -412,7 +430,7 @@ def main(req):
                  message=f"out of GPU memory ({m}, {short} px): {oom}" +
                          ("; retrying with a lighter setting" if more else ""))
             sys.exit(1)
-        keys = set(key_frames(len(frames)))
+        keys = set(shot_key_frames(kind, si, len(frames)))
         shot_views = []
         for fi in sorted(set(range(every, len(frames), every)) | keys):      # frame 0 is the photo itself
             p = os.path.join(out_dir, f"shot{si}_{fi:03d}.png")

@@ -55,8 +55,9 @@ class JobOptions:
     max_path_frames: int = 720           # cap for moving-camera VR180 videos
     video_mode: str = "auto"             # auto | multiview (all frames → one 3D scene) | per_frame | best_frame
     export_sequence: bool = False        # fixed-camera video: also export one .ply per frame (4D sequence)
-    generative: str = "off"              # off | arc | orbit | explore | spiral: invent unseen views of a photo
+    generative: str = "off"              # off | capture | arc | orbit | explore | spiral: invent unseen views
     gen_assembly: str = "fusion"         # fusion (sharp: MoGe-2 per view, merged) | train (one optimised splat)
+    gen_engine: str = "auto"             # auto | qwen | wan | seva: model that invents the other views
     ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
 
 
@@ -323,7 +324,7 @@ class JobRunner:
             ref_index = report.get("processing", {}).get("reference_frame_index", 0)
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index,
                      "trajectory": opts.generative if opts.generative != "off" else None,
-                     "assembly": opts.gen_assembly,
+                     "assembly": opts.gen_assembly, "engine": opts.gen_engine,
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
             if bopts["hfov_deg"]:
                 log(f"EXIF field of view: {bopts['hfov_deg']:.1f}°")
