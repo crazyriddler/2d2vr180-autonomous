@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated": "2026-09-27",
+  "generated": "2026-10-02",
   "installer": "Bundled uv (Astral, MIT/Apache-2.0) creates each runtime under <app-data>/runtimes/<id>: 'uv python install' fetches a python-build-standalone interpreter, then 'uv pip install --no-deps -r <lock>' installs the exact Windows lock (config/locks/<id>.txt, generated with 'uv pip compile --python-platform x86_64-pc-windows-msvc' from <id>.in). Local-version suffixes select CUDA builds (e.g. torch==2.8.0+cu128). Git dependencies come from GitHub commit archives; no system Python, Git, compiler or CUDA toolkit is used.",
   "runtimes": [
     {
@@ -38,7 +38,7 @@
     },
     {
       "id": "recon3d-cu124",
-      "description": "Video backend: recon3d (VGGT poses + MoGe-2 metric alignment + gsplat training + TSDF mesh)",
+      "description": "Multi-view engine: VGGT camera poses + MoGe-2 metric scale + gsplat 3D Gaussian Splatting training (several photos, moving-camera video, generated views)",
       "python": "3.10",
       "torch_index": "https://download.pytorch.org/whl/cu124",
       "extra_index": "https://docs.gsplat.studio/whl/pt24cu124",
@@ -74,6 +74,27 @@
         "torch": "+cu124",
         "torchvision": "+cu124",
         "gsplat": "+pt24cu124"
+      }
+    },
+    {
+      "id": "gen-cu128",
+      "description": "Generative engine: Stable Virtual Camera (new camera views of a photo) and LaMa hole filling",
+      "python": "3.12",
+      "torch_index": "https://download.pytorch.org/whl/cu128",
+      "min_driver": "570.00",
+      "approx_size_gb": 5.5,
+      "status": "unverified: install and GPU smoke test not yet run on Windows/RTX 4080",
+      "archives_no_deps": [
+        {
+          "name": "stable-virtual-camera",
+          "url": "https://github.com/Stability-AI/stable-virtual-camera/archive/fe19948e9b7bea261ab2db780a59656131404a83.zip"
+        }
+      ],
+      "smoke_test": "import sys, types; sys.modules['gradio'] = types.SimpleNamespace(Progress=object); import torch, open_clip, diffusers, kornia, seva.model, seva.eval; print('cuda', torch.cuda.is_available())",
+      "lock": "locks/gen-cu128.txt",
+      "local_versions": {
+        "torch": "+cu128",
+        "torchvision": "+cu128"
       }
     }
   ]

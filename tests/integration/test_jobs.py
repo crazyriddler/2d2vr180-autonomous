@@ -239,3 +239,33 @@ def test_video_mode_multiview_overrides_static_analysis(ctx, rtx4080, videos, mo
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["backend"]["id"] == "multiview"
     assert len(list((job.dir / "frames").glob("*.png"))) >= 6
+
+
+def test_generative_photo_to_3d(ctx, rtx4080, photo, monkeypatch):
+    from conftest import REPO, install_fake_model
+    from twod2vr180.backends.generative import GenerativeSceneBackend
+    from twod2vr180.backends.multiview import MultiViewBackend
+
+    fakes = REPO / "tests" / "fakes"
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(fakes / "fake_multiview_worker.py"))
+    monkeypatch.setattr(GenerativeSceneBackend, "worker_script", str(fakes / "fake_seva_worker.py"))
+    for mid in ("seva-1.1", "sd21-vae", "clip-vit-h-14"):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="explore", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["id"] == "generative_scene"
+    assert rep["coverage"]["by_splat"]["generative"] > 0.2
+    assert {m["id"] for m in rep["models"]} >= {"seva-1.1", "vggt-1b"}
+    req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
+    assert req["trajectory"] == "explore" and req["num_frames"] == 48
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["images"][0]["generated"] is False and mv["images"][0]["weight"] > 1
+    assert all(v["generated"] for v in mv["images"][1:])
+    assert any("GENERATIVE" in w for w in rep["warnings"])
+
+
+def test_generative_request_falls_back_when_models_missing(ctx, rtx4080, photo):
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="orbit", layouts=["sbs"])
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["id"] == "moge_rgbd"
+    assert any("Generative 3D was requested" in w for w in rep["warnings"])

@@ -65,6 +65,7 @@ def install_fake_model(mm, model_id, content=b"fake-weights"):
     d.mkdir(parents=True, exist_ok=True)
     files = {}
     for f in e.files:
+        (d / f.path).parent.mkdir(parents=True, exist_ok=True)
         (d / f.path).write_bytes(content)
         import hashlib
 

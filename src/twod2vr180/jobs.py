@@ -55,6 +55,7 @@ class JobOptions:
     max_path_frames: int = 720           # cap for moving-camera VR180 videos
     video_mode: str = "auto"             # auto | multiview (all frames → one 3D scene) | per_frame | best_frame
     export_sequence: bool = False        # fixed-camera video: also export one .ply per frame (4D sequence)
+    generative: str = "off"              # off | orbit | explore | spiral: invent unseen views of a photo
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
@@ -270,7 +271,17 @@ class JobRunner:
             stage("ingest")
 
             # ---------------------------------------------------- select
-            sel = select(inp, hw, self.ctx, opts.mode, opts.backend)
+            sel = None
+            if (opts.generative != "off" and not opts.backend
+                    and (kind == "photo" or inp.video_kind == "static_scene")):
+                sel = select(inp, hw, self.ctx, opts.mode, "generative_scene")
+                if sel.backend is None:
+                    why = "; ".join("; ".join(r["reasons"]) for r in sel.rejected)
+                    warnings.append(f"Generative 3D was requested but cannot run: {why}. Used the regular "
+                                    "single-photo reconstruction instead.")
+                    sel = None
+            if sel is None:
+                sel = select(inp, hw, self.ctx, opts.mode, opts.backend)
             report["selection"] = sel.to_dict()
             if sel.backend is None:
                 reasons = "; ".join(f"{r['backend']}: {', '.join(r['reasons'])}" for r in sel.rejected)
@@ -306,6 +317,7 @@ class JobRunner:
             # ---------------------------------------------------- reconstruct
             ref_index = report.get("processing", {}).get("reference_frame_index", 0)
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index,
+                     "trajectory": opts.generative if opts.generative != "off" else None,
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
             if bopts["hfov_deg"]:
                 log(f"EXIF field of view: {bopts['hfov_deg']:.1f}°")
