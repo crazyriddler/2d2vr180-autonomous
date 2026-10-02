@@ -16,6 +16,7 @@ import contextlib
 import glob
 import os
 import sys
+import time
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -69,6 +70,74 @@ def trajectory(kind, n, hfov_deg, w, h):
     return c2ws, intrinsics(hfov_deg, w, h, n)
 
 
+class ProgressBar:
+    """Stand-in for tqdm inside Stable Virtual Camera: tqdm redraws one console line with '\\r',
+    which the app cannot see, so report chunks and diffusion steps as protocol events instead,
+    with seconds per step and GPU memory (a full GPU spilling into shared system memory on
+    Windows shows up as very slow steps)."""
+
+    passes = 0          # chunk loops seen (first pass, second pass)
+    chunk = (0, 1)      # (index, total) of the current chunk
+    torch = None
+
+    def __init__(self, iterable=None, total=None, desc="", **kw):
+        self.it = iterable
+        self.total = total if total is not None else (len(iterable) if hasattr(iterable, "__len__") else None)
+        self.desc = str(desc or "")
+        self.n = 0
+        self.t = time.time()
+        self.sampling = "sampl" in self.desc.lower()   # chunk loops have no description
+        if not self.sampling:
+            ProgressBar.passes += 1
+            ProgressBar.chunk = (0, self.total or 1)
+
+    def __iter__(self):
+        for x in self.it:
+            yield x
+            self.update(1)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def update(self, k=1):
+        self.n += k
+        now = time.time()
+        dt, self.t = now - self.t, now
+        if not self.sampling:
+            ProgressBar.chunk = (self.n, self.total or 1)
+            return
+        c, ct = ProgressBar.chunk
+        lo, hi = (0.12, 0.3) if ProgressBar.passes <= 1 else (0.3, 0.97)
+        frac = (c + self.n / max(self.total or 1, 1)) / max(ct, 1)
+        mem = ""
+        t = ProgressBar.torch
+        if t is not None and t.cuda.is_available():
+            used = t.cuda.memory_reserved() / 2**30
+            tot = t.cuda.get_device_properties(0).total_memory / 2**30
+            mem = f" · GPU memory {used:.1f}/{tot:.0f} GB"
+            if dt > 20 and used > 0.95 * tot:
+                log("GPU memory is full: Windows may be using shared system memory, which is very slow. "
+                    "Close other GPU programs or use Fast mode.")
+        progress(lo + (hi - lo) * min(frac, 1.0),
+                 f"generating views: pass {min(ProgressBar.passes, 2)}/2, chunk {c + 1}/{ct}, "
+                 f"step {self.n}/{self.total} · {dt:.1f} s/step{mem}")
+
+    def close(self):
+        pass
+
+    def set_description(self, *a, **k):
+        pass
+
+    def set_postfix(self, *a, **k):
+        pass
+
+    def refresh(self, *a, **k):
+        pass
+
+
 def load_models(req, torch):
     import open_clip
     from diffusers.models import AutoencoderKL
@@ -85,6 +154,12 @@ def load_models(req, torch):
     from seva.modules.conditioner import CLIPConditioner
     from seva.sampling import DiscreteDenoiser
     from seva.utils import load_model
+    import seva.eval as seva_eval
+    import seva.sampling as seva_sampling
+
+    ProgressBar.torch = torch
+    seva_eval.tqdm = ProgressBar
+    seva_sampling.tqdm = ProgressBar
 
     class LocalAE(AutoEncoder):
         def __init__(self, vae_dir):
@@ -138,8 +213,9 @@ def generate(req, models, short_side, torch):
         camera_cond={"c2w": t_c2w.clone(), "K": t_K.clone(), "input_indices": list(range(n_targets + 1))},
         save_path=save, use_traj_prior=True, traj_prior_Ks=t_K[anchor_idx].clone(),
         traj_prior_c2ws=t_c2w[anchor_idx].clone(), seed=int(req.get("seed", 23)))
-    for i, _ in enumerate(gen):
-        progress(0.15 + 0.4 * (i + 1), "generating views: " + ("first pass" if i == 0 else "second pass"))
+    ProgressBar.passes = 0
+    for _ in gen:
+        pass
     frames = sorted(glob.glob(os.path.join(save, "samples-rgb", "*.png")))
     inputs = sorted(glob.glob(os.path.join(save, "input", "*.png")))
     if len(frames) == n_targets and inputs:
