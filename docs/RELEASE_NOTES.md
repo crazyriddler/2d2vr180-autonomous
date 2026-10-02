@@ -1,4 +1,14 @@
-# 2D2VR180 1.0.0-rc7 — generative 3D fits in 16 GB
+# 2D2VR180 1.0.0-rc8 — generative 3D fix
+
+## What's new in rc8
+
+- **Fix (RTX 4080 report on rc7): generative 3D failed immediately** with "Input type (torch.FloatTensor)
+  and weight type (torch.cuda.FloatTensor) should be the same". Stable Virtual Camera moves each component
+  to the GPU before use; the CLIP encoder now stays on the CPU as intended.
+- Stable Virtual Camera's own low-VRAM mode is enabled: the diffusion model and the image decoder take turns
+  on the GPU instead of occupying it together.
+
+## rc7
 
 ## What's new in rc7
 
@@ -116,8 +126,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc7-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc7-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc8-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc8-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

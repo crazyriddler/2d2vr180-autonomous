@@ -167,6 +167,10 @@ def load_models(req, torch):
     import seva.eval as seva_eval
     import seva.sampling as seva_sampling
 
+    # Upstream low-VRAM mode: the diffusion model and the autoencoder take turns on the GPU
+    # instead of sitting there together (peak memory = the larger one, not the sum).
+    seva_eval.set_lowvram_mode(bool(req.get("lowvram", True)))
+
     ProgressBar.torch = torch
     seva_eval.tqdm = ProgressBar
     seva_sampling.tqdm = ProgressBar
@@ -201,6 +205,14 @@ def load_models(req, torch):
         def forward(self, x):
             with torch.autocast("cuda", enabled=False), torch.no_grad():
                 return self.inner(x.detach().float().cpu()).to(x.device)
+
+        # Stable Virtual Camera moves every component to the GPU before use (seva.eval.load_model);
+        # this one must stay on the CPU.
+        def to(self, *a, **k):
+            return self
+
+        def cuda(self, *a, **k):
+            return self
 
     return model, ae, CPUConditioner(clip), DiscreteDenoiser(num_idx=1000, device="cuda")
 
