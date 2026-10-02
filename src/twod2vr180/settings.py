@@ -34,6 +34,7 @@ class Settings:
     video_mode: str = "auto"                     # auto | multiview | per_frame | best_frame
     combine_photos: bool = True                  # several photos dropped together → one multi-view scene
     ai_hole_fill: bool = True                    # LaMa inpainting of VR180 disocclusions
+    export_sequence: bool = False                # fixed-camera video: one .ply per frame (4D)
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":
@@ -82,7 +83,7 @@ class Settings:
                        still_video_seconds=self.still_video_seconds, license_profile=self.license_profile,
                        output_dir=self.output_dir or None, fill_holes=self.fill_holes, renderer=self.renderer,
                        allow_cpu=self.allow_cpu, generative=self.generative, video_mode=self.video_mode,
-                       ai_hole_fill=self.ai_hole_fill)
+                       ai_hole_fill=self.ai_hole_fill, export_sequence=self.export_sequence)
         for k, v in overrides.items():
             setattr(o, k, v)
         return o

@@ -287,3 +287,13 @@ def test_vr180_holes_filled_by_lama_when_installed(ctx, rtx4080, photo, monkeypa
     magenta = (img[..., 0] > 200) & (img[..., 1] < 60) & (img[..., 2] > 200)
     assert magenta.any()
     assert not any("LaMa) not used" in w for w in rep["warnings"])
+
+
+def test_dynamic_video_exports_4d_sequence(ctx, rtx4080, videos):
+    job, rep, _ = run_job(ctx, rtx4080, videos["dynamic"], mode="fast", dynamic_fps=5, layouts=["sbs"],
+                          export_sequence=True)
+    assert rep["status"] == "succeeded", rep.get("error")
+    seq = sorted((job.dir / "export" / "sequence").glob("frame_*.ply"))
+    assert len(seq) >= 10
+    dyn = [v for v in rep["outputs"]["vr180"]["videos"] if "dynamic" in Path(v["path"]).name][0]
+    assert "stabilised" in dyn["method"] and dyn["sequence_dir"].endswith("sequence")

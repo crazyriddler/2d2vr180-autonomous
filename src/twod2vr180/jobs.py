@@ -131,6 +131,9 @@ def write_export_readme(export: Path, report: dict) -> None:
              "  scene.splat  Same splat in the compact web format (antimatter15 / many web viewers)."]
     if out.get("obj"):
         lines += ["  scene.obj    Triangle mesh with scene.mtl + scene_texture.png (Blender, MeshLab, 3D printing…)."]
+    if out.get("sequence_dir") or any(v.get("sequence_dir") for v in vr.get("videos", [])):
+        lines += ["  sequence\\    One splat per video frame (frame_00000.ply …): a 4D sequence for players that",
+                  "               support splat animations, or to pick a single moment."]
     lines += ["  _2d2vr180\\   Metadata the app uses (cameras, which parts are observed/inferred). Keep it next to",
               "               scene.ply if you want to reopen the scene in 2D2VR180; other programs ignore it.", ""]
     if vr.get("stills") or vr.get("videos"):
@@ -333,6 +336,7 @@ class JobRunner:
                                  "runtime": backend.runtime_id,
                                  "worker_env": result.worker_env}
             result.extra.setdefault("hfov_deg", bopts["hfov_deg"])
+            result.extra.setdefault("reference_frame_index", ref_index)
             report["models"] = result.models_used
             report["vram_peak_mib"] = result.vram_peak_mib
             warnings += result.warnings
@@ -365,6 +369,10 @@ class JobRunner:
                 outputs["vr180"] = self._vr180(job, scene, inp, result, sel.effective_kind, emit, warnings,
                                               check_cancel)
                 stage("vr180")
+            if (opts.export_sequence and result.frame_scenes and not (opts.vr180 and find_ffmpeg())):
+                for _ in self._frame_scenes(job, result, emit, check_cancel, 0.85, 0.99):
+                    pass
+                outputs["sequence_dir"] = str(job.dir / "export" / "sequence")
             report["outputs"] = outputs
             write_export_readme(job.dir / "export", report)
             if opts.output_dir:
@@ -547,14 +555,58 @@ class JobRunner:
         return StereoOptions(layout=layout, projection=projection or opts.projection, eye_resolution=res,
                              eye_separation_m=opts.eye_separation_m, fill_holes=opts.fill_holes)
 
-    def _dynamic_video(self, job, result, emit, check_cancel, ffmpeg) -> dict:
+    @staticmethod
+    def _depth_stabilisation(result, hfov, ref_index: int = 0) -> list[float]:
+        """Per-frame depth scale factors that remove the frame-to-frame scale jitter of monocular
+        depth: each frame is scaled to agree with the reference frame on its static pixels
+        (where the image has not changed), then the factors are median-filtered over time."""
+        from .backends.photo import load_pointmap
+
+        ref_pts, ref_img, _, _ = load_pointmap(result.frame_scenes[ref_index], hfov)
+        ref_z = ref_pts[..., 2]
+        raw = []
+        for npz in result.frame_scenes:
+            pts, img, mask, _ = load_pointmap(npz, hfov)
+            z = pts[..., 2]
+            if z.shape != ref_z.shape:
+                raw.append(1.0)
+                continue
+            static = (np.abs(img.astype(np.int16) - ref_img.astype(np.int16)).max(-1) < 12) & (z > 0) & (ref_z > 0)
+            if mask is not None:
+                static &= mask.astype(bool)
+            raw.append(float(np.median(ref_z[static] / z[static])) if static.sum() > 500 else 1.0)
+        raw_a = np.asarray(raw)
+        k = 2
+        return [float(np.median(raw_a[max(0, i - k):i + k + 1])) for i in range(len(raw_a))]
+
+    def _frame_scenes(self, job, result, emit, check_cancel, lo: float, hi: float):
+        """Per-frame splats of a fixed-camera video (depth-stabilised); optionally saved as a
+        4D sequence of .ply files in export/sequence."""
         from .backends.photo import load_pointmap
         from .rgbd import pointmap_to_gaussians
+        from .scene import write_gaussian_ply
+
+        hfov = result.extra.get("hfov_deg")
+        ref = int(result.extra.get("reference_frame_index", 0) or 0)
+        scales = self._depth_stabilisation(result, hfov, min(ref, len(result.frame_scenes) - 1))
+        n = len(result.frame_scenes)
+        seq = job.dir / "export" / "sequence"
+        for i, npz in enumerate(result.frame_scenes):
+            check_cancel()
+            pts, img, mask, cam = load_pointmap(npz, hfov)
+            sc = pointmap_to_gaussians(pts * scales[i], img, mask, cam, metric=result.metric_scale)
+            if job.options.export_sequence:
+                write_gaussian_ply(sc, seq / f"frame_{i:05d}.ply")
+            emit("progress", value=lo + (hi - lo) * i / max(n, 1), message=f"video frame {i + 1}/{n}")
+            yield sc
+
+    def _dynamic_video(self, job, result, emit, check_cancel, ffmpeg) -> dict:
+        from .align import level_c2w
+        from .backends.photo import load_pointmap
         from .vr180 import encode_video, output_suffix, render_stereo
 
         opts = job.options
         so = self._stereo_options(opts, opts.layouts[0], opts.video_eye_resolution)
-        n = len(result.frame_scenes)
         hfov = result.extra.get("hfov_deg")
         side = opts.video_eye_resolution
         w, h = (2 * side, side) if so.layout == "sbs" else (side, 2 * side)
@@ -562,20 +614,20 @@ class JobRunner:
             pts, img, mask, cam = load_pointmap(result.frame_scenes[0], hfov)
             w0 = int(round(cam.width * side / cam.height / 2)) * 2
             w, h = (2 * w0, side) if so.layout == "sbs" else (w0, 2 * side)
+        up = getattr(self, "_up", None)
+        head = level_c2w(np.eye(4), up) if up is not None and so.projection == "equirect180" else None
 
         def frames():
             # Each frame is a different scene, so the per-frame CPU renderer is used.
-            for i, npz in enumerate(result.frame_scenes):
-                check_cancel()
-                pts, img, mask, cam = load_pointmap(npz, hfov)
-                sc = pointmap_to_gaussians(pts, img, mask, cam, metric=result.metric_scale)
-                emit("progress", value=0.85 + 0.14 * i / n, message=f"VR180 video frame {i + 1}/{n}")
-                yield render_stereo(sc, so).image
+            for sc in self._frame_scenes(job, result, emit, check_cancel, 0.85, 0.99):
+                yield render_stereo(sc, so, head_c2w=head).image
 
         meta = encode_video(frames(), w, h, job.options.dynamic_fps, job.dir / "export" / "vr180" /
                             f"{job.input.stem}_dynamic{output_suffix(so)}.mp4", so, ffmpeg)
-        meta["method"] = ("per-frame monocular geometry (2.5D): each frame is reconstructed independently; "
-                          "depth may flicker between frames")
+        meta["method"] = ("per-frame monocular geometry (2.5D), depth scale stabilised over time against the "
+                          "static background; moving subjects are reconstructed frame by frame")
+        if opts.export_sequence:
+            meta["sequence_dir"] = str(job.dir / "export" / "sequence")
         return meta
 
     def _trajectory_video(self, job, scene, result, inp, emit, check_cancel, ffmpeg, warnings) -> dict:

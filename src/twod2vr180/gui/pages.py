@@ -227,6 +227,10 @@ class CreatePage(QWidget):
         self.combine.setToolTip("Photos of the same place from different angles are reconstructed together "
                                 "(multi-view). Untick to process each photo separately.")
         gf.addRow("Several photos", self.combine)
+        self.sequence = QCheckBox("Moving people/animals: also save one 3D splat per frame (4D sequence)")
+        self.sequence.setChecked(win.settings.export_sequence)
+        self.sequence.toggled.connect(self._save_opts)
+        gf.addRow("", self.sequence)
         for w in (self.generative, self.video_mode):
             w.currentIndexChanged.connect(self._save_opts)
         self.combine.toggled.connect(self._save_opts)
@@ -315,6 +319,7 @@ class CreatePage(QWidget):
         s.generative = self.generative.currentData()
         s.video_mode = self.video_mode.currentData()
         s.combine_photos = self.combine.isChecked()
+        s.export_sequence = self.sequence.isChecked()
         self.sbs.setEnabled(s.vr180)
         self.tb.setEnabled(s.vr180)
         self.projection.setEnabled(s.vr180)
