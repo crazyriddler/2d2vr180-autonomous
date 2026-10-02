@@ -53,12 +53,32 @@ class JobOptions:
     renderer: str = "auto"               # auto | gpu | cpu  (VR180 splat renderer)
     allow_cpu: bool = False              # allow CPU inference for cpu-capable backends (slow)
     max_path_frames: int = 720           # cap for moving-camera VR180 videos
+    video_mode: str = "auto"             # auto | multiview (all frames → one 3D scene) | per_frame | best_frame
+    export_sequence: bool = False        # fixed-camera video: also export one .ply per frame (4D sequence)
+
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
+
+
+def expand_inputs(paths) -> list[Path]:
+    """A file, several files, or a folder of photos → list of input files."""
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    out: list[Path] = []
+    for p in map(Path, paths):
+        if p.is_dir():
+            out += sorted(q for q in p.iterdir() if q.suffix.lower() in IMAGE_EXTS)
+        else:
+            out.append(p)
+    return out
 
 
 class Job:
-    def __init__(self, input_path: Path, options: JobOptions | None = None, jobs_root: Path | None = None):
+    def __init__(self, input_path, options: JobOptions | None = None, jobs_root: Path | None = None):
+        """``input_path``: one photo/video, a list of photos of the same scene, or a folder of photos."""
         self.id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
-        self.input = Path(input_path)
+        self.inputs = expand_inputs(input_path) or [Path(input_path)]
+        self.input = self.inputs[0]
         self.options = options or JobOptions()
         self.dir = (jobs_root or app_paths().jobs) / self.id
         self.state = "queued"
@@ -192,23 +212,37 @@ class JobRunner:
             stage("hardware")
 
             # ---------------------------------------------------- ingest
-            if not job.input.exists():
-                raise MediaError(f"Input not found: {job.input}")
+            for p in job.inputs:
+                if not p.exists():
+                    raise MediaError(f"Input not found: {p}")
             kind = classify_path(job.input)
+            if len(job.inputs) > 1:
+                kinds = {classify_path(p) for p in job.inputs}
+                if kinds != {"photo"}:
+                    raise MediaError("Several inputs can only be combined when they are all photos of the same "
+                                     "scene; add videos as separate jobs.")
+                kind = "images"
             report["input"] = {"path": str(job.input), "type": kind, "size_bytes": job.input.stat().st_size,
                                "sha256": _sha256(job.input)}
+            if kind == "images":
+                report["input"]["paths"] = [str(p) for p in job.inputs]
+                report["input"]["sha256_all"] = [_sha256(p) for p in job.inputs]
             self._check_disk(hw, job.input)
             inp = JobInput(job.input, kind, job.dir)
             frames_dir = job.dir / "frames"
-            if kind == "photo":
-                img = load_image(job.input)
+            if kind in ("photo", "images"):
                 frames_dir.mkdir(parents=True, exist_ok=True)
                 from PIL import Image
 
-                ref = frames_dir / "frame_00000.png"
-                Image.fromarray(img).save(ref)
-                inp.frames = [ref]
-                report["input"]["resolution"] = [int(img.shape[1]), int(img.shape[0])]
+                for i, p in enumerate(job.inputs):
+                    img = load_image(p)
+                    ref = frames_dir / f"frame_{i:05d}.png"
+                    Image.fromarray(img).save(ref)
+                    inp.frames.append(ref)
+                    if i == 0:
+                        report["input"]["resolution"] = [int(img.shape[1]), int(img.shape[0])]
+                if kind == "images":
+                    log(f"{len(inp.frames)} photos combined into one multi-view scene")
             else:
                 emit("progress", value=0.03, message="analysing video")
                 if not find_ffmpeg():
@@ -221,6 +255,17 @@ class JobRunner:
                 inp.analysis = an.to_dict()
                 for n in an.notes:
                     log(n)
+                forced = {"multiview": "moving_camera", "per_frame": "static_camera_dynamic",
+                          "best_frame": "static_scene"}.get(opts.video_mode)
+                if forced and forced != an.kind:
+                    log(f"video mode '{opts.video_mode}' chosen by the user (analysis said '{an.kind}')")
+                    inp.video_kind = forced
+                    if forced == "moving_camera":
+                        # use evenly spaced frames over the whole video
+                        total = int(an.info.get("frames") or round((an.info.get("duration_s") or 1) * inp.fps))
+                        k = int(min(opts.max_keyframes, max(3, total)))
+                        inp.analysis["keyframes"] = [int(x) for x in np.linspace(0, max(total - 1, 0), k).round()]
+                    report["input"]["video_mode"] = opts.video_mode
             check_cancel()
             stage("ingest")
 
@@ -447,7 +492,7 @@ class JobRunner:
             note = fr.metadata.get("honesty_note")
             if note and note not in warnings:
                 warnings.append(note)
-            if ffmpeg and (inp.kind == "photo" or kind == "video:static_scene"):
+            if ffmpeg and (inp.kind in ("photo", "images") or kind == "video:static_scene"):
                 out["videos"].append(still_to_video(fr, so, vr_dir, job.input.stem, ffmpeg,
                                                     seconds=opts.still_video_seconds))
         if not ffmpeg:

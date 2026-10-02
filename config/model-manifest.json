@@ -1,157 +1,265 @@
 {
-  "schema_version": 2,
-  "generated": "2026-09-27",
-  "hash_policy": "Pinned sha256/size are enforced. Hugging Face entries were resolved on 2026-09-27 by the Windows CI integration job (scripts/ci_integration.py: HF API LFS metadata + model-card licence). Non-LFS JSON files carry size only. The Apple SHARP checkpoint has no published hash: it is recorded on first download (trust-on-first-use).",
-  "models": [
+ "schema_version": 2,
+ "generated": "2026-09-27",
+ "hash_policy": "Pinned sha256/size are enforced. Hugging Face entries were resolved on 2026-09-27 by the Windows CI integration job (scripts/ci_integration.py: HF API LFS metadata + model-card licence). Non-LFS JSON files carry size only. The Apple SHARP checkpoint has no published hash: it is recorded on first download (trust-on-first-use).",
+ "models": [
+  {
+   "id": "moge-2-vits-normal",
+   "display_name": "MoGe-2 ViT-S (normal) — fast monocular metric geometry",
+   "source": "https://huggingface.co/Ruicheng/moge-2-vits-normal",
+   "revision": "26b477f41595707c5db6770294c0d1721e8ed4ed",
+   "license": "MIT (Hugging Face model card: license: mit)",
+   "license_url": "https://huggingface.co/Ruicheng/moge-2-vits-normal",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 2,
+   "backends": [
+    "moge_rgbd"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
     {
-      "id": "moge-2-vits-normal",
-      "display_name": "MoGe-2 ViT-S (normal) \u2014 fast monocular metric geometry",
-      "source": "https://huggingface.co/Ruicheng/moge-2-vits-normal",
-      "revision": "26b477f41595707c5db6770294c0d1721e8ed4ed",
-      "license": "MIT (Hugging Face model card: license: mit)",
-      "license_url": "https://huggingface.co/Ruicheng/moge-2-vits-normal",
-      "commercial_use": true,
-      "redistributable": true,
-      "required_vram_gb": 2,
-      "backends": [
-        "moge_rgbd"
-      ],
-      "requires_acceptance": true,
-      "gated": false,
-      "files": [
-        {
-          "path": "model.pt",
-          "url": "https://huggingface.co/Ruicheng/moge-2-vits-normal/resolve/26b477f41595707c5db6770294c0d1721e8ed4ed/model.pt",
-          "sha256": "79a16621928c2bf0ed04659218c55c01075e950507f40bb3332fb4c873d3e1dc",
-          "size_bytes": 140550416
-        }
-      ],
-      "notes": "Default Fast photo model."
-    },
-    {
-      "id": "moge-2-vitl-normal",
-      "display_name": "MoGe-2 ViT-L (normal) \u2014 quality monocular metric geometry",
-      "source": "https://huggingface.co/Ruicheng/moge-2-vitl-normal",
-      "revision": "cb0e8bbd6b1e243589717c78e750b1ba4c093acf",
-      "license": "MIT (Hugging Face model card: license: mit)",
-      "license_url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal",
-      "commercial_use": true,
-      "redistributable": true,
-      "required_vram_gb": 5,
-      "backends": [
-        "moge_rgbd"
-      ],
-      "requires_acceptance": true,
-      "gated": false,
-      "files": [
-        {
-          "path": "model.pt",
-          "url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal/resolve/cb0e8bbd6b1e243589717c78e750b1ba4c093acf/model.pt",
-          "sha256": "280741fd09bc3f403ccff9967784c2a391b52d2c0742ae3efdb21d9f90cc1a01",
-          "size_bytes": 1323815904
-        }
-      ],
-      "notes": "Default Quality photo model and per-frame model for fixed-camera dynamic video."
-    },
-    {
-      "id": "depth-anything-v2-small",
-      "display_name": "Depth-Anything-V2 Small \u2014 commercial-safe relative depth",
-      "source": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf",
-      "revision": "5426e4f0f36572d16453bbda7a8389317b1bef99",
-      "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
-      "license_url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf",
-      "commercial_use": true,
-      "redistributable": true,
-      "required_vram_gb": 2,
-      "backends": [
-        "depth_anything_v2"
-      ],
-      "requires_acceptance": true,
-      "gated": false,
-      "files": [
-        {
-          "path": "config.json",
-          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/config.json",
-          "sha256": null,
-          "size_bytes": 950
-        },
-        {
-          "path": "preprocessor_config.json",
-          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/preprocessor_config.json",
-          "sha256": null,
-          "size_bytes": 775
-        },
-        {
-          "path": "model.safetensors",
-          "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/model.safetensors",
-          "sha256": "3152477ce0d8d6978d76b995120de97cb5b928701fd0f817769f59e249a16b70",
-          "size_bytes": 99173660
-        }
-      ],
-      "notes": "Relative depth only (no metric scale). The Base/Large/Giant checkpoints are CC-BY-NC-4.0 and are not used."
-    },
-    {
-      "id": "sharp",
-      "display_name": "Apple SHARP \u2014 single image to 3D Gaussians",
-      "source": "https://github.com/apple/ml-sharp",
-      "revision": "sharp_2572gikvuh.pt (upstream commit aed6527499ef91cba3b54c18d49a870f25947190)",
-      "license": "Apple Machine Learning Research Model License (research purposes only, non-commercial)",
-      "license_url": "https://github.com/apple/ml-sharp/blob/aed6527499ef91cba3b54c18d49a870f25947190/LICENSE_MODEL",
-      "commercial_use": false,
-      "redistributable": false,
-      "required_vram_gb": 6,
-      "backends": [
-        "sharp"
-      ],
-      "requires_acceptance": true,
-      "gated": false,
-      "files": [
-        {
-          "path": "sharp_2572gikvuh.pt",
-          "url": "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt",
-          "sha256": null,
-          "size_bytes": null
-        }
-      ],
-      "notes": "Research-only. Never bundled. Enabled only when the user selects the research/personal license profile and accepts the Apple model license. Splatline reports ~2.5 GB."
-    },
-    {
-      "id": "vggt-1b",
-      "display_name": "VGGT-1B (original checkpoint) \u2014 used by recon3d",
-      "source": "https://huggingface.co/facebook/VGGT-1B",
-      "revision": "main (UNPINNED)",
-      "license": "Non-commercial (original VGGT-1B checkpoint; see upstream README 2025-07-29 note)",
-      "license_url": "https://github.com/facebookresearch/vggt/blob/a288dd0f14786c93483e45524328726ab7b1b4ce/README.md",
-      "commercial_use": false,
-      "redistributable": false,
-      "required_vram_gb": 10,
-      "backends": [
-        "recon3d_video"
-      ],
-      "requires_acceptance": true,
-      "gated": false,
-      "fetched_by_upstream": true,
-      "files": [],
-      "notes": "recon3d@e40cd91 calls VGGT.from_pretrained('facebook/VGGT-1B'); the weights are fetched by the runtime into <models>/hf-cache (HF_HOME). The commercial checkpoint facebook/VGGT-1B-Commercial is gated and would need an adapter patch."
-    },
-    {
-      "id": "moge-2-vitl",
-      "display_name": "MoGe-2 ViT-L \u2014 metric alignment used by recon3d",
-      "source": "https://huggingface.co/Ruicheng/moge-2-vitl",
-      "revision": "main (UNPINNED)",
-      "license": "MIT (Hugging Face model card family Ruicheng/moge-2-*)",
-      "license_url": "https://huggingface.co/Ruicheng/moge-2-vitl",
-      "commercial_use": true,
-      "redistributable": false,
-      "required_vram_gb": 5,
-      "backends": [
-        "recon3d_video"
-      ],
-      "requires_acceptance": true,
-      "gated": false,
-      "fetched_by_upstream": true,
-      "files": [],
-      "notes": "Fetched by recon3d into <models>/hf-cache."
+     "path": "model.pt",
+     "url": "https://huggingface.co/Ruicheng/moge-2-vits-normal/resolve/26b477f41595707c5db6770294c0d1721e8ed4ed/model.pt",
+     "sha256": "79a16621928c2bf0ed04659218c55c01075e950507f40bb3332fb4c873d3e1dc",
+     "size_bytes": 140550416
     }
-  ]
+   ],
+   "notes": "Default Fast photo model."
+  },
+  {
+   "id": "moge-2-vitl-normal",
+   "display_name": "MoGe-2 ViT-L (normal) — quality monocular metric geometry",
+   "source": "https://huggingface.co/Ruicheng/moge-2-vitl-normal",
+   "revision": "cb0e8bbd6b1e243589717c78e750b1ba4c093acf",
+   "license": "MIT (Hugging Face model card: license: mit)",
+   "license_url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 5,
+   "backends": [
+    "moge_rgbd",
+    "multiview"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "model.pt",
+     "url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal/resolve/cb0e8bbd6b1e243589717c78e750b1ba4c093acf/model.pt",
+     "sha256": "280741fd09bc3f403ccff9967784c2a391b52d2c0742ae3efdb21d9f90cc1a01",
+     "size_bytes": 1323815904
+    }
+   ],
+   "notes": "Default Quality photo model and per-frame model for fixed-camera dynamic video."
+  },
+  {
+   "id": "depth-anything-v2-small",
+   "display_name": "Depth-Anything-V2 Small — commercial-safe relative depth",
+   "source": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf",
+   "revision": "5426e4f0f36572d16453bbda7a8389317b1bef99",
+   "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
+   "license_url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 2,
+   "backends": [
+    "depth_anything_v2"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "config.json",
+     "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/config.json",
+     "sha256": null,
+     "size_bytes": 950
+    },
+    {
+     "path": "preprocessor_config.json",
+     "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/preprocessor_config.json",
+     "sha256": null,
+     "size_bytes": 775
+    },
+    {
+     "path": "model.safetensors",
+     "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/model.safetensors",
+     "sha256": "3152477ce0d8d6978d76b995120de97cb5b928701fd0f817769f59e249a16b70",
+     "size_bytes": 99173660
+    }
+   ],
+   "notes": "Relative depth only (no metric scale). The Base/Large/Giant checkpoints are CC-BY-NC-4.0 and are not used."
+  },
+  {
+   "id": "sharp",
+   "display_name": "Apple SHARP — single image to 3D Gaussians",
+   "source": "https://github.com/apple/ml-sharp",
+   "revision": "sharp_2572gikvuh.pt (upstream commit aed6527499ef91cba3b54c18d49a870f25947190)",
+   "license": "Apple Machine Learning Research Model License (research purposes only, non-commercial)",
+   "license_url": "https://github.com/apple/ml-sharp/blob/aed6527499ef91cba3b54c18d49a870f25947190/LICENSE_MODEL",
+   "commercial_use": false,
+   "redistributable": false,
+   "required_vram_gb": 6,
+   "backends": [
+    "sharp"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "sharp_2572gikvuh.pt",
+     "url": "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt",
+     "sha256": null,
+     "size_bytes": null
+    }
+   ],
+   "notes": "Research-only. Never bundled. Enabled only when the user selects the research/personal license profile and accepts the Apple model license. Splatline reports ~2.5 GB."
+  },
+  {
+   "id": "vggt-1b",
+   "display_name": "VGGT-1B — camera poses and depth from many views",
+   "source": "https://huggingface.co/facebook/VGGT-1B",
+   "revision": "860abec7937da0a4c03c41d3c269c366e82abdf9",
+   "license": "CC-BY-NC-4.0 (Hugging Face model card: license: cc-by-nc-4.0)",
+   "license_url": "https://huggingface.co/facebook/VGGT-1B",
+   "commercial_use": false,
+   "redistributable": false,
+   "required_vram_gb": 10,
+   "backends": [
+    "multiview",
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "config.json",
+     "url": "https://huggingface.co/facebook/VGGT-1B/resolve/860abec7937da0a4c03c41d3c269c366e82abdf9/config.json",
+     "sha256": null,
+     "size_bytes": 62
+    },
+    {
+     "path": "model.safetensors",
+     "url": "https://huggingface.co/facebook/VGGT-1B/resolve/860abec7937da0a4c03c41d3c269c366e82abdf9/model.safetensors",
+     "sha256": "f164acf60724910d8fe1578bb499d800850c7bb0948db7555c413f9fbe60467e",
+     "size_bytes": 5026367224
+    }
+   ],
+   "notes": "Used by the multi-view engine (several photos, moving-camera video, generated views). Non-commercial checkpoint."
+  },
+  {
+   "id": "seva-1.1",
+   "display_name": "Stable Virtual Camera 1.1 — generates new camera views of a photo",
+   "source": "https://huggingface.co/stabilityai/stable-virtual-camera",
+   "revision": "e538e251c1009e9a41cf8b7fee5f21332a1960de",
+   "license": "Stability AI Non-Commercial Research Community License (stabilityai-ai-non-commercial); outputs follow the same non-commercial terms",
+   "license_url": "https://huggingface.co/stabilityai/stable-virtual-camera/blob/main/LICENSE",
+   "commercial_use": false,
+   "redistributable": false,
+   "required_vram_gb": 12,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": true,
+   "files": [
+    {
+     "path": "modelv1.1.safetensors",
+     "url": "https://huggingface.co/stabilityai/stable-virtual-camera/resolve/e538e251c1009e9a41cf8b7fee5f21332a1960de/modelv1.1.safetensors",
+     "sha256": "b45d13cb89fe652d607c31989e5f71c2f1217a4f0939301fb60f3b941d6636da",
+     "size_bytes": 5056009640
+    }
+   ],
+   "notes": "Gated: accept the licence on huggingface.co/stabilityai/stable-virtual-camera with your account and enter a Hugging Face access token in Settings before downloading."
+  },
+  {
+   "id": "sd21-vae",
+   "display_name": "Stable Diffusion 2.1 VAE — image encoder/decoder used by Stable Virtual Camera",
+   "source": "https://huggingface.co/sd2-community/stable-diffusion-2-1-base",
+   "revision": "4e63672c03103b6c636b8fb4119ba982469b2955",
+   "license": "CreativeML Open RAIL++-M (Hugging Face model card: license: openrail++)",
+   "license_url": "https://huggingface.co/sd2-community/stable-diffusion-2-1-base",
+   "commercial_use": true,
+   "redistributable": false,
+   "required_vram_gb": 1,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "vae/config.json",
+     "url": "https://huggingface.co/sd2-community/stable-diffusion-2-1-base/resolve/4e63672c03103b6c636b8fb4119ba982469b2955/vae/config.json",
+     "sha256": null,
+     "size_bytes": 553
+    },
+    {
+     "path": "vae/diffusion_pytorch_model.safetensors",
+     "url": "https://huggingface.co/sd2-community/stable-diffusion-2-1-base/resolve/4e63672c03103b6c636b8fb4119ba982469b2955/vae/diffusion_pytorch_model.safetensors",
+     "sha256": "a1d993488569e928462932c8c38a0760b874d166399b14414135bd9c42df5815",
+     "size_bytes": 334643276
+    }
+   ],
+   "notes": "Community mirror of stabilityai/stable-diffusion-2-1-base (the original repository is no longer public); only the VAE is downloaded."
+  },
+  {
+   "id": "clip-vit-h-14",
+   "display_name": "OpenCLIP ViT-H/14 (LAION-2B) — image conditioning for Stable Virtual Camera",
+   "source": "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+   "revision": "1c2b8495b28150b8a4922ee1c8edee224c284c0c",
+   "license": "MIT (Hugging Face model card: license: mit)",
+   "license_url": "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 2,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "open_clip_config.json",
+     "url": "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K/resolve/1c2b8495b28150b8a4922ee1c8edee224c284c0c/open_clip_config.json",
+     "sha256": null,
+     "size_bytes": 637
+    },
+    {
+     "path": "open_clip_model.safetensors",
+     "url": "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K/resolve/1c2b8495b28150b8a4922ee1c8edee224c284c0c/open_clip_model.safetensors",
+     "sha256": "0084e75319a50ad85ef45377bad5bc38f2f58824459eb690048d51c9f8863be5",
+     "size_bytes": 3944517836
+    }
+   ],
+   "notes": ""
+  },
+  {
+   "id": "big-lama",
+   "display_name": "LaMa (big-lama) — fills holes behind objects in VR180 and generated views",
+   "source": "https://github.com/advimman/lama",
+   "revision": "Sanster/models release add_big_lama (TorchScript export used by IOPaint)",
+   "license": "Apache-2.0 (advimman/lama)",
+   "license_url": "https://github.com/advimman/lama/blob/main/LICENSE",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 2,
+   "backends": [
+    "vr180_inpaint",
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "big-lama.pt",
+     "url": "https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt",
+     "sha256": "344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9",
+     "size_bytes": 205669692
+    }
+   ],
+   "notes": "SHA256 recorded by the CI resolver on 2026-10-02."
+  }
+ ]
 }

@@ -75,7 +75,7 @@ class Availability:
 @dataclass
 class JobInput:
     path: Path
-    kind: str                         # "photo" | "video"
+    kind: str                         # "photo" | "images" (several photos of one scene) | "video"
     work_dir: Path
     frames: list[Path] = field(default_factory=list)   # images handed to the backend
     video_kind: str | None = None     # static_scene | static_camera_dynamic | moving_camera
@@ -171,7 +171,7 @@ class Backend:
 
     def can_run(self, inp: JobInput, hw: HardwareReport | None, ctx: BackendContext,
                 options: dict | None = None) -> tuple[bool, list[str]]:
-        kind = inp.kind if inp.kind == "photo" else f"video:{inp.video_kind}"
+        kind = inp.kind if inp.kind in ("photo", "images") else f"video:{inp.video_kind}"
         reasons = []
         if kind not in self.inputs:
             reasons.append(f"{self.id} does not handle {kind}")
