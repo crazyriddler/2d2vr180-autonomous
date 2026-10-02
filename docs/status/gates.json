@@ -135,6 +135,22 @@
   "rc5_generative_runtime": {
    "run": "https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/37043788783",
    "result": "pass: runtime installed (stable-virtual-camera package copied from the pinned commit archive after its packaging bug was found by the first run); LaMa downloaded and run on CPU (hole filled with plausible content); seva modules import and trajectories build. Stable Virtual Camera weights are gated (need a user token): generation not run."
+  },
+  "rc5_photo_runtime": {
+   "run": "https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/37043788783",
+   "result": "pass: photo runtime install, model downloads and all real CPU photo/fixed-camera-video runs (incl. gravity levelling and the LaMa fallback path) succeeded on windows-latest."
   }
- }
+ },
+ "rtx4080_reports": [
+  {
+   "version": "1.0.0-rc6",
+   "finding": "generative 3D (Fast) reserved 18.3/16 GB, Windows shared-memory spill, 53 s per diffusion step",
+   "fix": "rc7: VRAM cap + retry, CLIP on CPU, pixel budget"
+  },
+  {
+   "version": "1.0.0-rc7",
+   "finding": "CPU CLIP moved back to GPU by seva.eval.load_model -> device mismatch error",
+   "fix": "rc8: conditioner ignores .to(); seva low-VRAM mode"
+  }
+ ]
 }
