@@ -16,12 +16,24 @@ import contextlib
 import glob
 import os
 import sys
+import time
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
-TRAJECTORIES = ("orbit", "explore", "spiral")
+TRAJECTORIES = ("arc", "orbit", "explore", "spiral")
+PRESETS = {"arc": "lemniscate"}   # our name → Stable Virtual Camera preset (figure-of-eight, ±60°)
+
+
+def short_sides(start: int, aspect: float, budget: int) -> list[int]:
+    """Short sides (multiples of 64, as Stable Virtual Camera requires) to try, largest first,
+    keeping width x height within ``budget`` pixels."""
+    out = []
+    for s in range(start - start % 64, 255, -64):
+        if s * s * aspect <= budget * 1.02 and s not in out:
+            out.append(s)
+    return (out or [256])[:3]
 
 
 def explore_c2ws(n, yaw_deg=70.0, pitch_deg=28.0, sway=0.1):
@@ -61,12 +73,80 @@ def trajectory(kind, n, hfov_deg, w, h):
         return explore_c2ws(n), intrinsics(hfov_deg, w, h, n)
     from seva.geometry import get_preset_pose_fov
 
-    c2ws, _ = get_preset_pose_fov(option=kind, num_frames=n, start_w2c=torch.eye(4),
+    c2ws, _ = get_preset_pose_fov(option=PRESETS.get(kind, kind), num_frames=n, start_w2c=torch.eye(4),
                                   look_at=torch.Tensor([0, 0, 10]))
     c2ws = np.asarray(c2ws, np.float64)
     if c2ws.shape[1] == 3:
         c2ws = np.concatenate([c2ws, np.tile([[[0, 0, 0, 1.0]]], (len(c2ws), 1, 1))], 1)
     return c2ws, intrinsics(hfov_deg, w, h, n)
+
+
+class ProgressBar:
+    """Stand-in for tqdm inside Stable Virtual Camera: tqdm redraws one console line with '\\r',
+    which the app cannot see, so report chunks and diffusion steps as protocol events instead,
+    with seconds per step and GPU memory (a full GPU spilling into shared system memory on
+    Windows shows up as very slow steps)."""
+
+    passes = 0          # chunk loops seen (first pass, second pass)
+    chunk = (0, 1)      # (index, total) of the current chunk
+    torch = None
+
+    def __init__(self, iterable=None, total=None, desc="", **kw):
+        self.it = iterable
+        self.total = total if total is not None else (len(iterable) if hasattr(iterable, "__len__") else None)
+        self.desc = str(desc or "")
+        self.n = 0
+        self.t = time.time()
+        self.sampling = "sampl" in self.desc.lower()   # chunk loops have no description
+        if not self.sampling:
+            ProgressBar.passes += 1
+            ProgressBar.chunk = (0, self.total or 1)
+
+    def __iter__(self):
+        for x in self.it:
+            yield x
+            self.update(1)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def update(self, k=1):
+        self.n += k
+        now = time.time()
+        dt, self.t = now - self.t, now
+        if not self.sampling:
+            ProgressBar.chunk = (self.n, self.total or 1)
+            return
+        c, ct = ProgressBar.chunk
+        lo, hi = (0.12, 0.3) if ProgressBar.passes <= 1 else (0.3, 0.97)
+        frac = (c + self.n / max(self.total or 1, 1)) / max(ct, 1)
+        mem = ""
+        t = ProgressBar.torch
+        if t is not None and t.cuda.is_available():
+            used = t.cuda.memory_reserved() / 2**30
+            tot = t.cuda.get_device_properties(0).total_memory / 2**30
+            mem = f" · GPU memory {used:.1f}/{tot:.0f} GB"
+            if dt > 20 and used > 0.95 * tot:
+                log("GPU memory is full: Windows may be using shared system memory, which is very slow. "
+                    "Close other GPU programs or use Fast mode.")
+        progress(lo + (hi - lo) * min(frac, 1.0),
+                 f"generating views: pass {min(ProgressBar.passes, 2)}/2, chunk {c + 1}/{ct}, "
+                 f"step {self.n}/{self.total} · {dt:.1f} s/step{mem}")
+
+    def close(self):
+        pass
+
+    def set_description(self, *a, **k):
+        pass
+
+    def set_postfix(self, *a, **k):
+        pass
+
+    def refresh(self, *a, **k):
+        pass
 
 
 def load_models(req, torch):
@@ -85,6 +165,16 @@ def load_models(req, torch):
     from seva.modules.conditioner import CLIPConditioner
     from seva.sampling import DiscreteDenoiser
     from seva.utils import load_model
+    import seva.eval as seva_eval
+    import seva.sampling as seva_sampling
+
+    # Upstream low-VRAM mode: the diffusion model and the autoencoder take turns on the GPU
+    # instead of sitting there together (peak memory = the larger one, not the sum).
+    seva_eval.set_lowvram_mode(bool(req.get("lowvram", True)))
+
+    ProgressBar.torch = torch
+    seva_eval.tqdm = ProgressBar
+    seva_sampling.tqdm = ProgressBar
 
     class LocalAE(AutoEncoder):
         def __init__(self, vae_dir):
@@ -104,8 +194,28 @@ def load_models(req, torch):
     model = SGMWrapper(load_model(model_version=1.1, pretrained_model_name_or_path=req["seva_dir"],
                                   weight_name="modelv1.1.safetensors", device="cpu", verbose=False).eval()).to("cuda")
     ae = LocalAE(req["vae_dir"]).to("cuda")
-    clip = LocalCLIP(req["clip_path"]).to("cuda")
-    return model, ae, clip, DiscreteDenoiser(num_idx=1000, device="cuda")
+    clip = LocalCLIP(req["clip_path"]).float().eval()   # stays on the CPU: frees ~2.5 GB of VRAM
+
+    class CPUConditioner(nn.Module):
+        """CLIP image embedding computed on the CPU (only a handful of input images per chunk)."""
+
+        def __init__(self, inner):
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, x):
+            with torch.autocast("cuda", enabled=False), torch.no_grad():
+                return self.inner(x.detach().float().cpu()).to(x.device)
+
+        # Stable Virtual Camera moves every component to the GPU before use (seva.eval.load_model);
+        # this one must stay on the CPU.
+        def to(self, *a, **k):
+            return self
+
+        def cuda(self, *a, **k):
+            return self
+
+    return model, ae, CPUConditioner(clip), DiscreteDenoiser(num_idx=1000, device="cuda")
 
 
 def generate(req, models, short_side, torch):
@@ -125,7 +235,7 @@ def generate(req, models, short_side, torch):
         "guider_types": [1, 2], "cfg": [4.0 if kind != "explore" else 3.0, 2.0], "camera_scale": 2.0,
         "num_steps": int(req.get("steps", 50)), "cfg_min": 1.2, "encoding_t": 1, "decoding_t": 1,
         "replace_or_include_input": True, "L_short": short_side, "num_targets": n_targets,
-        "use_traj_prior": True, "traj_prior": kind, "save_input": True}}
+        "use_traj_prior": True, "traj_prior": PRESETS.get(kind, kind), "save_input": True}}
     num_anchors = infer_prior_stats(version_dict["T"], 1, num_total_frames=n_targets, version_dict=version_dict)
     anchor_idx = [round(i) for i in np.linspace(1, n_targets, num_anchors)]
     save = os.path.join(req["output_dir"], f"seva_{short_side}")
@@ -138,8 +248,9 @@ def generate(req, models, short_side, torch):
         camera_cond={"c2w": t_c2w.clone(), "K": t_K.clone(), "input_indices": list(range(n_targets + 1))},
         save_path=save, use_traj_prior=True, traj_prior_Ks=t_K[anchor_idx].clone(),
         traj_prior_c2ws=t_c2w[anchor_idx].clone(), seed=int(req.get("seed", 23)))
-    for i, _ in enumerate(gen):
-        progress(0.15 + 0.4 * (i + 1), "generating views: " + ("first pass" if i == 0 else "second pass"))
+    ProgressBar.passes = 0
+    for _ in gen:
+        pass
     frames = sorted(glob.glob(os.path.join(save, "samples-rgb", "*.png")))
     inputs = sorted(glob.glob(os.path.join(save, "input", "*.png")))
     if len(frames) == n_targets and inputs:
@@ -166,14 +277,31 @@ def main(req):
     progress(0.02, "loading Stable Virtual Camera")
     models = load_models(req, torch)
     progress(0.1, "models loaded")
-    sizes = [int(req.get("short_side", 576)), 448, 384]
+    # Never let Windows spill GPU memory into shared system RAM (10-50x slower): cap the
+    # allocator below the card's size so an out-of-memory error triggers a smaller retry instead.
+    torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.92)))
+    from PIL import Image
+
+    with Image.open(req["image"]) as im:
+        aspect = max(im.size) / min(im.size)
+    # Start at the model's native 576 px (best quality); the memory cap turns a too-large attempt
+    # into an out-of-memory error and the next, smaller size is tried.
+    budget = int(req.get("pixel_budget", 0)) or int(576 * 576 * max(aspect, 1.0))
+    sizes = short_sides(int(req.get("short_side", 576)), aspect, budget) + [384, 320]
+    sizes = list(dict.fromkeys(sizes))
+    log(f"generation resolutions to try (short side): {sizes}")
     last = None
     for s in sizes:
         try:
             frames, c2ws, Ks, wh = generate(req, models, s, torch)
             break
-        except torch.cuda.OutOfMemoryError as e:  # retry smaller
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:  # retry smaller
+            if "out of memory" not in str(e).lower():
+                raise
             last = e
+            import gc
+
+            gc.collect()
             log(f"out of GPU memory at {s} px; retrying at a lower resolution")
             torch.cuda.empty_cache()
     else:

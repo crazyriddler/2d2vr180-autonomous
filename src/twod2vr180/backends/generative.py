@@ -14,7 +14,8 @@ from .base import (NOVEL_VIEW_COMPLETION, SCENE_STATIC, SINGLE_VIEW, Availabilit
 from .multiview import MultiViewBackend
 
 TRAJECTORIES = {
-    "orbit": "360° orbit around the main subject (objects, people, animals)",
+    "arc": "around the subject, ±60° figure-of-eight (most reliable; best for people)",
+    "orbit": "full 360° orbit around the main subject (objects; the back side is pure invention)",
     "explore": "look around from where the photo was taken, with a little head movement (best for VR180)",
     "spiral": "small forward-facing spiral (most faithful, least new content)",
 }
@@ -57,15 +58,15 @@ class GenerativeSceneBackend(Backend):
                         notes=["estimate; not yet benchmarked on RTX 4080"])
 
     def run(self, inp: JobInput, ctx: BackendContext, options: dict, progress, cancel) -> BackendResult:
-        traj = options.get("trajectory") or "orbit"
+        traj = options.get("trajectory") or "arc"
         if traj not in TRAJECTORIES:
-            traj = "orbit"
+            traj = "arc"
         n = FRAMES.get(options.get("mode", "auto"), 80)
         ref = inp.frames[min(int(options.get("reference_frame_index", 0)), len(inp.frames) - 1)]
         log = options.get("log") or (lambda m: None)
         log(f"generating {n} views along a '{traj}' path: {TRAJECTORIES[traj]}")
         req = {"image": str(ref), "output_dir": str(inp.work_dir / "generated_views"), "trajectory": traj,
-               "num_frames": n, "steps": 30 if options.get("mode") == "fast" else 50, "short_side": 576,
+               "num_frames": n, "steps": 50, "short_side": 576,
                "hfov_deg": options.get("hfov_deg"), "seed": int(options.get("seed", 23)),
                "seva_dir": str(ctx.models.model_dir("seva-1.1")), "vae_dir": str(ctx.models.model_dir("sd21-vae")),
                "clip_path": str(ctx.models.paths("clip-vit-h-14")["open_clip_model.safetensors"])}

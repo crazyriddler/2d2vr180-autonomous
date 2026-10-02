@@ -205,7 +205,8 @@ class CreatePage(QWidget):
         gf = QFormLayout(gbox)
         self.generative = QComboBox()
         for label, val in (("Off — only what the photo shows", "off"),
-                           ("Orbit — invent the other sides of the subject (360°)", "orbit"),
+                           ("Around the subject ±60° — most reliable, best for people", "arc"),
+                           ("Orbit 360° — invent the back too (objects; less reliable)", "orbit"),
                            ("Explore — invent the surroundings (best for VR180)", "explore"),
                            ("Spiral — small, faithful extension", "spiral")):
             self.generative.addItem(label, val)

@@ -55,7 +55,7 @@ class JobOptions:
     max_path_frames: int = 720           # cap for moving-camera VR180 videos
     video_mode: str = "auto"             # auto | multiview (all frames → one 3D scene) | per_frame | best_frame
     export_sequence: bool = False        # fixed-camera video: also export one .ply per frame (4D sequence)
-    generative: str = "off"              # off | orbit | explore | spiral: invent unseen views of a photo
+    generative: str = "off"              # off | arc | orbit | explore | spiral: invent unseen views of a photo
     ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
 
 

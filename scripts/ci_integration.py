@@ -155,10 +155,15 @@ def multiview_selftest(a, env, log, out) -> dict:
                       "max_side": 640}, out, env, log, "multiview_poses")
     c2ws = np.asarray(res.get("c2ws") or np.zeros((0, 4, 4)))
     ok = res.get("event") == "result" and len(c2ws) == 3 and np.allclose(c2ws[0], np.eye(4), atol=1e-4)
-    if ok:  # the camera moved right → x of later views increases
-        ok = bool(c2ws[2][0, 3] > c2ws[1][0, 3] > c2ws[0][0, 3] - 1e-6)
+    # The crops come from one photo (no parallax), so the motion is equally explained by a
+    # camera pan or a sideways move: either way it must go to the right, monotonically.
+    yaw = [float(np.degrees(np.arctan2(m[0, 2], m[2, 2]))) for m in c2ws]
+    tx = [float(m[0, 3]) for m in c2ws]
+    if ok:
+        right = [y + 1e3 * t for y, t in zip(yaw, tx)]
+        ok = bool(right[2] > right[1] > right[0] - 1e-6) and int(res.get("points") or 0) > 1000
     r["multiview_poses"] = {"ok": bool(ok), "points": res.get("points"), "metric_scale": res.get("metric_scale_factor"),
-                            "camera_x": [float(m[0, 3]) for m in c2ws], "error": res.get("message")}
+                            "camera_x": tx, "yaw_deg": yaw, "error": res.get("message")}
     return r
 
 

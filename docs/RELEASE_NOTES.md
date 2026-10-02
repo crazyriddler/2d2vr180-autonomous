@@ -1,4 +1,54 @@
-# 2D2VR180 1.0.0-rc5 — multi-view, generative 3D and VR fixes
+# 2D2VR180 1.0.0-rc9 — better generated views
+
+## What's new in rc9
+
+- **Generated views of people were deformed (RTX 4080 report on rc8).** Changes:
+  - generation starts at Stable Virtual Camera's native 576-pixel resolution (rc7/rc8 used 448 to save
+    memory); the memory cap still falls back to 512/448/384 automatically if needed;
+  - always 50 diffusion steps (Fast used 30); Fast now only generates fewer views;
+  - new default path **Around the subject ±60°** (Stable Virtual Camera's figure-of-eight preset): far more
+    reliable than a full 360° orbit from one photo, and the best choice for people. *Orbit 360°* remains
+    available for objects, but the back side of a person seen from the front is pure invention and often
+    deformed.
+
+## rc8
+
+## What's new in rc8
+
+- **Fix (RTX 4080 report on rc7): generative 3D failed immediately** with "Input type (torch.FloatTensor)
+  and weight type (torch.cuda.FloatTensor) should be the same". Stable Virtual Camera moves each component
+  to the GPU before use; the CLIP encoder now stays on the CPU as intended.
+- Stable Virtual Camera's own low-VRAM mode is enabled: the diffusion model and the image decoder take turns
+  on the GPU instead of occupying it together.
+
+## rc7
+
+## What's new in rc7
+
+- **Fix (RTX 4080 report on rc6): generative 3D used 18.3 GB on a 16 GB card**, Windows spilled into shared
+  system memory and each diffusion step took 53 s even in Fast mode. Now:
+  - the GPU memory of the generation and training processes is capped below the card's size, so instead of
+    a silent, very slow spill the app gets an out-of-memory signal and retries automatically at a lower
+    resolution (generation) or with smaller images and fewer splats (training);
+  - the CLIP image encoder of Stable Virtual Camera runs on the CPU (it only sees a few input images):
+    ~2.5 GB less GPU memory;
+  - the generation resolution follows a pixel budget (576×576 pixels): a 4:3 photo is generated at 597×448,
+    16:9 at 683×384, instead of 768×576 / 1024×576.
+
+## rc6
+
+## What's new in rc6
+
+- **Fix: generative 3D looked frozen at "Sampling 0/50".** Stable Virtual Camera's progress bar redraws one
+  console line, which the app could not show. Every diffusion step is now reported: pass (1/2, 2/2), chunk,
+  step, seconds per step and GPU memory in use.
+- **Warning when the GPU memory is full** and steps become slow (Windows then uses shared system memory,
+  which is many times slower): close other GPU programs or use *Fast* mode (48 views, 30 steps).
+- Removed a harmless PyTorch warning about `expandable_segments` on Windows.
+- Windows CI with real models (CPU): VGGT-1B + MoGe-2 camera poses, LaMa inpainting and Stable Virtual Camera
+  loading all pass.
+
+## rc5
 
 ## What's new in rc5
 
@@ -89,8 +139,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc5-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc5-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc9-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc9-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

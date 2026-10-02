@@ -272,7 +272,7 @@ def build_parser() -> argparse.ArgumentParser:
     j.add_argument("--renderer", default="auto", choices=["auto", "gpu", "cpu"])
     j.add_argument("--no-fill-holes", action="store_true")
     j.add_argument("--no-ai-fill", action="store_true", help="do not use LaMa for VR180 holes")
-    j.add_argument("--generative", default="off", choices=["off", "orbit", "explore", "spiral"],
+    j.add_argument("--generative", default="off", choices=["off", "arc", "orbit", "explore", "spiral"],
                    help="photos: invent unseen views with Stable Virtual Camera and train a full splat")
     j.add_argument("--export-sequence", action="store_true", help="fixed-camera video: one .ply per frame")
     j.add_argument("--video-mode", default="auto", choices=["auto", "multiview", "per_frame", "best_frame"])

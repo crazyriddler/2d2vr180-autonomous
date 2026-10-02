@@ -131,7 +131,8 @@ class RuntimeManager:
         env["TORCH_HOME"] = str(paths.models / "torch-cache")
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        if sys.platform != "win32":  # not supported by PyTorch on Windows (only prints a warning)
+            env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         env.pop("PYTHONPATH", None)
         env.pop("PYTHONHOME", None)
         spec = self.specs.get(rid)

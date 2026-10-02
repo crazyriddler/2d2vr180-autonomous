@@ -52,8 +52,8 @@ verified (SHA256) before use.
 2. Choose **Auto** (recommended), **Quality** or **Fast**.
 3. Choose outputs: VR180 side-by-side and/or top/bottom, VR180 or flat 3D projection.
 4. Under **3D reconstruction**:
-   - **Photo: generative 3D** — *Off* uses only what the photo shows. *Orbit* invents the other sides of
-     the main subject (360°), *Explore* invents the surroundings so a VR180 is filled (best for VR180),
+   - **Photo: generative 3D** — *Off* uses only what the photo shows. *Around the subject ±60°* is the most
+     reliable and the best choice for people; *Orbit 360°* also invents the back (objects), *Explore* invents the surroundings so a VR180 is filled (best for VR180),
      *Spiral* adds a small, faithful extension.
    - **Video** — *Automatic* analyses the video; *Whole video → one 3D scene* reconstructs every part of the
      video into one splat (camera must move); *Frame by frame* for people/animals moving in front of a fixed
