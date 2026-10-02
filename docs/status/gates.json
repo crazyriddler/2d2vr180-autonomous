@@ -1,132 +1,140 @@
 {
-  "updated": "2026-09-27",
-  "evidence_environment": "Linux x86_64 container, 4 CPU, no GPU; network limited to GitHub git + PyPI (Hugging Face, Apple CDN, download.pytorch.org blocked)",
-  "gates": [
-    {
-      "id": "A-clean-windows-install",
-      "mandatory": true,
-      "status": "partial",
-      "evidence": "CI https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36345572713: Inno Setup installer built on windows-latest, silent per-user install (no admin), installed CLI runs with Python/Git removed from PATH, 7/7 acceptance checks, clean uninstall (scripts/install-test.ps1). Still required: a clean Windows 11 VM and the GUI launched interactively.",
-      "waived_for_rc": true,
-      "waiver": "Waived for release candidates by the project owner (2026-09-27): RTX 4080 / clean-machine testing is done by the owner on the RC."
-    },
-    {
-      "id": "A-windows-build-and-tests",
-      "mandatory": true,
-      "status": "pass",
-      "evidence": "CI https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36345572713: pytest 50/50 on Windows, PyInstaller build, frozen-exe acceptance 7/7, ZIP 116 MB + setup.exe 74 MB, checksums + release manifest."
-    },
-    {
-      "id": "B-rtx4080-detected",
-      "mandatory": true,
-      "status": "not_run",
-      "evidence": "nvidia-smi parser unit-tested with an RTX 4080 line; needs a real RTX 4080.",
-      "waived_for_rc": true,
-      "waiver": "Waived for release candidates by the project owner (2026-09-27): RTX 4080 / clean-machine testing is done by the owner on the RC."
-    },
-    {
-      "id": "B-runtime-install-photo-cu128",
-      "mandatory": true,
-      "status": "pass",
-      "evidence": "Windows CI (runs 36347569733, 36348165737): the packaged CLI installed photo-cu128 with bundled uv (torch 2.8.0+cu128, MoGe, SHARP, transformers; import smoke OK) and recon3d-cu124 (torch 2.4.1+cu124, gsplat 1.5.3+pt24cu124 prebuilt, VGGT, recon3d; import smoke OK)."
-    },
-    {
-      "id": "C-photo-inference-gpu",
-      "mandatory": true,
-      "status": "not_run",
-      "evidence": "Real models run end-to-end on Windows CPU in CI (see integration_cpu); GPU execution not yet run.",
-      "waived_for_rc": true,
-      "waiver": "Waived for release candidates by the project owner (2026-09-27): RTX 4080 / clean-machine testing is done by the owner on the RC."
-    },
-    {
-      "id": "C-pipeline-plumbing",
-      "mandatory": true,
-      "status": "pass",
-      "evidence": "tests/integration/test_jobs.py: photo, static video, fixed-camera dynamic video, fallback, cancel, OOM, missing model, corrupted input (test-only fake geometry worker)."
-    },
-    {
-      "id": "C-video-inference-gpu",
-      "mandatory": false,
-      "status": "not_run",
-      "evidence": "recon3d worker unverified; Windows gsplat wheel availability unknown."
-    },
-    {
-      "id": "D-novel-views",
-      "mandatory": false,
-      "status": "not_run",
-      "evidence": "Orbit renders tested on synthetic scenes only."
-    },
-    {
-      "id": "E-vr180-geometry",
-      "mandatory": true,
-      "status": "pass",
-      "evidence": "tests/unit/test_render_vr180.py: eye order, no flips, equirect angle mapping, SBS/TB layout, dimensions, FOV metadata, honesty note."
-    },
-    {
-      "id": "E-quest-playback",
-      "mandatory": false,
-      "status": "not_run",
-      "evidence": "H.264 yuv420p MP4 with _180_LR/_180_TB naming and Spherical Video V2 st3d/sv3d boxes (FFmpeg reports stereo3d + tiled equirectangular). Headset playback not tested."
-    },
-    {
-      "id": "F-generated-content-honesty",
-      "mandatory": true,
-      "status": "pass",
-      "evidence": "Per-splat provenance, per-eye coverage stats, is_full_vr180 flag and warnings in run_report.json; no generative backend enabled."
-    },
-    {
-      "id": "G-licensing",
-      "mandatory": true,
-      "status": "pass",
-      "evidence": "Model-card licences read from Hugging Face by the Windows integration job: MoGe-2 ViT-S/L normal = MIT, Depth-Anything-V2-Small = Apache-2.0; SHARP (Apple research) and VGGT-1B (non-commercial) are gated behind the personal/research licence profile and never bundled; FFmpeg GPLv3 source offer in THIRD_PARTY_NOTICES.md."
-    },
-    {
-      "id": "H-reproducibility",
-      "mandatory": true,
-      "status": "pass",
-      "evidence": "Upstream commits pinned; runtimes install exact Windows locks (config/locks/*.txt) with --no-deps; HF model revisions + SHA256 + sizes pinned; bundled tools SHA256-pinned; release-manifest.json records all."
-    },
-    {
-      "id": "I-recovery",
-      "mandatory": true,
-      "status": "pass",
-      "evidence": "Interrupted/resumed download, corrupted model, pinned-hash mismatch, missing model, low disk (model manager), no GPU, invalid media, cancelled job: automated tests + scripts/acceptance.py."
-    }
-  ],
-  "integration_cpu": {
-    "environment": "GitHub windows-latest (no GPU); packaged 2d2vr180-cli.exe; runtimes installed by bundled uv; models downloaded by the model manager with pinned SHA256 verified",
-    "run": "https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36349383730",
-    "input": "NASA astronaut photo (public domain, via scikit-image) and a synthetic fixed-camera video with a moving object",
-    "results": {
-      "depth_anything_v2 photo": {
-        "status": "succeeded",
-        "gaussians": 251515,
-        "source_view_psnr_db": 24.01,
-        "time_s": 17
-      },
-      "moge_rgbd photo (fast)": {
-        "status": "succeeded",
-        "gaussians": 254473,
-        "source_view_psnr_db": 23.61,
-        "time_s": 21
-      },
-      "sharp photo": {
-        "status": "succeeded",
-        "gaussians": 1179648,
-        "source_view_psnr_db": 27.9,
-        "time_s": 317
-      },
-      "auto photo, commercial profile": {
-        "status": "succeeded",
-        "backend": "depth_anything_v2"
-      },
-      "fixed-camera video, per-frame VR180 video": {
-        "status": "succeeded",
-        "backend": "moge_rgbd",
-        "source_view_psnr_db": 22.12,
-        "time_s": 340
-      }
-    },
-    "video_runtime": "recon3d-cu124 installed + imports OK (training needs CUDA: not run)"
+ "updated": "2026-10-02",
+ "evidence_environment": "Linux x86_64 container, 4 CPU, no GPU; network limited to GitHub git + PyPI (Hugging Face, Apple CDN, download.pytorch.org blocked)",
+ "gates": [
+  {
+   "id": "A-clean-windows-install",
+   "mandatory": true,
+   "status": "partial",
+   "evidence": "CI https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36345572713: Inno Setup installer built on windows-latest, silent per-user install (no admin), installed CLI runs with Python/Git removed from PATH, 7/7 acceptance checks, clean uninstall (scripts/install-test.ps1). Still required: a clean Windows 11 VM and the GUI launched interactively.",
+   "waived_for_rc": true,
+   "waiver": "Waived for release candidates by the project owner (2026-09-27): RTX 4080 / clean-machine testing is done by the owner on the RC."
+  },
+  {
+   "id": "A-windows-build-and-tests",
+   "mandatory": true,
+   "status": "pass",
+   "evidence": "CI https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36345572713: pytest 50/50 on Windows, PyInstaller build, frozen-exe acceptance 7/7, ZIP 116 MB + setup.exe 74 MB, checksums + release manifest."
+  },
+  {
+   "id": "B-rtx4080-detected",
+   "mandatory": true,
+   "status": "not_run",
+   "evidence": "nvidia-smi parser unit-tested with an RTX 4080 line; needs a real RTX 4080.",
+   "waived_for_rc": true,
+   "waiver": "Waived for release candidates by the project owner (2026-09-27): RTX 4080 / clean-machine testing is done by the owner on the RC."
+  },
+  {
+   "id": "B-runtime-install-photo-cu128",
+   "mandatory": true,
+   "status": "pass",
+   "evidence": "Windows CI (runs 36347569733, 36348165737): the packaged CLI installed photo-cu128 with bundled uv (torch 2.8.0+cu128, MoGe, SHARP, transformers; import smoke OK) and recon3d-cu124 (torch 2.4.1+cu124, gsplat 1.5.3+pt24cu124 prebuilt, VGGT, recon3d; import smoke OK)."
+  },
+  {
+   "id": "C-photo-inference-gpu",
+   "mandatory": true,
+   "status": "not_run",
+   "evidence": "Real models run end-to-end on Windows CPU in CI (see integration_cpu); GPU execution not yet run.",
+   "waived_for_rc": true,
+   "waiver": "Waived for release candidates by the project owner (2026-09-27): RTX 4080 / clean-machine testing is done by the owner on the RC."
+  },
+  {
+   "id": "C-pipeline-plumbing",
+   "mandatory": true,
+   "status": "pass",
+   "evidence": "tests/integration/test_jobs.py: photo, static video, fixed-camera dynamic video, fallback, cancel, OOM, missing model, corrupted input (test-only fake geometry worker)."
+  },
+  {
+   "id": "C-video-inference-gpu",
+   "mandatory": false,
+   "status": "not_run",
+   "evidence": "recon3d worker unverified; Windows gsplat wheel availability unknown."
+  },
+  {
+   "id": "D-novel-views",
+   "mandatory": false,
+   "status": "not_run",
+   "evidence": "Orbit renders tested on synthetic scenes only."
+  },
+  {
+   "id": "E-vr180-geometry",
+   "mandatory": true,
+   "status": "pass",
+   "evidence": "tests/unit/test_render_vr180.py: eye order, no flips, equirect angle mapping, SBS/TB layout, dimensions, FOV metadata, honesty note."
+  },
+  {
+   "id": "E-quest-playback",
+   "mandatory": false,
+   "status": "not_run",
+   "evidence": "H.264 yuv420p MP4 with _180_LR/_180_TB naming and Spherical Video V2 st3d/sv3d boxes (FFmpeg reports stereo3d + tiled equirectangular). Headset playback not tested."
+  },
+  {
+   "id": "F-generated-content-honesty",
+   "mandatory": true,
+   "status": "pass",
+   "evidence": "Per-splat provenance, per-eye coverage stats, is_full_vr180 flag and warnings in run_report.json; no generative backend enabled."
+  },
+  {
+   "id": "G-licensing",
+   "mandatory": true,
+   "status": "pass",
+   "evidence": "Model-card licences read from Hugging Face by the Windows integration job: MoGe-2 ViT-S/L normal = MIT, Depth-Anything-V2-Small = Apache-2.0; SHARP (Apple research) and VGGT-1B (non-commercial) are gated behind the personal/research licence profile and never bundled; FFmpeg GPLv3 source offer in THIRD_PARTY_NOTICES.md."
+  },
+  {
+   "id": "H-reproducibility",
+   "mandatory": true,
+   "status": "pass",
+   "evidence": "Upstream commits pinned; runtimes install exact Windows locks (config/locks/*.txt) with --no-deps; HF model revisions + SHA256 + sizes pinned; bundled tools SHA256-pinned; release-manifest.json records all."
+  },
+  {
+   "id": "I-recovery",
+   "mandatory": true,
+   "status": "pass",
+   "evidence": "Interrupted/resumed download, corrupted model, pinned-hash mismatch, missing model, low disk (model manager), no GPU, invalid media, cancelled job: automated tests + scripts/acceptance.py."
   }
+ ],
+ "integration_cpu": {
+  "environment": "GitHub windows-latest (no GPU); packaged 2d2vr180-cli.exe; runtimes installed by bundled uv; models downloaded by the model manager with pinned SHA256 verified",
+  "run": "https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/36349383730",
+  "input": "NASA astronaut photo (public domain, via scikit-image) and a synthetic fixed-camera video with a moving object",
+  "results": {
+   "depth_anything_v2 photo": {
+    "status": "succeeded",
+    "gaussians": 251515,
+    "source_view_psnr_db": 24.01,
+    "time_s": 17
+   },
+   "moge_rgbd photo (fast)": {
+    "status": "succeeded",
+    "gaussians": 254473,
+    "source_view_psnr_db": 23.61,
+    "time_s": 21
+   },
+   "sharp photo": {
+    "status": "succeeded",
+    "gaussians": 1179648,
+    "source_view_psnr_db": 27.9,
+    "time_s": 317
+   },
+   "auto photo, commercial profile": {
+    "status": "succeeded",
+    "backend": "depth_anything_v2"
+   },
+   "fixed-camera video, per-frame VR180 video": {
+    "status": "succeeded",
+    "backend": "moge_rgbd",
+    "source_view_psnr_db": 22.12,
+    "time_s": 340
+   }
+  },
+  "video_runtime": "recon3d-cu124 installed + imports OK (training needs CUDA: not run)",
+  "rc5_multiview_runtime": {
+   "run": "https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/37043788783",
+   "result": "pass: runtime installed with bundled uv on windows-latest; VGGT-1B and MoGe-2 ViT-L downloaded through the model manager (pinned SHA256); multi-view worker pose stage on CPU: 3 views, 393k init points, metric scale factor 1.40, camera yaw 0 / 0.78 / 1.62 deg (correct direction). gsplat training needs CUDA: not run."
+  },
+  "rc5_generative_runtime": {
+   "run": "https://github.com/crazyriddler/2d2vr180-autonomous/actions/runs/37043788783",
+   "result": "pass: runtime installed (stable-virtual-camera package copied from the pinned commit archive after its packaging bug was found by the first run); LaMa downloaded and run on CPU (hole filled with plausible content); seva modules import and trajectories build. Stable Virtual Camera weights are gated (need a user token): generation not run."
+  }
+ }
 }
