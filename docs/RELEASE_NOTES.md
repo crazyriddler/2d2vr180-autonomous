@@ -1,3 +1,11 @@
+# 2D2VR180 1.0.0-rc15 — Qwen engine fix
+
+## What's new in rc15
+
+- **Fix (Qwen engine):** the views stopped right after the prompts were encoded, with *"When using the offline
+  mode, you must specify a weight_name"*. The two LoRAs are now loaded directly from their files; inference
+  never touches the network. No reinstall needed (the rc14 Generative engine is still valid).
+
 # 2D2VR180 1.0.0-rc14 — 360° photo capture, Qwen-Image-Edit engine
 
 ## What's new in rc14
@@ -222,8 +230,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc14-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc14-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc15-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc15-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 
