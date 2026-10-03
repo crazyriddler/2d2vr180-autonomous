@@ -61,7 +61,7 @@ COMPONENTS: list[Component] = [
     Component("model-qwen", "Qwen-Image-Edit-2511 + Multiple-Angles — sharp generative views (Apache-2.0)", "model",
               "qwen-image-edit-2511-q5", "Image model that redraws your photo from other camera angles (45°, 90°, "
               "the back, above, below) at about 1 megapixel — sharper than video frames. ~33 GB with its text "
-              "encoder and LoRAs; needs ~32 GB of RAM.", False,
+              "encoder and LoRAs; needs ~32 GB of RAM. Needed for 'Real 3D from one photo'.", True,
               ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning", "engine-video",
                "model-vggt", "model-moge-l")),
     Component("model-qwen-base", "Qwen-Image-Edit-2511 text encoder and VAE (for Qwen views)", "model",

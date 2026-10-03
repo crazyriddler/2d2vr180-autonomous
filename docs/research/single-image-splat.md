@@ -63,4 +63,6 @@ personal/research profile).
   MoGe-2 dense init with only 4 widely spaced views is uncertain. Revisit if training from the current init
   shows blur at view boundaries.
 - **Intermediate angles (±20°).** The Multiple-Angles LoRA only knows 45° steps; plain instructions without it
-  changed pose and gaze (stereo test, rc16). Revisit with a LoRA that supports finer azimuth steps.
+  changed pose and gaze (stereo test, rc16). The only continuous-degree LoRA found
+  (`berkerdooo/qwen-image-edit-2511-camera-angle-lora`, Apache-2.0) is trained on 512 px Objaverse objects on white
+  backgrounds and says real photos with backgrounds need background removal; not suitable for people in scenes.

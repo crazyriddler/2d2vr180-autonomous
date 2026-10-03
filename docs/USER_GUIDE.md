@@ -49,10 +49,23 @@ verified (SHA256) before use.
 ## Make something
 
 1. Open **Create** and drop one or more photos or videos (or click to browse).
-2. Choose **Auto** (recommended), **Quality** or **Fast**.
-3. Choose outputs: VR180 side-by-side and/or top/bottom, VR180 or flat 3D projection.
-4. Under **3D reconstruction**:
-   - **Photo: generative 3D** — *Off* uses only what the photo shows. *3 views (Qwen)* makes 45° left, 45° right
+2. Answer **What do you want to make?**
+   - **Real 3D from one photo (recommended).** AI (Qwen-Image-Edit + Multiple-Angles) makes 3 more views of your
+     photo: 45° left, 45° right and from above.
+     - In Auto and Quality, 2-3 candidates are made per angle, and the one that best behaves like a pure camera
+       move of your photo is kept automatically. Views that contradict the photo are dropped.
+     - The multi-view engine (Depth Anything 3 if installed, otherwise VGGT) then finds where each view was
+       taken and trains a 3D splat from the four. That gives real volume and real-world scale.
+     - **Results → AI views overview** shows every candidate, its score and which one was used.
+   - **Quick 3D.** Depth from the photo alone (MoGe-2 / SHARP). Takes seconds, but it is a relief rather than
+     full volume.
+   - **360° around the subject (experimental).** The sides, back, top and bottom are invented and joined with
+     sharp fusion.
+   - **Custom.** Every setting is under *Advanced options* (below).
+3. Choose **Quality**: Auto (recommended), Quality (slower) or Fast. Tick **Also make VR180** for VR180
+   stills and videos.
+4. **Advanced options** (folded away):
+   - **Photo: generative 3D** (Custom) — *Off* uses only what the photo shows. *3 views (Qwen)* makes 45° left, 45° right
      and a high-angle view of your photo (in Auto/Quality 2-3 candidates per angle, the one most consistent
      with a pure camera move is kept automatically) and reconstructs them with the photo in the multi-view
      engine (trained splat). Choosing the *Multi-view* backend with one photo does the same. *360° photo capture* makes a few widely
