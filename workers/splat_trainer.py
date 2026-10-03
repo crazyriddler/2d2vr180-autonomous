@@ -51,6 +51,9 @@ class TrainConfig:
     depth_until: float = 0.6       # ... at this fraction of the steps
     lr_appearance: float = 1e-3    # per-view colour correction (generated views only)
     appearance_reg: float = 0.05   # keeps that correction close to identity
+    lr_pose: float = 1e-4          # camera refinement of generated views (rad / scene-scale units)
+    pose_reg: float = 1e-3
+    pose_from: float = 0.1         # start refining poses after this fraction of the steps
 
 
 def knn_scales(points, k: int = 4):
@@ -147,14 +150,17 @@ def scene_scale(c2ws: np.ndarray, points: np.ndarray) -> float:
 def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.ndarray, colors: np.ndarray,
           cfg: TrainConfig | None = None, device="cuda", render_fn=None, progress=None, cancel=None,
           pixel_weights: list | None = None, depth_priors: list | None = None,
-          appearance: list | None = None, appearance_out: list | None = None):
+          appearance: list | None = None, appearance_out: list | None = None,
+          pose_opt: list | None = None, pose_out: list | None = None):
     """Optimise Gaussians. ``images``: list of (H,W,3) uint8 arrays (sizes may differ).
     ``pixel_weights``: per view None or an (H,W) float map in [0,1] (photometric confidence).
     ``depth_priors``: per view None or an (H,W) depth map in scene units (0 = unknown).
     ``appearance``: per view True to learn a colour correction (3x3 matrix + offset) applied to the
     render before the loss. Used for generated views, whose exposure / white balance drifts from the
     photo: the splats keep the photo's colours instead of averaging in the drift. ``appearance_out``
-    receives the learned corrections ([A, b] per view, None when not learned)."""
+    receives the learned corrections ([A, b] per view, None when not learned).
+    ``pose_opt``: per view True to refine its camera (a small SE(3) correction, the first real view
+    stays fixed as the reference). ``pose_out`` receives the refined camera-to-world matrices."""
     import torch
     import torch.nn.functional as F
 
@@ -192,6 +198,10 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
     app_A = torch.eye(3, device=device).repeat(len(images), 1, 1).requires_grad_(any(app))
     app_b = torch.zeros(len(images), 3, device=device).requires_grad_(any(app))
     app_opt = torch.optim.Adam([app_A, app_b], lr=cfg.lr_appearance) if any(app) else None
+    popt = [bool(p) for p in (pose_opt or [False] * len(images))]
+    c2w_t = torch.as_tensor(np.asarray(c2ws), dtype=torch.float32).to(device)
+    pose_d = torch.zeros(len(images), 6, device=device, requires_grad=any(popt))
+    pose_optim = torch.optim.Adam([pose_d], lr=cfg.lr_pose) if any(popt) else None
     g = torch.Generator().manual_seed(cfg.seed)
     history = []
     for step in range(cfg.steps):
@@ -211,14 +221,19 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
                 dm = F.interpolate(dm[None, None], size=(h2, w2), mode="nearest")[0, 0]
             K[:2] *= torch.tensor([[w2 / wd], [h2 / h]], device=K.device)
             h, wd = h2, w2
+        vm_i = viewmats[i:i + 1]
+        pose_loss = None
+        if popt[i] and step >= cfg.pose_from * cfg.steps:
+            vm_i = torch.linalg.inv(c2w_t[i] @ se3_exp(pose_d[i], scale))[None]
+            pose_loss = pose_d[i].square().sum()
         sh_deg = min(step // 1000, cfg.sh_degree)
         lam_d = cfg.depth_weight * max(0.0, 1.0 - step / max(1.0, cfg.depth_until * cfg.steps))
         use_depth = dm is not None and lam_d > 0
         if use_depth:
-            out, alpha, info = render_fn(params, viewmats[i:i + 1], K[None], wd, h, sh_deg, mode="RGB+ED")
+            out, alpha, info = render_fn(params, vm_i, K[None], wd, h, sh_deg, mode="RGB+ED")
             rgb, depth = out[..., :3], out[..., 3]
         else:
-            rgb, alpha, info = render_fn(params, viewmats[i:i + 1], K[None], wd, h, sh_deg)
+            rgb, alpha, info = render_fn(params, vm_i, K[None], wd, h, sh_deg)
             rgb = rgb[..., :3]
         if strategy is not None:
             strategy.step_pre_backward(params, opt, state, step, info)
@@ -249,6 +264,8 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
             loss = loss + cfg.opacity_reg * params["opacities"].sigmoid().mean()
         if app_loss is not None:
             loss = loss + cfg.appearance_reg * app_loss
+        if pose_loss is not None:
+            loss = loss + cfg.pose_reg * pose_loss
         loss.backward()
         if strategy is not None:
             if len(params["means"]) >= cfg.max_gaussians and strategy.refine_stop_iter > step:
@@ -260,16 +277,35 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         if app_opt is not None:
             app_opt.step()
             app_opt.zero_grad(set_to_none=True)
+        if pose_optim is not None:
+            pose_optim.step()
+            pose_optim.zero_grad(set_to_none=True)
         means_sched.step()
         if step % cfg.log_every == 0 or step == cfg.steps - 1:
             history.append((step, float(loss.detach())))
             if progress:
                 progress((step + 1) / cfg.steps, f"training splats {step + 1}/{cfg.steps} · "
                                                  f"{len(params['means']):,} splats · loss {float(loss.detach()):.4f}")
+    if pose_out is not None:
+        with torch.no_grad():
+            pose_out.extend((c2w_t[k] @ se3_exp(pose_d[k], scale)).cpu().numpy().astype(np.float64) if popt[k]
+                            else np.asarray(c2ws[k], np.float64) for k in range(len(images)))
     if appearance_out is not None:
         appearance_out.extend([app_A[k].detach().cpu().tolist(), app_b[k].detach().cpu().tolist()] if app[k]
                               else None for k in range(len(images)))
     return params, history
+
+
+def se3_exp(xi, scale: float = 1.0):
+    """4x4 rigid transform from a twist (rx, ry, rz, tx, ty, tz); translation in units of ``scale``."""
+    import torch
+
+    z = torch.zeros((), dtype=xi.dtype, device=xi.device)
+    rx, ry, rz = xi[0], xi[1], xi[2]
+    t = xi[3:] * scale
+    T = torch.stack([torch.stack([z, -rz, ry, t[0]]), torch.stack([rz, z, -rx, t[1]]),
+                     torch.stack([-ry, rx, z, t[2]]), torch.stack([z, z, z, z])])
+    return torch.linalg.matrix_exp(T)
 
 
 def visibility_counts(params, c2ws, Ks, sizes, view_ids, render_depth=None, tol: float = 0.05):

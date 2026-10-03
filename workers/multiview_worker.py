@@ -885,15 +885,19 @@ def main(req):
     torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.94)))
     # generated views may drift in exposure / white balance: learn a colour correction for each
     appearance = [bool(it.get("generated")) for it in items] if req.get("appearance", True) else None
+    # ... and their estimated cameras are slightly off: refine them while training (the photo stays fixed)
+    pose_opt = [bool(it.get("generated")) for it in items] if req.get("pose_refine", True) else None
     for attempt in range(3):
         oom = False
-        app_out = []
+        app_out, pose_out = [], []
         try:
             params, hist = st.train(train_imgs, c2ws, Ks, weights, points, colors, cfg, device="cuda",
                                     progress=lambda v, m: progress(0.37 + 0.5 * v, m),
                                     pixel_weights=pixel_w, depth_priors=priors,
                                     appearance=appearance if appearance and any(appearance) else None,
-                                    appearance_out=app_out)
+                                    appearance_out=app_out,
+                                    pose_opt=pose_opt if pose_opt and any(pose_opt) else None,
+                                    pose_out=pose_out)
             break
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if "out of memory" not in str(e).lower() or attempt == 2:
@@ -919,6 +923,19 @@ def main(req):
             cfg.max_gaussians = int(cfg.max_gaussians * 0.6)
             log(f"out of GPU memory while training; retrying with smaller images "
                 f"({train_imgs[0].shape[1]}x{train_imgs[0].shape[0]}) and at most {cfg.max_gaussians:,} splats")
+
+    pose_refined = []
+    if pose_out:
+        for i, m in enumerate(pose_out):
+            if pose_opt and pose_opt[i]:
+                c0, c1 = c2ws[i][:3, :3], m[:3, :3]
+                ang = float(np.degrees(np.arccos(np.clip((np.trace(c0.T @ c1) - 1) / 2, -1, 1))))
+                pose_refined.append({"view": items[i].get("label") or os.path.basename(items[i]["path"]),
+                                     "rotation_deg": round(ang, 2)})
+        c2ws = np.stack(pose_out)
+        if pose_refined:
+            log("refined cameras of generated views: " +
+                ", ".join(f"{p['view']} {p['rotation_deg']}°" for p in pose_refined))
 
     # ------------------------------------------------------------ cleanup
     sizes = [(im.shape[1], im.shape[0]) for im in train_imgs]
@@ -1020,6 +1037,7 @@ def main(req):
          metric_scale_factor=scale, views=n, real_views=sum(1 for it in items if not it.get("generated")),
          reference_psnr_db=round(ref_psnr, 2), splats=count, mesh=mesh_info, loss_history=hist[-20:],
          candidate_selection=selection,
+         pose_refinement=pose_refined,
          colour_correction=[None if a is None else {"gain": [round(a[0][c][c], 3) for c in range(3)],
                                                     "offset": [round(x, 3) for x in a[1]]} for a in app_out],
          provenance={"observed": int((counts_np == 0).sum()), "inferred": int((counts_np == 1).sum()),

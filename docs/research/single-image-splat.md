@@ -58,6 +58,7 @@ personal/research profile).
 | rc23–24 | Automatic retry of weak AI views; rebuild with hand-picked candidates |
 | rc25 | Turntable preview video of every multi-view result |
 | rc26 | Per-view colour correction (appearance) for generated views; OBJ fused from the trained splat |
+| rc27 | Joint camera refinement (SE(3)) of generated views during training |
 
 ### Evaluated and deferred
 

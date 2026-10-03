@@ -756,6 +756,10 @@ class ResultsPage(QWidget):
             state = "dropped" if s.get("dropped") else f"used {s.get('chosen')}"
             scores = ", ".join(f"{k} {v:.3f}" for k, v in (s.get("scores") or {}).items())
             html.append(f"<p><small>{s.get('view')}: {state} — scores {scores}</small></p>")
+        pr = extra.get("pose_refinement") or []
+        if pr:
+            html.append("<p><small>Cameras of the AI views refined during training: " +
+                        ", ".join(f"{p['view']} {p['rotation_deg']:.1f}°" for p in pr) + "</small></p>")
         cc = [c for c in extra.get("colour_correction") or [] if c]
         if cc:
             gains = ", ".join("/".join(f"{g:.2f}" for g in c["gain"]) for c in cc)

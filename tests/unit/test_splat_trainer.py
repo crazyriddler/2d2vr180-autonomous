@@ -259,3 +259,37 @@ def test_mesh_depth_is_rendered_from_the_trained_splat(monkeypatch):
     assert (d > 0).mean() > 0.3 and (d == 0).any()               # transparent border is left out
     assert abs(float(np.median(d[d > 0])) - 2.0) < 0.15
     assert cc[0].dtype == np.uint8 and cc[0].shape == (24, 24, 3)
+
+
+def test_pose_refinement_corrects_wrong_cameras_of_generated_views():
+    gt, pts, cols, c2ws, Ks, vm, Kt, imgs, _ = _scene()
+    rng = np.random.default_rng(3)
+    wrong = c2ws.copy()
+    for i in (1, 2, 3):                       # the pose engine got the AI views slightly wrong
+        xi = torch.tensor(np.r_[rng.normal(0, 0.02, 3), rng.normal(0, 0.02, 3)], dtype=torch.float32)
+        wrong[i] = c2ws[i] @ st.se3_exp(xi).numpy()
+    cfg = st.TrainConfig(steps=300, sh_degree=0, densify=False, coarse_until=0.0, lr_sh0=0.05, log_every=50,
+                         lr_pose=2e-3, pose_from=0.1)
+    noisy = pts + rng.normal(0, 0.03, pts.shape).astype(np.float32)
+
+    def fit(pose_opt):
+        out = []
+        p, _ = st.train(imgs, wrong, Ks, [2, 1, 1, 1], noisy, np.full_like(cols, 0.5), cfg, device="cpu",
+                        render_fn=ref_render, pose_opt=pose_opt, pose_out=out)
+        with torch.no_grad():
+            r = ref_render(p, vm[0:1], Kt[0:1], 24, 24, 0)[0].clamp(0, 1)
+        return st.psnr(r, torch.from_numpy(imgs[0]).float() / 255), out
+
+    def proj(c2w, K):
+        pc = (pts - c2w[:3, 3]) @ c2w[:3, :3]
+        return (pc[:, :2] / pc[:, 2:]) * K[0, 0]
+
+    def err(cams):          # mean reprojection error (px) of the scene in the generated views
+        return np.mean([np.linalg.norm(proj(cams[i], Ks[i]) - proj(c2ws[i], Ks[i]), axis=1).mean()
+                        for i in (1, 2, 3)])
+
+    base, _ = fit(None)
+    refined, out = fit([False, True, True, True])
+    assert np.allclose(out[0], wrong[0])                     # the photo's camera is the fixed reference
+    assert err(out) < err(wrong)
+    assert refined > base

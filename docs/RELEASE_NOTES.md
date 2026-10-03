@@ -1,4 +1,15 @@
-# 2D2VR180 1.0.0-rc26 — truer colours and a mesh with real volume
+# 2D2VR180 1.0.0-rc27 — sharper 3D: camera refinement of the AI views
+
+## What's new in rc27
+
+- **The cameras of the AI views are refined while training.** Depth Anything 3 / VGGT estimate where each
+  AI view was "taken" from, always with a small error. In a 3D built from only 4 views, that error shows
+  up as ghosting and blur.
+  - Training now also corrects each AI view's camera slightly, until the view lines up with the 3D. Your
+    photo's camera stays fixed as the reference.
+  - In the test scene this gave +3 dB sharpness on the photo's view and a lower reprojection error.
+  - Results lists how much each camera was corrected. Large corrections (several degrees) point to an AI
+    view that is not a clean camera move.
 
 ## What's new in rc26
 
@@ -400,7 +411,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc26-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc27-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
