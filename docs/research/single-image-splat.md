@@ -69,3 +69,8 @@ personal/research profile).
   changed pose and gaze (stereo test, rc16). The only continuous-degree LoRA found
   (`berkerdooo/qwen-image-edit-2511-camera-angle-lora`, Apache-2.0) is trained on 512 px Objaverse objects on white
   backgrounds and says real photos with backgrounds need background removal; not suitable for people in scenes.
+- **Feed-forward single-view / sparse-view 3DGS (2026: AnySplat, AnchorSplat, SparseSplat, PhGS,
+  multi-layer single-image GS).** Re-checked in October 2026. These are faster, but none beats
+  "consistent generated views + pose engine + per-scene training" on detail for people in real scenes, and
+  most of them have no released Windows-ready weights. PhGS's idea (post-hoc pruning and refinement of a
+  feed-forward splat) is already covered by the rc22 cleanup and the training stage.
