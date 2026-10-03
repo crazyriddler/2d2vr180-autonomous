@@ -24,6 +24,10 @@ HF_TEXT = [  # small files whose content is needed (configs, model cards)
     "Wan-AI/Wan2.2-TI2V-5B-Diffusers/transformer/config.json",
     "Wan-AI/Wan2.2-TI2V-5B-Diffusers/text_encoder/config.json",
     "Wan-AI/Wan2.2-TI2V-5B-Diffusers/model_index.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/vae/config.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/scheduler/scheduler_config.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/tokenizer/tokenizer_config.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/tokenizer/special_tokens_map.json",
 ]
 URLS: list[str] = []  # non-HF downloads: hashed by streaming
 

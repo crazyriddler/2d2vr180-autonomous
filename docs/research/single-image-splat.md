@@ -33,6 +33,17 @@ below improves one link of that chain.
   head (Nested Giant-Large, already installed), followed by a short polish with 10× lower position
   learning rate. The raw feed-forward splat is exported alongside for comparison.
 
+- **rc33 test: DA3's feed-forward splat did not help either** (raw: blurry, semi-transparent, double face;
+  polished: sharper but the same ghosts). Conclusion: no reconstruction method can make one rigid 3D out of
+  views that are not 3D-consistent with each other. Qwen draws every angle independently. The owner asked
+  for a radical change of strategy.
+- **New strategy (rc34+): generate the 3D directly.** FlashWorld (ICLR 2026 oral, code Apache-2.0, weights
+  CC BY-NC-SA 4.0) is fine-tuned from Wan2.2-TI2V-5B. At every denoising step it decodes 3D Gaussians and
+  renders them back into the model, so every view comes from one 3D. Inputs: one image, a text prompt and
+  a camera path (24 frames). Output: a Gaussian PLY. It needs ~9 GB VRAM with offloading. Downloads:
+  model.ckpt 20.9 GB, plus the Wan2.2-TI2V-5B VAE (2.8 GB) and UMT5-XXL text encoder (11.4 GB). Its
+  renderer uses the gsplat API available in 1.5.3, so it runs in the recon3d runtime (torch 2.4.1 cu124).
+
 ## The chain and the state of the art for each link
 
 1. **View generation** (consistency is everything)
