@@ -348,8 +348,8 @@ def subject_mask(depth, valid=None, min_gap=1.25, min_sep=0.85, min_frac=0.03, m
     return fg, f"subject {frac:.0%} of the image (layer separation {sep:.2f}, depth ratio {gap:.2f})"
 
 
-def subject_masks(moge_path, paths, max_side, device, torch):
-    """subject_mask() for every image path (MoGe-2 depth at a moderate resolution)."""
+def subject_depths(moge_path, paths, max_side, device, torch):
+    """(MoGe-2 depth, valid mask) for every image path, at a moderate resolution."""
     import numpy as np
     from moge.model.v2 import MoGeModel
 
@@ -362,7 +362,7 @@ def subject_masks(moge_path, paths, max_side, device, torch):
         with torch.no_grad():
             res = model.infer(t, resolution_level=6, use_fp16=device == "cuda")
         valid = res["mask"].cpu().numpy().astype(bool) if "mask" in res else None
-        out[path] = subject_mask(res["depth"].float().cpu().numpy(), valid)
+        out[path] = (res["depth"].float().cpu().numpy(), valid)
         del res, t
     del model
     free(torch)
@@ -645,7 +645,9 @@ def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None, pred
     err = float((diff > 0.12).mean() + diff.mean())
     score = err + 0.5 * max(0.0, 0.25 - overlap)          # little shared surface: less trustworthy
     if target_deg:
-        score += 0.003 * max(0.0, abs(angle - target_deg) - 15)   # it must really have moved
+        # it must have moved by about the angle asked for: a "30°" view measured at 79° is not a clean
+        # camera move (rc31 test), nor a "45°" one measured at 6° (rc30)
+        score += 0.01 * max(0.0, abs(angle - target_deg) - 15)
     return score, err, angle, overlap
 
 
@@ -850,21 +852,55 @@ def subject_setup(req, items, max_side, device, torch):
             if path not in paths:
                 paths.append(path)
     try:
-        res = subject_masks(req["moge_path"], paths, max_side, device, torch)
+        res = subject_depths(req["moge_path"], paths, max_side, device, torch)
     except Exception as e:  # noqa: BLE001 - subject mode is an improvement, not a requirement
         log(f"subject detection unavailable ({e}); using whole images")
         return None
-    m0, why = res[items[0]["path"]]
+    m0, why = subject_mask(*res[items[0]["path"]])
     log(f"photo: {why}")
     if m0 is None:
         log("no single subject in front of a background: cameras are found from the whole images")
         return None
-    masks = {path: m for path, (m, _) in res.items()}
-    missing = [os.path.basename(path) for path, m in masks.items() if m is None]
+    # the photo has shown a subject in front of a background: in the generated views (the same scene)
+    # take their near layer without asking for as clean a separation
+    masks = {items[0]["path"]: m0}
+    for path in paths[1:]:
+        m, why_v = subject_mask(*res[path], min_gap=1.15, min_sep=0.6, min_frac=0.02, max_frac=0.95)
+        masks[path] = m
+        log(f"{os.path.basename(path)}: {why_v}")
+    missing = [path for path, m in masks.items() if m is None]
     if missing:
-        log(f"no subject found in {', '.join(missing)}; whole image used for those")
+        log(f"no subject found in {', '.join(os.path.basename(m) for m in missing)}: those candidates are "
+            "not used (a whole image next to subject-only views would mislead the camera engine)")
     log("subject mode: cameras from the subject; generated views teach only the subject, the background "
         "comes from the photo")
+    return masks
+
+
+def keep_masked_views(items, train_imgs, masks, max_side):
+    """Subject mode: generated views and candidates without a subject mask are left out (in place).
+    Returns the masks, or None when no generated view is left (then whole images are used)."""
+    keep = []
+    for i, it in enumerate(items):
+        if not it.get("generated"):
+            keep.append(i)
+            continue
+        cands = list(dict.fromkeys([it["path"]] + list(it.get("candidates") or [])))
+        ok = [c for c in cands if masks.get(c) is not None]
+        if not ok:
+            log(f"view {i} ({it.get('label', '')}): no subject found in any candidate; left out")
+            continue
+        if masks.get(it["path"]) is None:
+            it["path"] = ok[0]
+            train_imgs[i] = load_rgb(ok[0], max_side)
+        if it.get("candidates"):
+            it["candidates"] = [c for c in it["candidates"] if masks.get(c) is not None]
+        keep.append(i)
+    if not any(items[i].get("generated") for i in keep):
+        log("no generated view has a subject mask: cameras are found from the whole images")
+        return None
+    items[:] = [items[i] for i in keep]
+    train_imgs[:] = [train_imgs[i] for i in keep]
     return masks
 
 
@@ -940,6 +976,8 @@ def main(req):
     if (engine == "da3" and req.get("da3_dir") and len(items) <= int(req.get("da3_max_views", 32))
             and same_shape):
         masks = subject_setup(req, items, max_side, device, torch)
+        if masks:
+            masks = keep_masked_views(items, train_imgs, masks, max_side)
         progress(0.03, "loading Depth Anything 3")
         model = try_load_da3(req["da3_dir"], device, torch)
         if model is None:

@@ -1,4 +1,17 @@
-# 2D2VR180 1.0.0-rc31 — Real 3D of a person in front of a backdrop no longer tears apart
+# 2D2VR180 1.0.0-rc32 — subject mode also for the AI views
+
+## Fixed in rc32
+
+- **Subject mode was only half applied.** In the rc31 test the subject was found in the photo but in none of
+  the AI views. Depth Anything 3 then compared a subject-only photo with whole AI images, and its cameras
+  went wrong (a "high angle" view measured at 79° instead of ~30°). The result was double faces and smeared
+  hair. Now:
+  - Once the photo shows a subject in front of a background, the AI views (the same scene) look for their
+    near layer with looser criteria. A real depth jump is still required.
+  - AI candidates without a subject are left out. They never sit next to subject-only views again. The log
+    lists the result for every candidate.
+- **Wrong angles count much more against a candidate.** A view measured far from the angle asked for (79°
+  for a 30° view, or 6° for a 45° one) is not a clean camera move, so it rarely wins any more.
 
 ## Fixed in rc31
 
@@ -463,7 +476,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc31-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc32-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |

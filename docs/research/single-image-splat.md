@@ -24,6 +24,9 @@ below improves one link of that chain.
 - **Studio portraits:** Qwen turns the person ~45° but keeps a plain backdrop as it was. DA3 then measured
   only 5-8° of camera motion and training tore the person apart (rc30 test). Since rc31, subject mode
   finds the cameras from the subject only, and generated views supervise only the subject.
+  rc31 test: the subject was found in the photo but not in the AI views (strict criteria), and mixing
+  subject-only and whole images gave wrong cameras (79° for a 30° view). Since rc32, AI views use relaxed
+  criteria, and candidates without a mask are excluded.
 
 ## The chain and the state of the art for each link
 
@@ -74,6 +77,7 @@ personal/research profile).
 | rc28 | Quality: 8-step Lightning LoRA for Qwen views; camera refinement for real multi-photo sets |
 | rc29 | AbsGS densification (absolute screen-space gradients) |
 | rc30 | Fix: DA3 Giant load; VGGT fallback |
+| rc32 | Subject masks for AI views (relaxed criteria), maskless candidates excluded, stronger angle check |
 | rc31 | Subject mode (cameras from the subject, background from the photo); joint engine depth instead of per-view MoGe-2 priors; turntable around the subject |
 
 ### Evaluated and deferred

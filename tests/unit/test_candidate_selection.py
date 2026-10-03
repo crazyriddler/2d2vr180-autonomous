@@ -186,3 +186,23 @@ def test_turntable_orbits_the_subject_and_stays_within_the_views():
     assert abs(yaw - 28) < 0.5                      # 70 % of the widest view (40°)
     zc_all, yaw_small = mv.turntable_orbit(pts, [c2w0, yawed(7)], K, (w, h))
     assert zc_all > 2.5 and yaw_small == 8.0        # no mask: median of everything; small views: small swing
+
+
+def test_subject_mode_leaves_out_generated_candidates_without_a_subject(tmp_path, monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setattr(mv, "log", lambda *a: None)
+    good = tmp_path / "good.png"
+    Image.fromarray(np.full((8, 6, 3), 90, np.uint8)).save(good)
+    m = np.ones((8, 6), bool)
+    items = [{"path": "photo.png"},
+             {"path": "a0.png", "generated": True, "candidates": ["a0.png", str(good)]},   # first has no subject
+             {"path": "b0.png", "generated": True, "candidates": ["b0.png", "b1.png"]}]    # none has one
+    imgs = ["photo", "a0", "b0"]
+    masks = {"photo.png": m, "a0.png": None, str(good): m, "b0.png": None, "b1.png": None}
+    assert mv.keep_masked_views(items, imgs, masks, 100) is masks
+    assert [it["path"] for it in items] == ["photo.png", str(good)]
+    assert items[1]["candidates"] == [str(good)] and imgs[0] == "photo" and imgs[1].shape == (8, 6, 3)
+    # no generated view with a subject left: subject mode is abandoned, nothing is removed
+    items2 = [{"path": "photo.png"}, {"path": "b0.png", "generated": True}]
+    assert mv.keep_masked_views(items2, ["p", "b"], masks, 100) is None and len(items2) == 2
