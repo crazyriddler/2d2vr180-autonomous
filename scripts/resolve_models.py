@@ -14,13 +14,12 @@ import urllib.parse
 import urllib.request
 
 HF_REPOS = [
-    "depth-anything/DA3NESTED-GIANT-LARGE-1.1", "depth-anything/DA3-LARGE-1.1", "depth-anything/DA3-BASE",
+    "berkerdooo/qwen-image-edit-2511-camera-angle-lora",
 ]
-HF_SEARCH = ["DA3NESTED", "depth-anything DA3"]
+HF_SEARCH = ["qwen-image-edit-2511 camera angle lora", "qwen image edit 2511 angle"]
 GGUF_HEADERS: list[str] = []
 HF_TEXT = [  # small files whose content is needed (configs, model cards)
-    "depth-anything/DA3NESTED-GIANT-LARGE-1.1/config.json", "depth-anything/DA3NESTED-GIANT-LARGE-1.1/README.md",
-    "depth-anything/DA3-BASE/config.json",
+    "berkerdooo/qwen-image-edit-2511-camera-angle-lora/README.md",
 ]
 URLS: list[str] = []  # non-HF downloads: hashed by streaming
 
