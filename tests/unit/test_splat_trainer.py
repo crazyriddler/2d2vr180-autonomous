@@ -195,3 +195,23 @@ def test_depth_prior_runs_and_keeps_geometry():
     m = (a[..., 0] > 0.5).numpy() & (deps[0] > 0)
     assert np.isfinite(hist[-1][1])
     assert np.median(np.abs(d[..., 0].numpy()[m] - deps[0][m]) / deps[0][m]) < 0.05
+
+
+def test_cleanup_removes_junk_but_keeps_the_scene():
+    gt, pts, cols = gt_params()
+    c2ws, Ks, sizes = make_views()
+    extra = np.array([[0, 0, -5.0],          # behind every camera: never seen
+                      [0.2, 0.1, 1.8],        # a floater far from its neighbours? (kept if not isolated)
+                      [30.0, 30.0, 40.0]], np.float32)   # far away and alone
+    p = st.init_params(np.concatenate([pts, extra]), np.concatenate([cols, np.full((3, 3), 0.5, np.float32)]),
+                       st.TrainConfig(sh_degree=0, init_points=1000), "cpu")
+    with torch.no_grad():
+        p["opacities"].fill_(3.0)
+        p["opacities"][len(pts) - 1] = -8.0                       # nearly transparent
+        p["scales"][len(pts) - 2] = p["scales"][len(pts) - 2] + 6  # a huge blob
+    keep = st.cleanup_mask(p, c2ws, Ks, sizes)
+    assert not keep[len(pts)] and not keep[len(pts) + 2]          # unseen, isolated
+    assert not keep[len(pts) - 1] and not keep[len(pts) - 2]       # transparent, oversized
+    assert keep[: len(pts) - 2].float().mean() > 0.9               # the scene stays
+    sub = st.subset(p, keep)
+    assert len(sub["means"]) == int(keep.sum()) and set(sub.keys()) == set(p.keys())

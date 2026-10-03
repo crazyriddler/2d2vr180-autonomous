@@ -325,3 +325,31 @@ def write_ply(params, path: str, provenance=None) -> int:
 def psnr(a, b) -> float:
     mse = float(((a.float() - b.float()) ** 2).mean())
     return 10 * math.log10(1.0 / max(mse, 1e-12))
+
+
+def cleanup_mask(params, c2ws, Ks, sizes, min_opacity: float = 0.03, max_scale_ratio: float = 25.0,
+                 isolation: float = 4.0, k: int = 8):
+    """Splats worth keeping after training (bool tensor). Removes what only shows up as junk in VR:
+    splats outside every training view (never corrected by any image), nearly transparent ones,
+    oversized blobs (largest axis > max_scale_ratio x the median), and isolated floaters whose
+    mean distance to their k nearest neighbours is > isolation x the 99th percentile."""
+    import torch
+
+    means = params["means"].detach()
+    n = len(means)
+    keep = visibility_counts(params, c2ws, Ks, sizes, list(range(len(c2ws)))) > 0
+    keep &= params["opacities"].detach().sigmoid() > min_opacity
+    smax = params["scales"].detach().exp().max(1).values
+    keep &= smax < max_scale_ratio * smax.median().clamp_min(1e-12)
+    if n > k + 1:
+        d = knn_scales_fast(means, k)
+        thr = torch.quantile(d[keep] if keep.any() else d, 0.99) * isolation
+        keep &= d <= thr
+    return keep
+
+
+def subset(params, mask):
+    """A ParameterDict restricted to `mask` (for writing; optimiser state is not carried over)."""
+    import torch
+
+    return torch.nn.ParameterDict({k: torch.nn.Parameter(v.detach()[mask]) for k, v in params.items()})

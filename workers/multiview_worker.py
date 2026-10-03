@@ -795,12 +795,22 @@ def main(req):
             log(f"out of GPU memory while training; retrying with smaller images "
                 f"({train_imgs[0].shape[1]}x{train_imgs[0].shape[0]}) and at most {cfg.max_gaussians:,} splats")
 
+    # ------------------------------------------------------------ cleanup
+    sizes = [(im.shape[1], im.shape[0]) for im in train_imgs]
+    if req.get("cleanup", True):
+        progress(0.87, "removing floaters and splats no view has seen")
+        with torch.no_grad():
+            keep = st.cleanup_mask(params, c2ws, Ks, sizes)
+        removed = int((~keep).sum())
+        if 0 < removed < len(keep):
+            params = st.subset(params, keep)
+            log(f"cleanup: removed {removed:,} of {len(keep):,} splats (unseen, transparent, oversized or isolated)")
+
     # ------------------------------------------------------------ provenance
     progress(0.88, "labelling observed / inferred / generated splats")
     real = [i for i, it in enumerate(items) if not it.get("generated")]
     if len(real) > 60:
         real = [real[int(k)] for k in np.linspace(0, len(real) - 1, 60).round()]
-    sizes = [(im.shape[1], im.shape[0]) for im in train_imgs]
     vm = torch.linalg.inv(torch.as_tensor(c2ws, dtype=torch.float32)).cuda()
     Kt = torch.as_tensor(Ks, dtype=torch.float32).cuda()
 
