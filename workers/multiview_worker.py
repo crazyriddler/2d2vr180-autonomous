@@ -582,7 +582,10 @@ def load_da3(model_dir, device):
 def try_load_da3(model_dir, device, torch):
     """Depth Anything 3, or None (logged) when it cannot be loaded: the caller then uses VGGT."""
     try:
-        return load_da3(model_dir, device)
+        model = load_da3(model_dir, device)
+        log("(Depth Anything 3's warning about 'e3nn' is expected and harmless: e3nn only rotates the "
+            "view-dependent colour bands, and this app uses the base colour of DA3's Gaussians)")
+        return model
     except Exception as e:  # noqa: BLE001 - VGGT is the fallback engine
         log(f"Depth Anything 3 could not be loaded ({type(e).__name__}: {e}); using VGGT instead")
         free(torch)
