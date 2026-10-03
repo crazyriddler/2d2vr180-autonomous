@@ -475,7 +475,9 @@ def da3_predict(model, arrays, torch):
     inv0 = np.linalg.inv(c2w[0])
     w2c = [np.linalg.inv(inv0 @ m)[:3] for m in c2w]
     out = {"w2c": np.stack(w2c), "K": np.asarray(pred.intrinsics, np.float64),
-           "depth": np.asarray(pred.depth, np.float32), "conf": np.asarray(pred.conf, np.float32),
+           "depth": np.asarray(pred.depth, np.float32),
+           "conf": (np.asarray(pred.conf, np.float32) if pred.conf is not None
+                    else np.ones(np.asarray(pred.depth).shape, np.float32)),
            "pads": [0] * len(imgs)}
     free(torch)
     return out
@@ -556,13 +558,27 @@ def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side, pre
                 f"(colour error {err if err is None else round(err, 4)}, camera moved {ang:.1f}°, "
                 f"shared surface {ov:.0%})")
         best = min(scored, key=lambda t: t[0])
-        items[i] = dict(it, path=best[1])
+        items[i] = dict(it, path=best[1], rigidity=best[0])
         train_imgs[i], vin[i] = best[2], best[3]
         report.append({"view": it.get("label", str(i)), "chosen": os.path.basename(best[1]),
                        "scores": {os.path.basename(t[1]): round(t[0], 4) for t in scored},
                        "camera_moved_deg": round(best[5], 1)})
         log(f"view {i} ({it.get('label', '')}): kept {os.path.basename(best[1])}")
     return report
+
+
+def drop_inconsistent(items, train_imgs, vin, threshold):
+    """Remove generated views whose best candidate is still far from a pure camera move (they would
+    teach the splat a different pose or face), keeping at least one generated view."""
+    bad = [i for i, it in enumerate(items) if it.get("generated") and it.get("rigidity", 0) > threshold]
+    gen = [i for i, it in enumerate(items) if it.get("generated")]
+    if bad and len(bad) >= len(gen):
+        bad = sorted(bad, key=lambda i: items[i]["rigidity"])[1:]    # keep the least bad one
+    for i in sorted(bad, reverse=True):
+        log(f"view {i} ({items[i].get('label', '')}): dropped - even its best candidate does not match the photo "
+            f"(score {items[i]['rigidity']:.3f} > {threshold})")
+        del items[i], train_imgs[i], vin[i]
+    return [i for i in bad]
 
 
 def vggt_stage(req, items, train_imgs, vin, device, torch, max_side, env):
@@ -585,6 +601,7 @@ def vggt_stage(req, items, train_imgs, vin, device, torch, max_side, env):
     if any(len(it.get("candidates") or []) > 1 for it in items):
         progress(0.04, "choosing the most consistent generated views")
         selection = select_candidates(items, train_imgs, vin, model, dtype, torch, max_side)
+        drop_inconsistent(items, train_imgs, vin, float(req.get("drop_threshold", 0.8)))
     c2w_v, K_v, depth, conf = estimate_cameras(vin, model, dtype, torch, chunk, int(req.get("overlap", 8)))
     del model
     free(torch)
@@ -632,6 +649,7 @@ def main(req):
             selection = select_candidates(items, train_imgs, vin, model, None, torch, max_side,
                                           prep=lambda im: da3_input(im, size),
                                           predict=lambda arrays: da3_predict(model, arrays, torch))
+        drop_inconsistent(items, train_imgs, vin, float(req.get("drop_threshold", 0.8)))
         c2w_v, K_v, depth, conf = da3_cameras(model, vin, torch)
         del model
         free(torch)
@@ -644,6 +662,7 @@ def main(req):
                                                               max_side, env)
         metric_engine = False
     log(f"camera engine: {engine}")
+    n_views = len(items)            # after dropping inconsistent generated views
     scale = None
     if req.get("moge_path") and not (engine == "da3" and metric_engine):
         progress(0.32, "metric scale (MoGe-2)")
@@ -704,7 +723,8 @@ def main(req):
             cols.append(train_imgs[i][yy, xx].astype(np.float32) / 255.0)
             continue
         d, c = depth[i], conf[i]
-        ok = (d > 0) & np.isfinite(d) & (c > max(1.0, np.percentile(c, 35)))
+        # confidence scales differ between engines (VGGT >= 1, DA3 not): keep the better 65 %
+        ok = (d > 0) & np.isfinite(d) & (c >= np.percentile(c, 35))
         yy, xx = np.nonzero(ok)
         if len(yy) > per_view:
             sel = rng.choice(len(yy), per_view, replace=False)

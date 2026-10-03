@@ -81,3 +81,16 @@ def test_consistency_map_flags_only_the_changed_region():
     assert conf_ok.shape == (H, W) and np.median(conf_ok) > 0.9          # brightness offset is ignored
     assert conf[40:80, 215:315].mean() < 0.4                               # the changed region
     assert conf[:, :150].mean() > 0.85                                      # the rest stays trusted
+
+
+def test_hopeless_generated_views_are_dropped_but_one_is_kept():
+    items = [{"path": "photo"}, {"generated": True, "label": "a", "rigidity": 0.3},
+             {"generated": True, "label": "b", "rigidity": 0.95}, {"generated": True, "label": "c", "rigidity": 0.9}]
+    imgs, vin = list("PABC"), list("pabc")
+    dropped = mv.drop_inconsistent(items, imgs, vin, 0.8)
+    assert sorted(dropped) == [2, 3] and [it.get("label") for it in items] == [None, "a"] and imgs == ["P", "A"]
+    items = [{"path": "photo"}, {"generated": True, "label": "a", "rigidity": 0.9},
+             {"generated": True, "label": "b", "rigidity": 0.85}]
+    imgs, vin = list("PAB"), list("pab")
+    mv.drop_inconsistent(items, imgs, vin, 0.8)
+    assert [it.get("label") for it in items] == [None, "b"]          # the least bad one stays
