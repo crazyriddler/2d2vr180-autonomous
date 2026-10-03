@@ -1,3 +1,19 @@
+# 2D2VR180 1.0.0-rc22 — cleaner splats in VR, AI views overview
+
+## What's new in rc22
+
+- **Cleaner splats when you move your head in VR.** After training, the multi-view engine removes splats that
+  only show up as junk from new angles:
+  - splats no training view ever saw;
+  - nearly transparent ones;
+  - oversized blobs;
+  - isolated floaters.
+  `job.log` says how many were removed.
+- **AI views overview.** Every generative job writes `export/generated_views_sheet.jpg`: your photo, then each
+  angle with all its candidates, their consistency score (lower = closer to a pure camera move) and which one
+  was used (green) or dropped (red). Open it from **Results → AI views overview**. The result details also
+  show the engines used and the scores.
+
 # 2D2VR180 1.0.0-rc21 — tuned for "Real 3D from one photo"
 
 ## What's new in rc21
@@ -336,8 +352,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc21-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc21-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc22-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc22-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

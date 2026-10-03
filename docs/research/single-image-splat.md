@@ -45,3 +45,22 @@ below improves one link of that chain.
 
 All inference stays local; licences are recorded per model (VGGT/DA3-Giant non-commercial, used under the
 personal/research profile).
+
+## Status (updated as releases ship)
+
+| Release | Done |
+|---|---|
+| rc18 | Simplified Create page with presets |
+| rc19 | Confidence maps for generated views, MoGe-2 depth priors, dense sharp initialisation |
+| rc20 | Depth Anything 3 Nested Giant-Large 1.1 camera engine (VGGT fallback) |
+| rc21 | Photo + 3 views trained at photo detail (1280/1600 px) with SH degree 1; inconsistent views dropped |
+| rc22 | Post-training cleanup (unseen / transparent / oversized / isolated splats); AI views overview sheet |
+
+### Evaluated and deferred
+
+- **DA3 Gaussian head as initialisation.** The Nested model predicts per-pixel Gaussians. It needs `e3nn` for SH
+  rotation, and its metric scaling path for Gaussians must be verified on a GPU. Its advantage over the aligned
+  MoGe-2 dense init with only 4 widely spaced views is uncertain. Revisit if training from the current init
+  shows blur at view boundaries.
+- **Intermediate angles (±20°).** The Multiple-Angles LoRA only knows 45° steps; plain instructions without it
+  changed pose and gaze (stereo test, rc16). Revisit with a LoRA that supports finer azimuth steps.

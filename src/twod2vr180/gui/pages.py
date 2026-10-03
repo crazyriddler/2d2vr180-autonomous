@@ -553,8 +553,8 @@ class ResultsPage(QWidget):
         self.btn = {}
         for i, (key, label) in enumerate([("explore", "Explore in 3D"), ("vr", "View in VR (6DoF)"),
                                           ("vrimg", "Open VR180 image"), ("vrvid", "Play VR180 video"),
-                                          ("folder", "Open folder"), ("export", "Copy results to…"),
-                                          ("delete", "Delete")]):
+                                          ("views", "AI views overview"), ("folder", "Open folder"),
+                                          ("export", "Copy results to…"), ("delete", "Delete")]):
             b = QPushButton(label)
             b.clicked.connect(lambda _=False, k=key: self.action(k))
             grid.addWidget(b, i // 4, i % 4)
@@ -611,6 +611,14 @@ class ResultsPage(QWidget):
         frames = sorted((d / "frames").glob("*.png"))
         return str(frames[0]) if frames else None
 
+    @staticmethod
+    def _sheet(d: Path, rep: dict) -> str | None:
+        p = ((rep.get("backend") or {}).get("extra") or {}).get("contact_sheet")
+        if p and Path(p).exists():
+            return p
+        cand = d / "export" / "generated_views_sheet.jpg"
+        return str(cand) if cand.exists() else None
+
     def _current(self) -> tuple[Path | None, dict]:
         it = self.list.currentItem()
         if not it:
@@ -635,12 +643,29 @@ class ResultsPage(QWidget):
         self.btn["vr"].setEnabled(bool(out.get("scene_ply")))
         self.btn["vrimg"].setEnabled(bool(vr.get("stills")))
         self.btn["vrvid"].setEnabled(bool(vr.get("videos")))
+        sheet = self._sheet(d, rep)
+        self.btn["views"].setEnabled(sheet is not None)
+        extra = (rep.get("backend") or {}).get("extra") or {}
         html = [f"<h3>{Path((rep.get('input') or {}).get('path', '')).name}</h3>",
                 f"<p>Status: <b>{rep.get('status')}</b> · backend: {(rep.get('backend') or {}).get('name', '—')}"
                 f" · time: {rep.get('runtime_s', '?')} s</p>"]
         if rep.get("error"):
             html.append(f"<p style='color:#e66'><b>Error</b> [{rep['error'].get('code')}]: "
                         f"{rep['error'].get('message')}</p>")
+        if extra.get("engine") or extra.get("camera_engine"):
+            bits = []
+            if extra.get("engine"):
+                bits.append(f"AI views: {extra['engine']} ({extra.get('generated_views', '?')} views, "
+                            f"{extra.get('trajectory', '')})")
+            if extra.get("camera_engine"):
+                bits.append(f"camera engine: {extra['camera_engine']}")
+            if extra.get("assembly"):
+                bits.append(f"assembly: {extra['assembly']}")
+            html.append("<p>" + " · ".join(bits) + "</p>")
+        for s in extra.get("candidate_selection") or []:
+            state = "dropped" if s.get("dropped") else f"used {s.get('chosen')}"
+            scores = ", ".join(f"{k} {v:.3f}" for k, v in (s.get("scores") or {}).items())
+            html.append(f"<p><small>{s.get('view')}: {state} — scores {scores}</small></p>")
         cov = (rep.get("coverage") or {}).get("by_splat")
         if cov:
             html.append("<p><b>Geometry provenance</b>: " + ", ".join(f"{k} {v:.0%}" for k, v in cov.items() if v)
@@ -675,6 +700,8 @@ class ResultsPage(QWidget):
             open_path(vr["stills"][0]["image"])
         elif key == "vrvid" and vr.get("videos"):
             open_path(vr["videos"][0]["path"])
+        elif key == "views" and self._sheet(d, rep):
+            open_path(self._sheet(d, rep))
         elif key == "folder":
             open_path(d / "export" if (d / "export").exists() else d)
         elif key == "export":
