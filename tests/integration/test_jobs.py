@@ -462,6 +462,23 @@ def test_quality_uses_the_8_step_lightning_lora_when_installed(ctx, rtx4080, pho
     assert ("qwen-edit-2511-lightning-8" in ids) == with_8
 
 
+def test_real3d_uses_the_feedforward_splat_when_depth_anything_3_is_installed(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS + ("da3-nested-giant-large",):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["assembly"] == "ff" and mv["ff_refine_steps"] == 3000 and mv["pose_engine"] == "da3"
+    extra = rep["backend"]["extra"]
+    assert extra["assembly"] == "ff"
+    assert Path(extra["feedforward_ply"]).name == "scene_feedforward.ply" and Path(extra["feedforward_ply"]).exists()
+    assert Path(extra["turntable_feedforward"]).name == "turntable_feedforward.mp4"
+    assert "feed-forward" in rep["coverage"]["note"]
+
+
 def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, photo, monkeypatch):
     from conftest import install_fake_model
 

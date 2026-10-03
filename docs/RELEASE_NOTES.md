@@ -1,4 +1,22 @@
-# 2D2VR180 1.0.0-rc32 — subject mode also for the AI views
+# 2D2VR180 1.0.0-rc33 — a new way to build the 3D: Depth Anything 3's feed-forward splat
+
+## What's new in rc33
+
+- **"Real 3D from one photo" no longer trains the splat from scratch.** Training a splat from only 4 views
+  that do not match exactly (the AI changes small things in every view) produced double faces and torn
+  hair. No amount of selecting, weighting or camera correcting removed that.
+  - The splat now comes straight from **Depth Anything 3**. The Nested Giant-Large model you already have
+    includes a head that predicts the 3D Gaussians from all views at once. It was trained to fuse views
+    into one coherent 3D, and it does not invent ghosts where the views disagree.
+  - In subject mode the person comes from that splat (all views), and the background from your photo.
+  - A short, gentle polish follows to recover your photo's sharpness. Splats move 10× slower than in
+    training from scratch, and there are 3000 steps in Auto (1500 Fast, 5000 Quality).
+- **Compare both.** Results has a new button, **Turntable: raw DA3 splat**, which plays
+  `turntable_feedforward.mp4`: the splat exactly as Depth Anything 3 gave it, before polishing. Its PLY is
+  `export/scene_feedforward.ply`. "Play turntable" shows the polished final result.
+- Without Depth Anything 3 (VGGT only), the old training is used.
+- Colours of the feed-forward splat are view-independent: the extra Python package DA3 needs to rotate its
+  view-dependent colours is not bundled. The polish adds view-dependence where your photo supports it.
 
 ## Fixed in rc32
 
@@ -476,7 +494,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc32-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc33-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |

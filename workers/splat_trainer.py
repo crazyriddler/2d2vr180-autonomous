@@ -110,6 +110,29 @@ def init_params(points: np.ndarray, colors: np.ndarray, cfg: TrainConfig, device
     })
 
 
+def params_from_gaussians(g: dict, cfg: TrainConfig, device):
+    """Trainable parameters from ready-made Gaussians (e.g. a feed-forward model's):
+    means (N,3), scales (N,3, standard deviations), quats (N,4, w x y z), dc (N,3, SH DC band),
+    opacity (N, in 0..1)."""
+    import torch
+
+    def t(a):
+        return torch.as_tensor(np.asarray(a), dtype=torch.float32, device=device)
+
+    n = len(g["means"])
+    sh = torch.zeros(n, (cfg.sh_degree + 1) ** 2, 3, device=device)
+    sh[:, 0] = t(g["dc"])
+    quats = torch.nn.functional.normalize(t(g["quats"]), dim=1)
+    return torch.nn.ParameterDict({
+        "means": torch.nn.Parameter(t(g["means"])),
+        "scales": torch.nn.Parameter(torch.log(t(g["scales"]).clamp_min(1e-7))),
+        "quats": torch.nn.Parameter(quats),
+        "opacities": torch.nn.Parameter(torch.logit(t(g["opacity"]).clamp(1e-4, 1 - 1e-4))),
+        "sh0": torch.nn.Parameter(sh[:, :1].contiguous()),
+        "shN": torch.nn.Parameter(sh[:, 1:].contiguous()),
+    })
+
+
 def ssim(a, b):
     """Mean SSIM of two (1,3,H,W) images in [0,1] (11x11 Gaussian window)."""
     import torch
@@ -153,7 +176,7 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
           cfg: TrainConfig | None = None, device="cuda", render_fn=None, progress=None, cancel=None,
           pixel_weights: list | None = None, depth_priors: list | None = None,
           appearance: list | None = None, appearance_out: list | None = None,
-          pose_opt: list | None = None, pose_out: list | None = None):
+          pose_opt: list | None = None, pose_out: list | None = None, init: dict | None = None):
     """Optimise Gaussians. ``images``: list of (H,W,3) uint8 arrays (sizes may differ).
     ``pixel_weights``: per view None or an (H,W) float map in [0,1] (photometric confidence).
     ``depth_priors``: per view None or an (H,W) depth map in scene units (0 = unknown).
@@ -162,7 +185,8 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
     photo: the splats keep the photo's colours instead of averaging in the drift. ``appearance_out``
     receives the learned corrections ([A, b] per view, None when not learned).
     ``pose_opt``: per view True to refine its camera (a small SE(3) correction, the first real view
-    stays fixed as the reference). ``pose_out`` receives the refined camera-to-world matrices."""
+    stays fixed as the reference). ``pose_out`` receives the refined camera-to-world matrices.
+    ``init``: start from these Gaussians (see params_from_gaussians) instead of points / colours."""
     import torch
     import torch.nn.functional as F
 
@@ -171,7 +195,11 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         def render_fn(*a, **k):
             return gsplat_render(*a, absgrad=cfg.densify and cfg.absgrad, **k)
     torch.manual_seed(cfg.seed)
-    params = init_params(points, colors, cfg, device)
+    if init is not None:
+        params = params_from_gaussians(init, cfg, device)
+        points = np.asarray(init["means"])
+    else:
+        params = init_params(points, colors, cfg, device)
     scale = scene_scale(c2ws, points)
     opt = {
         "means": torch.optim.Adam([params["means"]], lr=cfg.lr_means * scale, eps=1e-15),

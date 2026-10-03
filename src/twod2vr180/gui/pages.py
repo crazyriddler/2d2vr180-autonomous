@@ -553,7 +553,8 @@ class ResultsPage(QWidget):
         self.btn = {}
         for i, (key, label) in enumerate([("explore", "Explore in 3D"), ("vr", "View in VR (6DoF)"),
                                           ("vrimg", "Open VR180 image"), ("vrvid", "Play VR180 video"),
-                                          ("spin", "Play turntable"), ("views", "AI views overview"),
+                                          ("spin", "Play turntable"), ("spin_ff", "Turntable: raw DA3 splat"),
+                                          ("views", "AI views overview"),
                                           ("rebuild", "Rebuild with my picks…"),
                                           ("folder", "Open folder"), ("export", "Copy results to…"),
                                           ("delete", "Delete")]):
@@ -614,11 +615,11 @@ class ResultsPage(QWidget):
         return str(frames[0]) if frames else None
 
     @staticmethod
-    def _turntable(d: Path, rep: dict) -> str | None:
-        p = ((rep.get("backend") or {}).get("extra") or {}).get("turntable")
+    def _turntable(d: Path, rep: dict, key: str = "turntable") -> str | None:
+        p = ((rep.get("backend") or {}).get("extra") or {}).get(key)
         if p and Path(p).exists():
             return p
-        cand = d / "export" / "turntable.mp4"
+        cand = d / "export" / f"{key}.mp4"
         return str(cand) if cand.exists() else None
 
     @staticmethod
@@ -734,6 +735,7 @@ class ResultsPage(QWidget):
         sheet = self._sheet(d, rep)
         self.btn["views"].setEnabled(sheet is not None)
         self.btn["spin"].setEnabled(self._turntable(d, rep) is not None)
+        self.btn["spin_ff"].setEnabled(self._turntable(d, rep, "turntable_feedforward") is not None)
         self.btn["rebuild"].setEnabled(bool(self._candidate_groups(d, rep)))
         extra = (rep.get("backend") or {}).get("extra") or {}
         html = [f"<h3>{Path((rep.get('input') or {}).get('path', '')).name}</h3>",
@@ -804,6 +806,8 @@ class ResultsPage(QWidget):
             self.rebuild_with_picks(d, rep)
         elif key == "spin" and self._turntable(d, rep):
             open_path(self._turntable(d, rep))
+        elif key == "spin_ff" and self._turntable(d, rep, "turntable_feedforward"):
+            open_path(self._turntable(d, rep, "turntable_feedforward"))
         elif key == "views" and self._sheet(d, rep):
             open_path(self._sheet(d, rep))
         elif key == "folder":

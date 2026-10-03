@@ -27,6 +27,11 @@ below improves one link of that chain.
   rc31 test: the subject was found in the photo but not in the AI views (strict criteria), and mixing
   subject-only and whole images gave wrong cameras (79° for a 30° view). Since rc32, AI views use relaxed
   criteria, and candidates without a mask are excluded.
+- **rc32 test: still ghosting** (double profile, layered lantern) even with plausible cameras. The owner
+  judged that the generated views look fine and the splat builder is the weak link. Per-scene training
+  from 4 slightly inconsistent views is the cause. Since rc33, the splat is DA3's feed-forward Gaussian
+  head (Nested Giant-Large, already installed), followed by a short polish with 10× lower position
+  learning rate. The raw feed-forward splat is exported alongside for comparison.
 
 ## The chain and the state of the art for each link
 
@@ -77,12 +82,13 @@ personal/research profile).
 | rc28 | Quality: 8-step Lightning LoRA for Qwen views; camera refinement for real multi-photo sets |
 | rc29 | AbsGS densification (absolute screen-space gradients) |
 | rc30 | Fix: DA3 Giant load; VGGT fallback |
+| rc33 | DA3 feed-forward Gaussians (GS head) + gentle polish instead of training from scratch; raw FF splat exported |
 | rc32 | Subject masks for AI views (relaxed criteria), maskless candidates excluded, stronger angle check |
 | rc31 | Subject mode (cameras from the subject, background from the photo); joint engine depth instead of per-view MoGe-2 priors; turntable around the subject |
 
 ### Evaluated and deferred
 
-- **DA3 Gaussian head as initialisation.** The Nested model predicts per-pixel Gaussians. It needs `e3nn` for SH
+- **DA3 Gaussian head as initialisation** (done in rc33; SH rotation replaced by DC-only). The Nested model predicts per-pixel Gaussians. It needs `e3nn` for SH
   rotation, and its metric scaling path for Gaussians must be verified on a GPU. Its advantage over the aligned
   MoGe-2 dense init with only 4 widely spaced views is uncertain. Revisit if training from the current init
   shows blur at view boundaries.

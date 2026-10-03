@@ -293,3 +293,17 @@ def test_pose_refinement_corrects_wrong_cameras_of_generated_views():
     assert np.allclose(out[0], wrong[0])                     # the photo's camera is the fixed reference
     assert err(out) < err(wrong)
     assert refined > base
+
+
+def test_training_can_start_from_ready_made_gaussians():
+    gt, pts, cols, c2ws, Ks, vm, Kt, imgs, _ = _scene()
+    with torch.no_grad():
+        g = {"means": gt["means"].numpy(), "scales": gt["scales"].exp().numpy(),
+             "quats": torch.nn.functional.normalize(gt["quats"], dim=1).numpy(),
+             "dc": gt["sh0"][:, 0].numpy(), "opacity": gt["opacities"].sigmoid().numpy()}
+    cfg = st.TrainConfig(steps=30, sh_degree=0, densify=False, coarse_until=0.0, log_every=10)
+    p, hist = st.train(imgs, c2ws, Ks, [1, 1, 1, 1], None, None, cfg, device="cpu", render_fn=ref_render, init=g)
+    with torch.no_grad():
+        out = ref_render(p, vm[:1], Kt[:1], 24, 24, 0)[0].clamp(0, 1)
+    assert st.psnr(out, torch.from_numpy(imgs[0]).float() / 255) > 25       # already right from step 0
+    assert hist[0][1] < 0.05

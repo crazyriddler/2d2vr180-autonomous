@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "twod2vr180"
-version = "1.0.0rc32"
+version = "1.0.0rc33"
 description = "2D2VR180: local photo/video to 3D Gaussian splat, mesh and VR180 stereo on NVIDIA GPUs"
 readme = "README.md"
 license = {text = "MIT"}

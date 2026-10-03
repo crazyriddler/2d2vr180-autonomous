@@ -22,7 +22,8 @@ QUALITY = {  # mode → (training steps, longest image side, splat cap)
     "quality": (15000, 1280, 3_000_000),
 }
 DA3_MODEL = "da3-nested-giant-large"   # preferred camera engine when installed (VGGT otherwise)
-DA3_RES = {"fast": 392, "auto": 504, "quality": 616}   # processing size (multiples of 14)
+DA3_RES = {"fast": 392, "auto": 504, "quality": 616}
+FF_REFINE = {"fast": 1500, "auto": 3000, "quality": 5000}   # polish steps after the feed-forward splat   # processing size (multiples of 14)
 FUSION = {  # sharp fusion: mode → (photo side, generated-view side, splat cap)
     "fast": (1024, 768, 2_000_000),
     "auto": (1536, 1024, 3_000_000),
@@ -108,6 +109,11 @@ class MultiViewBackend(Backend):
         if da3:
             req.update(pose_engine="da3", da3_dir=str(ctx.models.model_dir(DA3_MODEL)),
                        da3_res=DA3_RES.get(mode, 504))
+            if assembly == "train" and any(v.get("generated") for v in views) and options.get("feedforward", True):
+                # photo + generated views: Depth Anything 3's feed-forward splat fuses them coherently;
+                # training from scratch on 4 slightly inconsistent views ghosts (owner tests, rc30-rc32)
+                req["assembly"] = "ff"
+                req["ff_refine_steps"] = int(options.get("ff_refine_steps", FF_REFINE.get(mode, 3000)))
         if assembly == "fusion":
             ref_side, gen_side, req["max_gaussians"] = FUSION.get(mode, FUSION["auto"])
             req.update(fuse_ref_side=ref_side, fuse_side=gen_side)
@@ -135,12 +141,20 @@ class MultiViewBackend(Backend):
                     f"(observed colours, network-predicted depth; {p.get('inferred', 0):,}); surfaces added from "
                     f"generated views are GENERATIVE ({p.get('generative', 0):,}).")
         else:
-            note = (f"Trained on {res.get('views')} views ({res.get('real_views')} real). Splats seen by two or more "
+            note = ("Depth Anything 3 feed-forward splat, polished: " if res.get("assembly") == "ff" else "")
+            note += (f"Trained on {res.get('views')} views ({res.get('real_views')} real). Splats seen by two or more "
                     f"real views are OBSERVED ({p.get('observed', 0):,}), by one real view INFERRED "
                     f"({p.get('inferred', 0):,})")
             note += (f", only by generated views GENERATIVE ({p.get('generative', 0):,})." if p.get("generative")
                      else ".")
         warnings = list(extra_warnings or [])
+        ff_ply = ff_tt = None
+        if files.get("ply_feedforward") and Path(files["ply_feedforward"]).exists():
+            ff_ply = exp / "scene_feedforward.ply"
+            shutil.copy2(files["ply_feedforward"], ff_ply)
+            if files.get("turntable_feedforward_frames"):
+                ff_tt, _ = encode_turntable(Path(files["turntable_feedforward_frames"]),
+                                            exp / "turntable_feedforward.mp4")
         turntable = None
         if files.get("turntable_frames"):
             turntable, err = encode_turntable(Path(files["turntable_frames"]), exp / "turntable.mp4")
@@ -164,7 +178,9 @@ class MultiViewBackend(Backend):
                    "turntable": str(turntable) if turntable else None,
                    "colour_correction": res.get("colour_correction") or [],
                    "pose_refinement": res.get("pose_refinement") or [],
-                   "subject_mode": bool(res.get("subject_mode"))})
+                   "subject_mode": bool(res.get("subject_mode")),
+                   "feedforward_ply": str(ff_ply) if ff_ply else None,
+                   "turntable_feedforward": str(ff_tt) if ff_tt else None})
 
 
 def encode_turntable(frames: Path, dest: Path, fps: int = 24) -> tuple[Path | None, str | None]:

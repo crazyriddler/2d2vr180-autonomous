@@ -206,3 +206,54 @@ def test_subject_mode_leaves_out_generated_candidates_without_a_subject(tmp_path
     # no generated view with a subject left: subject mode is abandoned, nothing is removed
     items2 = [{"path": "photo.png"}, {"path": "b0.png", "generated": True}]
     assert mv.keep_masked_views(items2, ["p", "b"], masks, 100) is None and len(items2) == 2
+
+
+def _rot(deg, axis=1):
+    a = math.radians(deg)
+    c, s = math.cos(a), math.sin(a)
+    R = np.eye(3)
+    i, j = [k for k in range(3) if k != axis]
+    R[i, i], R[i, j], R[j, i], R[j, j] = c, -s, s, c
+    return R
+
+
+def test_feedforward_gaussians_are_brought_into_the_camera_frame():
+    # model frame: photo camera at some pose; metric scaling happens after the Gaussians are built
+    c2w_model = np.eye(4)
+    c2w_model[:3, :3] = _rot(20) @ _rot(-10, 0)
+    c2w_model[:3, 3] = [0.3, -0.2, 0.5]
+    s = 2.5
+    pts_cam = np.array([[0.1, 0.2, 1.0], [-0.3, 0.1, 2.0]])           # in the photo camera (metric)
+    means_model = (pts_cam / s) @ c2w_model[:3, :3].T + c2w_model[:3, 3]     # model units (unscaled)
+    c2w_metric = c2w_model.copy()
+    c2w_metric[:3, 3] *= s                                           # what DA3 returns as extrinsics
+    inv0 = np.linalg.inv(c2w_metric)
+    q_cam = np.array([[1.0, 0, 0, 0], [0.9238795, 0.3826834, 0, 0]])   # orientations in the photo camera
+    q_model = mv.quat_mul(mv.quat_from_rotmat(c2w_model[:3, :3]), q_cam)
+    means, scales, quats = mv.gaussians_to_frame(means_model, np.full((2, 3), 0.01), q_model, s, inv0)
+    assert np.allclose(means, pts_cam, atol=1e-5)
+    assert np.allclose(scales, 0.025)
+    assert np.allclose(np.abs((quats * q_cam).sum(1)), 1, atol=1e-5)  # same rotation (up to sign)
+
+
+def test_feedforward_init_keeps_the_subject_and_adds_the_photo_background():
+    V, h, w = 2, 32, 24
+    G = {"means": np.random.default_rng(0).normal(size=(V, h, w, 3)).astype(np.float32),
+         "scales": np.full((V, h, w, 3), 0.01, np.float32), "quats": np.tile([1, 0, 0, 0], (V, h, w, 1)).astype(
+             np.float32), "dc": np.zeros((V, h, w, 3), np.float32), "opacity": np.full((V, h, w), 0.6, np.float32)}
+    subj_hw = np.zeros((h, w), bool)
+    subj_hw[8:24, 6:18] = True
+    vin = [(None, {"mask": subj_hw}), (None, {"mask": subj_hw})]
+    depth = [np.full((h, w), 2.0)] * 2
+    photo_depth = np.full((64, 48), 3.0, np.float32)
+    K0 = np.array([[50.0, 0, 24], [0, 50.0, 32], [0, 0, 1]])
+    g = mv.ff_init_gaussians(G, [{}, {"generated": True}], vin, depth, [subj_hw, subj_hw], photo_depth,
+                             np.full((64, 48, 3), 100, np.uint8), K0, np.eye(4))
+    n_subject = 2 * int(subj_hw.sum())
+    assert len(g["means"]) > n_subject                      # + the photo's background
+    bg = g["means"][n_subject:]
+    assert np.allclose(bg[:, 2], 3.0) and np.allclose(g["opacity"][n_subject:], 0.9)
+    # without subject mode: everything but the border and the farthest 10 %
+    g2 = mv.ff_init_gaussians(G, [{}, {"generated": True}], [(None, {}), (None, {})],
+                              [np.linspace(1, 5, h * w).reshape(h, w)] * 2, [None, None], None, None, K0, np.eye(4))
+    assert 0.6 * 2 * h * w < len(g2["means"]) < 0.9 * 2 * h * w

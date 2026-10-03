@@ -562,16 +562,68 @@ def da3_input(img, size, mask=None):
     return arr, info
 
 
-def da3_predict(model, arrays, torch):
+def quat_from_rotmat(R):
+    """Unit quaternion (w, x, y, z) of a 3x3 rotation matrix."""
+    import numpy as np
+
+    R = np.asarray(R, np.float64)
+    w = np.sqrt(max(0.0, 1.0 + R[0, 0] + R[1, 1] + R[2, 2])) / 2
+    x = np.sqrt(max(0.0, 1.0 + R[0, 0] - R[1, 1] - R[2, 2])) / 2
+    y = np.sqrt(max(0.0, 1.0 - R[0, 0] + R[1, 1] - R[2, 2])) / 2
+    z = np.sqrt(max(0.0, 1.0 - R[0, 0] - R[1, 1] + R[2, 2])) / 2
+    x = np.copysign(x, R[2, 1] - R[1, 2])
+    y = np.copysign(y, R[0, 2] - R[2, 0])
+    z = np.copysign(z, R[1, 0] - R[0, 1])
+    q = np.array([w, x, y, z])
+    return q / np.linalg.norm(q)
+
+
+def quat_mul(a, b):
+    """Hamilton product of (w, x, y, z) quaternions; a is (4,), b is (N, 4)."""
+    import numpy as np
+
+    w1, x1, y1, z1 = a
+    w2, x2, y2, z2 = b[:, 0], b[:, 1], b[:, 2], b[:, 3]
+    return np.stack([w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2, w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                     w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2, w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2], 1)
+
+
+def gaussians_to_frame(means, scales, quats, scale_factor, inv0):
+    """Depth Anything 3's feed-forward Gaussians are built in the model's frame before its metric
+    scaling: scale them like its depth and cameras (x scale_factor), then re-anchor them like the
+    cameras (photo camera = identity, inv0 = inverse of the photo's predicted camera-to-world)."""
+    import numpy as np
+
+    s = float(scale_factor) if scale_factor else 1.0
+    R, t = np.asarray(inv0)[:3, :3], np.asarray(inv0)[:3, 3]
+    means = (np.asarray(means, np.float64) * s) @ R.T + t
+    quats = quat_mul(quat_from_rotmat(R), np.asarray(quats, np.float64))
+    return means.astype(np.float32), (np.asarray(scales, np.float64) * s).astype(np.float32), \
+        (quats / np.linalg.norm(quats, axis=1, keepdims=True)).astype(np.float32)
+
+
+def da3_dc_only(sh, rotations):
+    """Stand-in for DA3's rotate_sh (needs e3nn): keeps the view-independent colour (DC band, which
+    rotation does not change) and drops the higher bands."""
+    out = sh.clone()
+    out[..., 1:] = 0
+    return out
+
+
+def da3_predict(model, arrays, torch, infer_gs=False):
     """Poses, intrinsics, depth and confidence for same-size float images; first view = world frame.
     Same keys as run_vggt (pads are 0: no padding)."""
     import numpy as np
 
     imgs = [(np.clip(a, 0, 1) * 255).round().astype(np.uint8) for a in arrays]
     h, w = imgs[0].shape[:2]
+    if infer_gs:
+        import depth_anything_3.model.gs_adapter as ga
+
+        ga.rotate_sh = da3_dc_only
     with torch.no_grad():
         pred = model.inference(imgs, process_res=max(h, w), process_res_method="upper_bound_resize",
-                               ref_view_strategy="first")
+                               ref_view_strategy="first", infer_gs=infer_gs)
     if tuple(pred.depth.shape[1:]) != (h, w):
         raise RuntimeError(f"Depth Anything 3 changed the image size {(h, w)} -> {tuple(pred.depth.shape[1:])}")
     c2w = [np.linalg.inv(np.vstack([e, [0, 0, 0, 1]])) for e in np.asarray(pred.extrinsics, np.float64)]
@@ -582,18 +634,32 @@ def da3_predict(model, arrays, torch):
            "conf": (np.asarray(pred.conf, np.float32) if pred.conf is not None
                     else np.ones(np.asarray(pred.depth).shape, np.float32)),
            "pads": [0] * len(imgs)}
+    if infer_gs and getattr(pred, "gaussians", None) is not None:
+        g = pred.gaussians
+        V = len(imgs)
+        means, scales, quats = gaussians_to_frame(
+            g.means[0].float().cpu().numpy(), g.scales[0].float().cpu().numpy(),
+            g.rotations[0].float().cpu().numpy(), getattr(pred, "scale_factor", None), inv0)
+        op = g.opacities[0].float().cpu().numpy()
+        out["gaussians"] = {"means": means.reshape(V, h, w, 3), "scales": scales.reshape(V, h, w, 3),
+                            "quats": quats.reshape(V, h, w, 4),
+                            "dc": g.harmonics[0][..., 0].float().cpu().numpy().reshape(V, h, w, 3),
+                            "opacity": op.reshape(V, h, w, -1)[..., 0]}
+        del g
     free(torch)
     return out
 
 
-def da3_cameras(model, vin, torch):
-    """estimate_cameras() with Depth Anything 3 (all views at once)."""
+def da3_cameras(model, vin, torch, infer_gs=False):
+    """estimate_cameras() with Depth Anything 3 (all views at once). With infer_gs, also its
+    feed-forward Gaussians (per pixel of every view, in the same frame) as a 5th value."""
     import numpy as np
 
     progress(0.1, f"camera poses and depth (Depth Anything 3, {len(vin)} views)")
-    p = da3_predict(model, [v[0] for v in vin], torch)
+    p = da3_predict(model, [v[0] for v in vin], torch, infer_gs=infer_gs)
     c2w = [np.linalg.inv(np.vstack([e, [0, 0, 0, 1]])) for e in p["w2c"]]
-    return c2w, [np.array(k) for k in p["K"]], list(p["depth"]), list(p["conf"])
+    res = (c2w, [np.array(k) for k in p["K"]], list(p["depth"]), list(p["conf"]))
+    return res + (p.get("gaussians"),) if infer_gs else res
 
 
 def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None, predict=None):
@@ -789,6 +855,52 @@ def splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60, max_side=102
         ks.append(K)
         cs.append(np.asarray(c2ws[i], np.float64))
     return dd, cc, ks, cs
+
+
+def ff_init_gaussians(G, items, vin, depth, subj, photo_depth, photo_img, K0, c2w0, far_pct=90.0):
+    """Initial Gaussians from Depth Anything 3's feed-forward splat (per pixel of every view):
+    border pixels and the farthest 10 % are left out (as DA3's own exporter does), generated views
+    keep only their subject in subject mode, and there the photo's background is added from its
+    own depth (photo_depth, at the photo's training resolution)."""
+    import numpy as np
+
+    V, h, w = G["means"].shape[:3]
+    th, tw = max(1, int(8 / 256 * h)), max(1, int(8 / 256 * w))
+    out = {k: [] for k in G}
+    for v in range(V):
+        m = np.zeros((h, w), bool)
+        m[th:-th, tw:-tw] = True
+        if subj[v] is not None and vin[v][1].get("mask") is not None:
+            m &= vin[v][1]["mask"]
+        else:
+            d = depth[v]
+            m &= d <= np.percentile(d[d > 0], far_pct) if np.any(d > 0) else True
+        m &= np.isfinite(G["means"][v]).all(-1)
+        for k in G:
+            out[k].append(G[k][v][m])
+    g = {k: np.concatenate(a) for k, a in out.items()}
+    n_ff = len(g["means"])
+    if subj[0] is not None and photo_depth is not None:
+        H, W = photo_depth.shape
+        stride = max(1, int(round(W / (1.4 * w))))
+        bg = ~resize_map(subj[0].astype(np.uint8), W, H).astype(bool) & (photo_depth > 0)
+        sub = np.zeros_like(bg)
+        sub[::stride, ::stride] = True
+        yy, xx = np.nonzero(bg & sub)
+        if len(yy):
+            X = unproject(photo_depth, K0, c2w0)[yy, xx]
+            sc = (photo_depth[yy, xx] * stride / K0[0, 0] * 0.8).astype(np.float32)
+            q = np.zeros((len(yy), 4), np.float32)
+            q[:, 0] = 1
+            col = photo_img[yy, xx].astype(np.float32) / 255.0
+            g = {"means": np.concatenate([g["means"], X.astype(np.float32)]),
+                 "scales": np.concatenate([g["scales"], np.repeat(sc[:, None], 3, 1)]),
+                 "quats": np.concatenate([g["quats"], q]),
+                 "dc": np.concatenate([g["dc"], (col - 0.5) / 0.28209479177387814]),
+                 "opacity": np.concatenate([g["opacity"], np.full(len(yy), 0.9, np.float32)])}
+    log(f"feed-forward splat: {n_ff:,} Gaussians from the views"
+        + (f" + {len(g['means']) - n_ff:,} for the photo's background" if len(g["means"]) > n_ff else ""))
+    return g
 
 
 def drop_inconsistent(items, train_imgs, vin, threshold):
@@ -998,7 +1110,13 @@ def main(req):
         dropped = drop_inconsistent(items, train_imgs, vin, float(req.get("drop_threshold", 0.8)))
         for sel in selection:
             sel["dropped"] = sel["view"] in dropped
-        c2w_v, K_v, depth, conf = da3_cameras(model, vin, torch)
+        ff_gauss = None
+        if req.get("assembly") == "ff":
+            c2w_v, K_v, depth, conf, ff_gauss = da3_cameras(model, vin, torch, infer_gs=True)
+            log("feed-forward 3D Gaussians from Depth Anything 3" if ff_gauss is not None else
+                "this Depth Anything 3 model has no Gaussian head; training from scratch instead")
+        else:
+            c2w_v, K_v, depth, conf = da3_cameras(model, vin, torch)
         del model
         free(torch)
         metric_engine = bool(req.get("da3_metric", True))
@@ -1007,6 +1125,7 @@ def main(req):
                                     and same_shape):
             log("Depth Anything 3 not used (not installed, too many views or mixed image shapes); using VGGT")
         engine = "vggt"
+        ff_gauss = None
         c2w_v, K_v, depth, conf, vin, selection = vggt_stage(req, items, train_imgs, vin, device, torch,
                                                               max_side, env)
         metric_engine = False
@@ -1145,8 +1264,16 @@ def main(req):
                 h, w = train_imgs[i].shape[:2]
                 m = resize_map(subj[i].astype(np.uint8), w, h).astype(np.float32)
                 pixel_w[i] = m if pixel_w[i] is None else pixel_w[i] * m
+    ff_init = None
+    if ff_gauss is not None:
+        if scale and np.isfinite(scale) and scale > 0:      # MoGe metric scale applied to the cameras
+            ff_gauss = dict(ff_gauss, means=ff_gauss["means"] * scale, scales=ff_gauss["scales"] * scale)
+        ff_init = ff_init_gaussians(ff_gauss, items, vin, depth, subj,
+                                    priors[0] if priors is not None else None, train_imgs[0], Ks[0], c2ws[0])
+        ff_gauss = None
     if req.get("dry_run"):   # tests: everything up to the GPU training, on any device
         emit("result", dry_run=True, camera_engine=engine, views=n, points=int(len(points)), metric=metric,
+             ff_gaussians=None if ff_init is None else int(len(ff_init["means"])),
              priors=[p is not None for p in (priors or [None] * n)],
              down_weighted=[None if m is None else float((m < 0.5).mean()) for m in (pixel_w or [None] * n)],
              subject_mode=bool(masks), candidate_selection=selection, c2ws=[m.tolist() for m in c2ws])
@@ -1154,6 +1281,28 @@ def main(req):
     cfg = st.TrainConfig(steps=int(req.get("steps", 10000)), sh_degree=int(req.get("sh_degree", 3)),
                          max_gaussians=int(req.get("max_gaussians", 2_000_000)),
                          init_points=int(req.get("init_points", 400000)))
+    ff_raw = None
+    if ff_init is not None:
+        # the feed-forward splat is already coherent: a short, gentle polish (positions move 10x
+        # slower) recovers the photo's detail without letting the generated views tear it apart again
+        cfg.steps = int(req.get("ff_refine_steps", 3000))
+        cfg.lr_means *= 0.1
+        cfg.coarse_until = 0.0
+        cfg.max_gaussians = max(cfg.max_gaussians, int(len(ff_init["means"]) * 1.5))
+        try:     # the raw feed-forward result is kept for comparison
+            raw = st.params_from_gaussians(ff_init, cfg, "cuda")
+            ff_raw = os.path.join(out_dir, "scene_feedforward.ply")
+            st.write_ply(raw, ff_raw)
+            sizes0 = [(im.shape[1], im.shape[0]) for im in train_imgs]
+            zc, yaw = turntable_orbit(raw["means"].detach().float().cpu().numpy(), c2ws, Ks[0], sizes0[0],
+                                      subj[0])
+            render_turntable(raw, Ks[0], sizes0[0], zc, os.path.join(out_dir, "turntable_feedforward"),
+                             cfg.sh_degree, torch, base=c2ws[0], yaw_deg=yaw)
+            del raw
+            torch.cuda.empty_cache()
+        except Exception as e:  # noqa: BLE001 - a comparison only
+            log(f"raw feed-forward export failed: {e}")
+            ff_raw = None
     # Cap the allocator below the card's size: on Windows an over-full GPU silently spills into
     # shared system memory (10-50x slower); an out-of-memory error lets us retry smaller instead.
     torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.94)))
@@ -1175,7 +1324,7 @@ def main(req):
                                     appearance=appearance if appearance and any(appearance) else None,
                                     appearance_out=app_out,
                                     pose_opt=pose_opt if pose_opt and any(pose_opt) else None,
-                                    pose_out=pose_out)
+                                    pose_out=pose_out, init=ff_init)
             break
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if "out of memory" not in str(e).lower() or attempt == 2:
@@ -1279,6 +1428,11 @@ def main(req):
     outputs = {"ply": ply, "cameras": os.path.join(out_dir, "cameras.json")}
     if turntable:
         outputs["turntable_frames"] = turntable
+    if ff_raw:
+        outputs["ply_feedforward"] = ff_raw
+        tf = os.path.join(out_dir, "turntable_feedforward")
+        if os.path.isdir(tf):
+            outputs["turntable_feedforward_frames"] = tf
 
     # the mesh is fused from the TRAINED splat's depth and colour in every view (same volume as the
     # splat, generated angles included); the raw engine depth of the real views is the fallback
@@ -1315,6 +1469,7 @@ def main(req):
          reference_psnr_db=round(ref_psnr, 2), splats=count, mesh=mesh_info, loss_history=hist[-20:],
          candidate_selection=selection,
          pose_refinement=pose_refined, subject_mode=bool(masks),
+         assembly="ff" if ff_init is not None else "train",
          colour_correction=[None if a is None else {"gain": [round(a[0][c][c], 3) for c in range(3)],
                                                     "offset": [round(x, 3) for x in a[1]]} for a in app_out],
          provenance={"observed": int((counts_np == 0).sum()), "inferred": int((counts_np == 1).sum()),

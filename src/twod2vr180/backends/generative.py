@@ -307,7 +307,7 @@ class GenerativeSceneBackend(Backend):
                 log(f"generated views overview: {sheet}")
         except Exception as e:  # noqa: BLE001 - only an overview image
             log(f"could not draw the generated-views overview: {e}")
-        res.extra.update({"trajectory": traj, "engine": engine, "assembly": assembly,
+        res.extra.update({"trajectory": traj, "engine": engine, "assembly": res.extra.get("assembly") or assembly,
                           "generated_views": len(views) - 1,
                           "generation_vram_peak_mib": out["result"].get("vram_peak_mib")})
         res.worker_env = {"generation": out["env"], "reconstruction": res.worker_env}
