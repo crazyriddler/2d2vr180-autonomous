@@ -531,6 +531,7 @@ def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None, pred
         return 10.0, None, angle, overlap
     a = ref_vin[0].reshape(-1, 3)[ok]
     b = cand_vin[0][vi[ok], ui[ok]]
+    b = b - np.median(b - a, axis=0)          # overall exposure / white-balance difference is not a change
     diff = np.abs(a - b).mean(1)
     # Changes are local (a turned head, a moved hand): the share of clearly mismatching pixels catches
     # them, which a median would ignore; the mean error adds the overall fit.
@@ -541,12 +542,13 @@ def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None, pred
     return score, err, angle, overlap
 
 
-def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side, prep=None, predict=None):
+def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side, prep=None, predict=None,
+                      min_candidates=2):
     """For every view with several generated candidates keep the most rigid one (rigidity_score)."""
     report = []
     for i, it in enumerate(items):
         cands = it.get("candidates") or []
-        if len(cands) < 2:
+        if len(cands) < min_candidates:
             continue
         scored = []
         for path in cands:
@@ -611,6 +613,36 @@ def vggt_stage(req, items, train_imgs, vin, device, torch, max_side, env):
     return c2w_v, K_v, depth, conf, vin, selection
 
 
+def score_only(req, items, train_imgs, device, torch, env, max_side):
+    """Score every generated candidate against the photo (no reconstruction): the app uses this to
+    decide whether an angle needs more candidates."""
+    a0 = train_imgs[0].shape[1] / train_imgs[0].shape[0]
+    same_shape = all(abs(im.shape[1] / im.shape[0] / a0 - 1) < 0.03 for im in train_imgs)
+    if req.get("pose_engine") == "da3" and req.get("da3_dir") and same_shape:
+        model = load_da3(req["da3_dir"], device)
+        size = da3_size(train_imgs[0], int(req.get("da3_res", 504)))
+        vin = [da3_input(im, size) for im in train_imgs]
+        sel = select_candidates(items, train_imgs, vin, model, None, torch, max_side,
+                                prep=lambda im: da3_input(im, size),
+                                predict=lambda arrays: da3_predict(model, arrays, torch), min_candidates=1)
+        engine = "da3"
+    else:
+        from vggt.models.vggt import VGGT
+
+        vdir = req["vggt_dir"]
+        if os.path.exists(os.path.join(vdir, "config.json")):
+            model = VGGT.from_pretrained(vdir)
+        else:
+            model = VGGT()
+            model.load_state_dict(torch.load(os.path.join(vdir, "model.pt"), map_location="cpu", weights_only=True))
+        model = model.to(device).eval()
+        dtype = (torch.bfloat16 if device == "cpu" or torch.cuda.get_device_capability()[0] >= 8 else torch.float16)
+        vin = [vggt_input(im) for im in train_imgs]
+        sel = select_candidates(items, train_imgs, vin, model, dtype, torch, max_side, min_candidates=1)
+        engine = "vggt"
+    emit("result", score_only=True, camera_engine=engine, candidate_selection=sel, vram_peak_mib=vram_peak_mib(torch))
+
+
 def main(req):
     import numpy as np
     import torch
@@ -621,7 +653,7 @@ def main(req):
     poses_only = bool(req.get("stop_after_poses"))   # CI self-test on machines without a GPU
     device = "cuda" if env["cuda_available"] else "cpu"
     fusion_mode = req.get("assembly") == "fusion"
-    if device == "cpu" and not (poses_only or (fusion_mode and req.get("allow_cpu"))):
+    if device == "cpu" and not (poses_only or req.get("score_only") or (fusion_mode and req.get("allow_cpu"))):
         emit("error", code="cuda_unavailable", message="Multi-view reconstruction needs an NVIDIA GPU (CUDA).")
         sys.exit(1)
     out_dir = req["output_dir"]
@@ -634,6 +666,9 @@ def main(req):
     max_side = int(req.get("max_side", 960))
     progress(0.01, f"loading {len(items)} images")
     train_imgs = [load_rgb(it["path"], max_side) for it in items]
+    if req.get("score_only"):
+        score_only(req, items, train_imgs, device, torch, env, max_side)
+        return
     vin = [vggt_input(im) for im in train_imgs]
 
     # ------------------------------------------------------------ poses + depth

@@ -22,11 +22,11 @@ def main(req):
     views = [{"path": req["image"], "generated": False}]
     for i, v in enumerate(req["views"]):
         paths = []
-        for c in range(max(1, int(req.get("candidates", 1)))):
+        for c in range(max(1, int(v.get("candidates", req.get("candidates", 1))))):
             p = os.path.join(out, f"view{i:02d}.png" if c == 0 else f"view{i:02d}_c{c}.png")
             shutil.copy(req["image"], p)
             paths.append(p)
-        views.append({"path": paths[0], "candidates": paths, "generated": True, "key": True, **v})
+        views.append({**v, "path": paths[0], "candidates": paths, "generated": True, "key": True})
     progress(1.0, "fake views done")
     emit("result", stage="generate", views=views, size=[160, 120], placement="stream", vram_peak_mib=None)
 

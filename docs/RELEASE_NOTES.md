@@ -1,3 +1,18 @@
+# 2D2VR180 1.0.0-rc23 — weak AI views are retried automatically
+
+## What's new in rc23
+
+- **Weak AI views are retried automatically ("Real 3D from one photo", Auto and Quality).**
+  1. Right after Qwen makes the candidates, the multi-view engine scores each one against your photo.
+  2. If even the best candidate of an angle does not behave like a camera move, 2 more candidates are made for
+     that angle only, and the best one is chosen again.
+  - `job.log` lists each angle's consistency score (lower is better).
+- **Fairer scoring.** A different overall brightness or white balance in an AI view no longer counts as a
+  change; only real differences in shape, pose or expression do.
+- **The user guide** describes the new Create page and the "Real 3D from one photo" flow.
+- *Qwen-Image-Edit + Multiple-Angles* is now part of the recommended components, because the default option
+  needs it.
+
 # 2D2VR180 1.0.0-rc22 — cleaner splats in VR, AI views overview
 
 ## What's new in rc22
@@ -352,8 +367,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc22-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc22-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc23-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc23-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

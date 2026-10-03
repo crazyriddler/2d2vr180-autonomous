@@ -431,12 +431,14 @@ def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypat
     enc = json.loads((gen / "stage_encode.json").read_text())
     assert [(v["azimuth"], v["elevation"]) for v in enc["views"]] == [(315, 0), (45, 0), (0, 30)]
     assert enc["angles_strength"] > 0 and enc["candidates"] == n_cand
-    assert len(list(gen.glob("view*.png"))) == 3 * n_cand
+    retry = 2 if n_cand > 1 else 0          # the fake scorer finds the first angle weak (Auto/Quality retry)
+    assert len(list(gen.glob("view*.png"))) == 3 * n_cand + retry
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     assert mv["assembly"] == "train" and len(mv["images"]) == 4      # the photo + exactly 3 views
     assert not mv["images"][0]["generated"]
     if n_cand > 1:
-        assert all(len(v["candidates"]) == n_cand and v["target_deg"] in (45, 30) for v in mv["images"][1:])
+        assert [len(v["candidates"]) for v in mv["images"][1:]] == [n_cand + retry, n_cand, n_cand]
+        assert all(v["target_deg"] in (45, 30) for v in mv["images"][1:])
     assert rep["backend"]["extra"]["assembly"] == "train"
     sheet = job.dir / "export" / "generated_views_sheet.jpg"
     assert sheet.exists() and rep["backend"]["extra"]["contact_sheet"].endswith("generated_views_sheet.jpg")
@@ -471,3 +473,19 @@ def test_real3d_trains_at_photo_detail_with_low_sh(ctx, rtx4080, photo, monkeypa
     assert rep["status"] == "succeeded", rep.get("error")
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     assert mv["max_side"] == 1600 and mv["sh_degree"] == 1
+
+
+
+def test_weak_angle_gets_more_candidates(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, log = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    gen = job.dir / "generated_views"
+    req = json.loads((gen / "stage_generate.json").read_text())         # the last generate call (the retry)
+    counts = {v["label"]: v.get("candidates") for v in req["views"]}
+    assert counts["45° left"] == 4 and counts["45° right"] is None and counts["high angle"] is None
+    assert len(list(gen.glob("view00*.png"))) == 4 and len(list(gen.glob("view01*.png"))) == 2

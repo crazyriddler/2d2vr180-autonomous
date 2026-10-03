@@ -133,8 +133,8 @@ def encode(req, torch, image):
 def prompts_key(req):
     import hashlib
 
-    blob = json.dumps([req["image"], os.path.getsize(req["image"]), req["views"], req.get("distance")],
-                      sort_keys=True)
+    views = [{k: v.get(k) for k in ("label", "azimuth", "elevation", "prompt")} for v in req["views"]]
+    blob = json.dumps([req["image"], os.path.getsize(req["image"]), views, req.get("distance")], sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -216,10 +216,11 @@ def generate(req, torch, image, env):
     views = [{"path": req["image"], "generated": False}]
     steps = int(req.get("steps", 4))
     n_cand = max(1, int(req.get("candidates", 1)))
-    total = len(req["views"]) * n_cand
+    counts = [max(1, int(v.get("candidates", n_cand))) for v in req["views"]]   # per view (retries ask for more)
+    total = sum(counts)
     for i, (v, enc) in enumerate(zip(req["views"], data["views"])):
         paths = []
-        for c in range(n_cand):
+        for c in range(counts[i]):
             # candidate 0 keeps the old file name (results of earlier versions are reused)
             p = os.path.join(out_dir, f"view{i:02d}.png" if c == 0 else f"view{i:02d}_c{c}.png")
             paths.append(p)
@@ -228,15 +229,15 @@ def generate(req, torch, image, env):
                 continue
             if pipe is None:
                 pipe = load_pipeline(req, torch, placement)
-            log(f"view {i + 1}/{len(req['views'])} ({v.get('label')}) candidate {c + 1}/{n_cand}: {enc['prompt']} · "
+            log(f"view {i + 1}/{len(req['views'])} ({v.get('label')}) candidate {c + 1}/{counts[i]}: {enc['prompt']} · "
                 f"{w}x{h} · {placement}")
             e = enc["embeds"][None].to("cuda", torch.bfloat16)
             mask = torch.ones(e.shape[:2], dtype=torch.long, device="cuda")
-            done = i * n_cand + c
+            done = sum(counts[:i]) + c
 
             def on_step(pp, s, t, kw, done=done, i=i, c=c):
                 progress((done + (s + 1) / steps) / total,
-                         f"view {i + 1}/{len(req['views'])} ({v.get('label')}), candidate {c + 1}/{n_cand}: "
+                         f"view {i + 1}/{len(req['views'])} ({v.get('label')}), candidate {c + 1}/{counts[i]}: "
                          f"step {s + 1}/{steps}")
                 return {}
 

@@ -20,6 +20,17 @@ def main(req):
 
     emit("env", torch=None, cuda="12.4", cuda_available=True, device="fake")
     views = req["images"]
+    if req.get("score_only"):
+        # the first generated angle looks inconsistent; the others are fine
+        sel = []
+        for k, v in enumerate([v for v in views if v.get("generated")]):
+            sc = 0.9 if k == 0 else 0.2
+            sel.append({"view": v.get("label"), "chosen": os.path.basename(v["candidates"][0]),
+                        "scores": {os.path.basename(c): sc for c in v["candidates"]}})
+        with open(os.path.join(os.path.dirname(req["output_dir"]), "score_request.json"), "w") as f:
+            json.dump(req, f)
+        emit("result", score_only=True, camera_engine="vggt", candidate_selection=sel)
+        return
     frames = [os.path.basename(v["path"]) for v in views]
     h, w, f = 90, 120, 100.0
     ys, xs = np.mgrid[0:h, 0:w]

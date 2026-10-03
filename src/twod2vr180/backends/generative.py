@@ -66,6 +66,9 @@ TRI_SIDE = {"fast": 960, "auto": 1280, "quality": 1600}      # training resoluti
 
 # Candidates generated per view (the most rigid one - a pure camera move of the photo - is kept).
 QWEN_CANDIDATES = {"fast": 1, "auto": 2, "quality": 3}
+# A '3 views' angle whose best candidate scores above this gets RETRY_EXTRA more candidates (once).
+RETRY_THRESHOLD = 0.45
+RETRY_EXTRA = 2
 
 
 def installed(ctx, engine: str) -> bool:
@@ -248,7 +251,9 @@ class GenerativeSceneBackend(Backend):
             self._run_attempts(ctx, self.qwen_script, {**req, "stage": "encode"}, inp, progress, cancel, log,
                                (0.0, 0.1))
             out = self._run_attempts(ctx, self.qwen_script, {**req, "stage": "generate"}, inp, progress,
-                                     cancel, log, (0.1, 0.5))
+                                     cancel, log, (0.1, 0.4))
+            if traj == "tri" and mode != "fast" and options.get("retry", True):
+                out = self._retry_weak_views(req, out, inp, ctx, options, progress, cancel, log)
         elif engine == "wan":
             frames, steps = WAN_SETTINGS["capture" if traj == "capture" else assembly].get(mode, (33, 30))
             req = {"image": str(ref), "output_dir": out_dir, "trajectory": plan, "frames": frames,
@@ -301,6 +306,30 @@ class GenerativeSceneBackend(Backend):
                           "generation_vram_peak_mib": out["result"].get("vram_peak_mib")})
         res.worker_env = {"generation": out["env"], "reconstruction": res.worker_env}
         return res
+
+    def _retry_weak_views(self, req, out, inp, ctx, options, progress, cancel, log):
+        """Score the candidates now; for every angle whose best candidate still does not look like a pure
+        camera move of the photo, generate RETRY_EXTRA more and keep the result (the final selection runs
+        again inside the reconstruction)."""
+        views = out["result"]["views"]
+        mv_views = [{"path": v["path"], "generated": bool(v["generated"]),
+                     **({"candidates": v["candidates"], "label": v.get("label", ""), "target_deg": target_angle(v)}
+                        if v.get("generated") else {})} for v in views]
+        try:
+            sel = self.mv.score(mv_views, inp, ctx, {**options, "max_side": 1024}, progress, cancel, (0.4, 0.45))
+        except BackendError as e:
+            log(f"could not score the generated views ({e}); keeping them as they are")
+            return out
+        best = {s["view"]: min((s.get("scores") or {"": 9.0}).values()) for s in sel}
+        weak = [lb for lb, sc in best.items() if sc > float(options.get("retry_threshold", RETRY_THRESHOLD))]
+        log("view consistency: " + ", ".join(f"{lb} {sc:.3f}" for lb, sc in best.items()))
+        if not weak:
+            return out
+        log(f"generating {RETRY_EXTRA} more candidates for: {', '.join(weak)}")
+        n = int(req.get("candidates", 1))
+        req2 = {**req, "stage": "generate",
+                "views": [dict(v, candidates=n + RETRY_EXTRA) if v["label"] in weak else v for v in req["views"]]}
+        return self._run_attempts(ctx, self.qwen_script, req2, inp, progress, cancel, log, (0.45, 0.5))
 
     @staticmethod
     def fusion_views(views: list[dict]) -> list[dict]:
