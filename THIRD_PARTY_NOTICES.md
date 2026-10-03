@@ -39,7 +39,7 @@ Models (config/model-manifest.json) — shown with their license before download
 | Qwen-Image-Edit-2511 (Qwen; text encoder Qwen2.5-VL-7B, VAE) | Apache-2.0 | yes |
 | Qwen-Image-Edit-2511 GGUF Q5_K_M (unsloth) | Apache-2.0 | yes |
 | Qwen-Image-Edit-2511 Multiple-Angles LoRA (fal) | Apache-2.0 | yes |
-| Qwen-Image-Edit-2511 Lightning LoRA (lightx2v) | Apache-2.0 | yes |
+| Qwen-Image-Edit-2511 Lightning LoRAs, 4 and 8 steps (lightx2v) | Apache-2.0 | yes |
 | Depth Anything 3 Nested Giant-Large 1.1 (ByteDance) | CC BY-NC 4.0 | no (downloaded by the user) |
 | Stable Virtual Camera 1.1 | Stability AI Non-Commercial Research Community License (gated; outputs non-commercial) | **no** |
 | Stable Diffusion 2.1 VAE (sd2-community mirror) | CreativeML Open RAIL++-M | yes (use restrictions apply) |

@@ -1,4 +1,16 @@
-# 2D2VR180 1.0.0-rc27 — sharper 3D: camera refinement of the AI views
+# 2D2VR180 1.0.0-rc28 — finer AI views in Quality mode
+
+## What's new in rc28
+
+- **Quality mode draws every AI view in 8 steps instead of 4.** It uses lightx2v's 8-step Lightning LoRA for
+  Qwen-Image-Edit-2511 (Apache-2.0, 850 MB).
+  - It installs with the Qwen component. If you already have Qwen, install *Qwen-Image-Edit Lightning LoRA
+    (8 steps, Quality)* from Settings → Components.
+  - Without it, Quality keeps using 4 steps.
+  - Generating the views takes about twice as long in Quality. Fast and Auto are unchanged.
+- **Camera refinement also covers your own photos.** When you give several real photos (up to 32), training
+  now also corrects their cameras slightly. The first photo stays fixed as the reference. Long videos are
+  unchanged, because their many overlapping frames already pin the cameras down.
 
 ## What's new in rc27
 
@@ -411,7 +423,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc27-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc28-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |

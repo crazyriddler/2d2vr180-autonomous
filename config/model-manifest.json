@@ -552,6 +552,30 @@
    ]
   },
   {
+   "id": "qwen-edit-2511-lightning-8",
+   "display_name": "Qwen-Image-Edit-2511 Lightning LoRA, 8 steps (lightx2v) — Quality mode",
+   "source": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
+   "revision": "d74eba145674fd7e31b949324e148e21e7118abd",
+   "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
+   "license_url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 0,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
+     "url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/d74eba145674fd7e31b949324e148e21e7118abd/Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
+     "sha256": "a9e81a58a78f260f67b337a6f615e8fa4cd3bc79847c77b7d61a581b789b1ba8",
+     "size_bytes": 849608296
+    }
+   ]
+  },
+  {
    "id": "da3-nested-giant-large",
    "display_name": "Depth Anything 3 Nested Giant-Large 1.1 — multi-view poses, depth and metric scale",
    "source": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1",

@@ -62,8 +62,8 @@ COMPONENTS: list[Component] = [
               "qwen-image-edit-2511-q5", "Image model that redraws your photo from other camera angles (45°, 90°, "
               "the back, above, below) at about 1 megapixel — sharper than video frames. ~33 GB with its text "
               "encoder and LoRAs; needs ~32 GB of RAM. Needed for 'Real 3D from one photo'.", True,
-              ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning", "engine-video",
-               "model-vggt", "model-moge-l")),
+              ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning",
+               "model-qwen-lightning8", "engine-video", "model-vggt", "model-moge-l")),
     Component("model-qwen-base", "Qwen-Image-Edit-2511 text encoder and VAE (for Qwen views)", "model",
               "qwen-image-edit-2511-base", "Qwen2.5-VL-7B text/image encoder, VAE and configuration.", False,
               ("engine-gen",)),
@@ -71,6 +71,9 @@ COMPONENTS: list[Component] = [
               "Camera-angle control: 8 directions × 4 heights × 3 distances.", False, ("engine-gen",)),
     Component("model-qwen-lightning", "Qwen-Image-Edit Lightning LoRA (4 steps)", "model", "qwen-edit-2511-lightning",
               "Makes each Qwen view take 4 sampling steps instead of 40.", False, ("engine-gen",)),
+    Component("model-qwen-lightning8", "Qwen-Image-Edit Lightning LoRA (8 steps, Quality)", "model",
+              "qwen-edit-2511-lightning-8", "Used in Quality mode: 8 sampling steps per view for finer detail.",
+              False, ("engine-gen",)),
     Component("model-seva", "Stable Virtual Camera 1.1 — alternative generative engine (non-commercial, gated)",
               "model", "seva-1.1", "Multi-view diffusion for scenes and objects without people (used only when Wan "
               "2.2 is not installed). Distorts people.", False,

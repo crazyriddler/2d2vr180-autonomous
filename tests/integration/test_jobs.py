@@ -446,6 +446,22 @@ def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypat
     assert sheet.exists() and rep["backend"]["extra"]["contact_sheet"].endswith("generated_views_sheet.jpg")
 
 
+@pytest.mark.parametrize("with_8", [False, True])
+def test_quality_uses_the_8_step_lightning_lora_when_installed(ctx, rtx4080, photo, monkeypatch, with_8):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS + (("qwen-edit-2511-lightning-8",) if with_8 else ()):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    enc = json.loads((job.dir / "generated_views" / "stage_encode.json").read_text())
+    assert enc["steps"] == (8 if with_8 else 4)
+    assert ("8steps" in enc["lora_lightning"]) == with_8
+    ids = {m["id"] for m in rep["models"]}
+    assert ("qwen-edit-2511-lightning-8" in ids) == with_8
+
+
 def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, photo, monkeypatch):
     from conftest import install_fake_model
 

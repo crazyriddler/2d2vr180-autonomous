@@ -40,6 +40,7 @@ SEVA_MODELS = ("seva-1.1", "sd21-vae", "clip-vit-h-14")
 WAN_MODELS = ("wan2.2-fun-5b-camera",)
 QWEN_MODELS = ("qwen-image-edit-2511-q5", "qwen-image-edit-2511-base", "qwen-edit-2511-angles-lora",
                "qwen-edit-2511-lightning")
+QWEN_LIGHTNING_8 = "qwen-edit-2511-lightning-8"   # optional: Quality mode samples 8 steps with it
 ENGINE_MODELS = {"qwen": QWEN_MODELS, "wan": WAN_MODELS, "seva": SEVA_MODELS}
 ENGINE_NAMES = {"qwen": "Qwen-Image-Edit-2511 + Multiple-Angles LoRA", "wan": "Wan 2.2 Fun 5B Control-Camera",
                 "seva": "Stable Virtual Camera"}
@@ -248,6 +249,11 @@ class GenerativeSceneBackend(Backend):
                    "angles_strength": 0.9, "candidates": QWEN_CANDIDATES.get(mode, 1) if traj == "tri" else 1,
                    "distance": options.get("qwen_distance", "medium shot"),
                    "megapixels": QWEN_MEGAPIXELS.get(mode, 1.0), "steps": 4, "seed": int(options.get("seed", 42))}
+            if mode == "quality" and QWEN_LIGHTNING_8 in ctx.models.entries and \
+                    ctx.models.is_installed(QWEN_LIGHTNING_8):
+                req.update(lora_lightning=str(next(iter(ctx.models.paths(QWEN_LIGHTNING_8).values()))), steps=8)
+                models = tuple(m for m in models if m != "qwen-edit-2511-lightning") + (QWEN_LIGHTNING_8,)
+                log("Quality: 8-step Lightning LoRA")
             self._run_attempts(ctx, self.qwen_script, {**req, "stage": "encode"}, inp, progress, cancel, log,
                                (0.0, 0.1))
             out = self._run_attempts(ctx, self.qwen_script, {**req, "stage": "generate"}, inp, progress,
