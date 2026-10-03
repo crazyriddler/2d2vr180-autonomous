@@ -141,7 +141,8 @@ class MultiViewBackend(Backend):
                     f"(observed colours, network-predicted depth; {p.get('inferred', 0):,}); surfaces added from "
                     f"generated views are GENERATIVE ({p.get('generative', 0):,}).")
         else:
-            note = ("Depth Anything 3 feed-forward splat, polished: " if res.get("assembly") == "ff" else "")
+            note = ("Depth Anything 3 feed-forward splat (the photo's own pixels in front, generated views only "
+                    "where the photo does not see), colours polished: " if res.get("assembly") == "ff" else "")
             note += (f"Trained on {res.get('views')} views ({res.get('real_views')} real). Splats seen by two or more "
                     f"real views are OBSERVED ({p.get('observed', 0):,}), by one real view INFERRED "
                     f"({p.get('inferred', 0):,})")
@@ -178,6 +179,7 @@ class MultiViewBackend(Backend):
                    "turntable": str(turntable) if turntable else None,
                    "colour_correction": res.get("colour_correction") or [],
                    "pose_refinement": res.get("pose_refinement") or [],
+                   "view_alignment": res.get("view_alignment") or [],
                    "subject_mode": bool(res.get("subject_mode")),
                    "feedforward_ply": str(ff_ply) if ff_ply else None,
                    "turntable_feedforward": str(ff_tt) if ff_tt else None})

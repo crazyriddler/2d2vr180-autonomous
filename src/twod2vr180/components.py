@@ -51,8 +51,8 @@ COMPONENTS: list[Component] = [
               "model", "flashworld",
               "Generates the whole 3D scene from your photo in one go (a Wan 2.2 video model with a 3D Gaussian "
               "decoder): every angle comes from the same 3D, so no ghosting between separately drawn views. "
-              "Used automatically by 'Real 3D from one photo' when installed. ~35 GB with its Wan 2.2 parts; "
-              "needs ~12 GB VRAM.", True, ("engine-video", "model-flashworld-base", "model-moge-l")),
+              "Optional engine for 'Real 3D from one photo' (choose it under Generative engine). ~35 GB with its "
+              "Wan 2.2 parts; needs ~12 GB VRAM.", False, ("engine-video", "model-flashworld-base", "model-moge-l")),
     Component("model-flashworld-base", "Wan2.2-TI2V-5B VAE and text encoder (for FlashWorld)", "model",
               "wan2.2-ti2v-5b-base", "Image encoder/decoder and UMT5-XXL text encoder used by FlashWorld.", False,
               ("engine-video",)),

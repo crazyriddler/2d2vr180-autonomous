@@ -257,3 +257,58 @@ def test_feedforward_init_keeps_the_subject_and_adds_the_photo_background():
     g2 = mv.ff_init_gaussians(G, [{}, {"generated": True}], [(None, {}), (None, {})],
                               [np.linspace(1, 5, h * w).reshape(h, w)] * 2, [None, None], None, None, K0, np.eye(4))
     assert 0.6 * 2 * h * w < len(g2["means"]) < 0.9 * 2 * h * w
+
+
+def test_duplicate_surfaces_of_generated_views_are_removed():
+    """Each view brings its own copy of a surface (ghosts in the turntable): the photo's copy is kept,
+    a generated view only adds what the photo does not show (here: what lies behind the photo's wall)."""
+    h, w = 20, 20
+    K = np.array([[20.0, 0, 10], [0, 20.0, 10], [0, 0, 1]])
+    photo_depth = np.full((h, w), 2.0)
+    valid = np.ones((h, w), bool)
+    X = np.array([[0.0, 0.0, 2.03],      # the same wall, 1.5 % off: duplicate
+                  [0.1, 0.0, 1.5],       # in front of the wall the photo sees: contradicts the photo
+                  [0.0, 0.1, 2.6],       # behind the wall: hidden from the photo, kept
+                  [5.0, 0.0, 2.0]])      # outside the photo's frame: kept
+    dup = mv.surface_duplicates(X, K, np.eye(4), photo_depth, valid, 0.04, in_front_too=True)
+    assert dup.tolist() == [True, True, False, False]
+    assert mv.surface_duplicates(X, K, np.eye(4), photo_depth, valid, 0.04).tolist() == [True, False, False, False]
+
+
+def test_feedforward_init_drops_generated_copies_and_uses_the_photo_layer():
+    V, h, w = 2, 16, 16
+    K = np.array([[16.0, 0, 8], [0, 16.0, 8], [0, 0, 1]])
+    ys, xs = np.mgrid[0:h, 0:w]
+    plane = np.stack([(xs + 0.5 - 8) / 16 * 2, (ys + 0.5 - 8) / 16 * 2, np.full((h, w), 2.0)], -1)
+    means = np.stack([plane, plane * [1, 1, 1.01]]).astype(np.float32)   # view 1 sees the same wall
+    G = {"means": means, "scales": np.full((V, h, w, 3), 0.01, np.float32),
+         "quats": np.tile([1, 0, 0, 0], (V, h, w, 1)).astype(np.float32), "dc": np.zeros((V, h, w, 3), np.float32),
+         "opacity": np.full((V, h, w), 0.6, np.float32)}
+    depth = [np.full((h, w), 2.0)] * 2
+    items = [{}, {"generated": True}]
+    vin = [(None, {}), (None, {})]
+    plain = mv.ff_init_gaussians(G, items, vin, depth, [None, None], None, None, K, np.eye(4), far_pct=100)
+    dedup = mv.ff_init_gaussians(G, items, vin, depth, [None, None], None, None, K, np.eye(4), far_pct=100,
+                                 cams=[(K, np.eye(4))] * 2)
+    assert len(dedup["means"]) == len(plain["means"]) // 2           # the generated view's copy is gone
+    # photo layer: one Gaussian per photo pixel (at 4x DA3's resolution) instead of DA3's for the photo
+    Kp = K * [[4], [4], [1]]
+    layer = np.full((64, 64), 2.0, np.float32)
+    layer[:, :2] = 0                                                 # e.g. a depth jump left out
+    img = np.random.default_rng(0).integers(0, 255, (64, 64, 3)).astype(np.uint8)
+    g = mv.ff_init_gaussians(G, items, vin, depth, [None, None], None, img, Kp, np.eye(4), far_pct=100,
+                             cams=[(K, np.eye(4))] * 2, photo_layer=layer)
+    assert len(g["means"]) == 64 * 62
+    assert np.allclose(g["dc"][0] * 0.28209479177387814 + 0.5, img[0, 2] / 255, atol=1e-5)
+
+
+def test_photo_layer_depth_is_smooth_and_skips_depth_jumps():
+    d = np.full((10, 10), 2.0)
+    d[:, 5:] = 4.0                                                  # a jump from 2 m to 4 m
+    d[:5, :5] = np.linspace(2.0, 2.05, 25).reshape(5, 5)
+    info = {"sx": 1.0, "sy": 1.0, "crop": 0, "w": 10}
+    out = mv.photo_layer_depth(d, info, (40, 40), None)
+    assert out.shape == (40, 40)
+    assert (out[:, 18:22] == 0).all()                               # around the jump: left out
+    assert (out[:, :12] > 0).all() and (out[:, 26:] > 0).all()
+    assert len(np.unique(out[:12, :12])) > 25                       # bilinear, not 2.5-px stairs

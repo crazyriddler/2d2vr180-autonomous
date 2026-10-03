@@ -51,15 +51,17 @@ verified (SHA256) before use.
 1. Open **Create** and drop one or more photos or videos (or click to browse).
 2. Answer **What do you want to make?**
    - **Real 3D from one photo (recommended).**
-     - **With FlashWorld installed** (Components, ~35 GB): the whole 3D scene is generated directly from your
-       photo, as the camera swings around the subject. Every angle comes from the same 3D, so there are no
-       double contours. Takes a few minutes on an RTX 4080.
-     - **Without FlashWorld:** AI (Qwen-Image-Edit + Multiple-Angles) makes 3 more views of your photo: 45°
-       left, 45° right and from above.
+     - AI (Qwen-Image-Edit + Multiple-Angles) makes 3 more views of your photo: 45° left, 45° right and
+       from above.
      - In Auto and Quality, 2-3 candidates are made per angle, and the one that best behaves like a pure camera
        move of your photo is kept automatically. Views that contradict the photo are dropped.
-     - The multi-view engine (Depth Anything 3 if installed, otherwise VGGT) then finds where each view was
-       taken and trains a 3D splat from the four. That gives real volume and real-world scale.
+     - The multi-view engine (Depth Anything 3 if installed, otherwise VGGT) finds where each view was taken
+       and builds the 3D:
+       - your photo's part is one splat per photo pixel, with the photo's own colours, so it keeps its detail;
+       - the AI views only add what the photo does not show, so there are no double copies;
+       - a short polish adjusts only colours and opacities, and absorbs small misalignments of the AI views.
+     - **FlashWorld** (optional, Components, ~35 GB; choose it under *Generative engine*) generates the whole
+       3D directly from the photo instead.
      - **Results → AI views overview** shows every candidate, its score and which one was used.
      - **Results → Play turntable** plays a short video of the 3D swinging left and right, so you can judge its
        volume without the headset.

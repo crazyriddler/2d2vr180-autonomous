@@ -37,6 +37,24 @@ below improves one link of that chain.
   polished: sharper but the same ghosts). Conclusion: no reconstruction method can make one rigid 3D out of
   views that are not 3D-consistent with each other. Qwen draws every angle independently. The owner asked
   for a radical change of strategy.
+- **rc36 feedback: back to Qwen views + DA3.** The owner did not like FlashWorld's result. Of everything
+  so far, the Qwen views assembled by the multi-view engine gave the most real 3D. Two observations:
+  - The polish/training was "so aggressive it erases every detail". The **raw** DA3 splat looked better
+    than the polished turntable and the VR view, though ghostly.
+  - The raw DA3 splat is still blurry. DA3 works at ~504 px, so each Gaussian covers 2-3 photo pixels.
+
+  rc37 answers each point:
+  - **Photo layer.** The photo's part is one Gaussian per photo pixel at training resolution (1280 px in
+    Auto), with the photo's own colours. Its depth is DA3's joint depth, sampled bilinearly, with pixels on
+    depth jumps left out.
+  - **Duplicate removal.** A generated view's Gaussian on, or in front of, a surface the photo shows is
+    dropped. Between generated views, the earlier view's copy wins. That removes the ghost copies.
+  - **Colour-only polish.** Positions, sizes and rotations stay fixed, with no densification or pruning.
+    Colours and opacities are optimised, so a copy the other views contradict fades out.
+  - **Per-view image alignment.** Each generated view gets a smooth displacement field of at most 6 % of
+    the half-width, with 24 control points along the long side. It is applied to the render before the
+    loss, so local misalignments of AI views are absorbed instead of averaged into blur.
+  - Qwen is the default engine again. FlashWorld can still be chosen as the generative engine.
 - **New strategy (rc34+): generate the 3D directly.** FlashWorld (ICLR 2026 oral, code Apache-2.0, weights
   CC BY-NC-SA 4.0) is fine-tuned from Wan2.2-TI2V-5B. At every denoising step it decodes 3D Gaussians and
   renders them back into the model, so every view comes from one 3D. Inputs: one image, a text prompt and

@@ -1,3 +1,26 @@
+# 2D2VR180 1.0.0-rc37 — Real 3D: back to AI views, with your photo's full detail
+
+## What's new in rc37
+
+- **"Real 3D from one photo" uses Qwen-Image-Edit views again.** That was the route that gave the most real
+  3D. FlashWorld is still available: choose it under *Generative engine*.
+- **Your photo keeps its full detail.** Depth Anything 3 builds its splat at about 504 pixels, so each
+  Gaussian covered 2–3 pixels of the photo, which looked blurry. Now the photo's part of the scene is one
+  Gaussian per photo pixel (1280 px in Auto), with the photo's own colours. The depth comes from Depth
+  Anything 3's joint estimate across all views, the smoother one that worked better. Pixels on depth edges
+  are left out, so there are no streaks between the subject and what is behind it.
+- **Fewer ghosts.** Every view used to add its own copy of each surface, each at a slightly different
+  depth, which made the result look ghostly. Now a generated view only adds what the photo, or an earlier
+  view, does not already show.
+- **The polish no longer erases detail.** The splat used to be trained like one built from scratch: points
+  moved, split and were pruned, which blurred it. Now only colours and opacities are adjusted. A ghost copy
+  that the other views contradict fades out, and the geometry stays as built.
+- **Local misalignments of AI views are absorbed.** Each AI-drawn view is usually a few pixels off here
+  and there, for example a hand or an ear. Each view now gets a small, smooth image alignment while
+  training, instead of the splat averaging the copies into blur. The log and the details panel show how
+  far each view had to be shifted.
+- The previous result (before the polish) is still exported as *Turntable: raw DA3 splat* for comparison.
+
 # 2D2VR180 1.0.0-rc36 — FlashWorld fits a 16 GB card
 
 ## Fixed in rc36

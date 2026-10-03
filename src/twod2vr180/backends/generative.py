@@ -84,8 +84,9 @@ def installed(ctx, engine: str) -> bool:
 
 def generation_engine(ctx, preferred: str | None = None, trajectory: str | None = None) -> str | None:
     """The engine to use: the preferred one if installed (and able to do the trajectory), else the
-    first installed of FlashWorld (only for "tri"), Qwen, Wan, Stable Virtual Camera."""
-    order = ["flashworld", "qwen", "wan", "seva"]
+    first installed of Qwen, FlashWorld (only for "tri"), Wan, Stable Virtual Camera. Qwen first: its
+    views assembled with Depth Anything 3 gave the owner the most real 3D (rc36: FlashWorld less so)."""
+    order = ["qwen", "flashworld", "wan", "seva"]
     if preferred in order:
         order.remove(preferred)
         order.insert(0, preferred)

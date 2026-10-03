@@ -56,6 +56,17 @@ class TrainConfig:
     pose_from: float = 0.1         # start refining poses after this fraction of the steps
     absgrad: bool = True           # AbsGS densification: grows splats in fine texture (hair, fabric)
     grow_grad2d: float = 0.0008    # gsplat's threshold for absgrad (0.0002 without)
+    # per-view image alignment of generated views: a smooth, small 2-D displacement field (flow_cells
+    # control points along the long side, at most flow_max of the half-width) applied to the render
+    # before the loss. It absorbs the local inconsistencies of AI-drawn views (a hand or an ear a few
+    # pixels off) so the splats do not average them into blur and double contours.
+    flow_cells: int = 24
+    lr_flow: float = 2e-3
+    flow_max: float = 0.06
+    flow_reg: float = 0.05         # keeps displacements small ...
+    flow_smooth: float = 2.0       # ... and smooth (differences between neighbouring control points)
+    flow_from: float = 0.05        # start aligning after this fraction of the steps
+    freeze_geometry: bool = False  # optimise only colours and opacities (positions, sizes, rotations fixed)
 
 
 def knn_scales(points, k: int = 4):
@@ -176,7 +187,8 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
           cfg: TrainConfig | None = None, device="cuda", render_fn=None, progress=None, cancel=None,
           pixel_weights: list | None = None, depth_priors: list | None = None,
           appearance: list | None = None, appearance_out: list | None = None,
-          pose_opt: list | None = None, pose_out: list | None = None, init: dict | None = None):
+          pose_opt: list | None = None, pose_out: list | None = None, init: dict | None = None,
+          view_flow: list | None = None, flow_out: list | None = None):
     """Optimise Gaussians. ``images``: list of (H,W,3) uint8 arrays (sizes may differ).
     ``pixel_weights``: per view None or an (H,W) float map in [0,1] (photometric confidence).
     ``depth_priors``: per view None or an (H,W) depth map in scene units (0 = unknown).
@@ -186,7 +198,10 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
     receives the learned corrections ([A, b] per view, None when not learned).
     ``pose_opt``: per view True to refine its camera (a small SE(3) correction, the first real view
     stays fixed as the reference). ``pose_out`` receives the refined camera-to-world matrices.
-    ``init``: start from these Gaussians (see params_from_gaussians) instead of points / colours."""
+    ``init``: start from these Gaussians (see params_from_gaussians) instead of points / colours.
+    ``view_flow``: per view True to learn a small smooth image-space alignment of that view (generated
+    views: see TrainConfig.flow_*). ``flow_out`` receives per view None or the mean / max displacement
+    in pixels."""
     import torch
     import torch.nn.functional as F
 
@@ -200,6 +215,9 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         points = np.asarray(init["means"])
     else:
         params = init_params(points, colors, cfg, device)
+    if cfg.freeze_geometry:
+        for k in ("means", "scales", "quats"):
+            params[k].requires_grad_(False)
     scale = scene_scale(c2ws, points)
     opt = {
         "means": torch.optim.Adam([params["means"]], lr=cfg.lr_means * scale, eps=1e-15),
@@ -235,6 +253,14 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
     c2w_t = torch.as_tensor(np.asarray(c2ws), dtype=torch.float32).to(device)
     pose_d = torch.zeros(len(images), 6, device=device, requires_grad=any(popt))
     pose_optim = torch.optim.Adam([pose_d], lr=cfg.lr_pose) if any(popt) else None
+    flows = {}
+    for k, on in enumerate(view_flow or []):
+        if on:
+            hk, wk = images[k].shape[:2]
+            gh = max(2, round(cfg.flow_cells * hk / max(hk, wk)))
+            gw = max(2, round(cfg.flow_cells * wk / max(hk, wk)))
+            flows[k] = torch.zeros(1, 2, gh, gw, device=device, requires_grad=True)
+    flow_optim = torch.optim.Adam(list(flows.values()), lr=cfg.lr_flow) if flows else None
     g = torch.Generator().manual_seed(cfg.seed)
     history = []
     for step in range(cfg.steps):
@@ -270,6 +296,14 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
             rgb = rgb[..., :3]
         if strategy is not None:
             strategy.step_pre_backward(params, opt, state, step, info)
+        flow_loss = None
+        if i in flows and step >= cfg.flow_from * cfg.steps:
+            f = cfg.flow_max * torch.tanh(flows[i])
+            rgb = warp_image(rgb, f)
+            if use_depth:
+                depth = warp_image(depth[..., None], f)[..., 0]
+            flow_loss = cfg.flow_reg * f.square().mean() + cfg.flow_smooth * (
+                (f[..., 1:, :] - f[..., :-1, :]).square().mean() + (f[..., 1:] - f[..., :-1]).square().mean())
         app_loss = None
         if app[i]:
             rgb = rgb @ app_A[i].T + app_b[i]
@@ -299,6 +333,8 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
             loss = loss + cfg.appearance_reg * app_loss
         if pose_loss is not None:
             loss = loss + cfg.pose_reg * pose_loss
+        if flow_loss is not None:
+            loss = loss + flow_loss
         loss.backward()
         if strategy is not None:
             if len(params["means"]) >= cfg.max_gaussians and strategy.refine_stop_iter > step:
@@ -313,6 +349,9 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         if pose_optim is not None:
             pose_optim.step()
             pose_optim.zero_grad(set_to_none=True)
+        if flow_optim is not None:
+            flow_optim.step()
+            flow_optim.zero_grad(set_to_none=True)
         means_sched.step()
         if step % cfg.log_every == 0 or step == cfg.steps - 1:
             history.append((step, float(loss.detach())))
@@ -326,7 +365,33 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
     if appearance_out is not None:
         appearance_out.extend([app_A[k].detach().cpu().tolist(), app_b[k].detach().cpu().tolist()] if app[k]
                               else None for k in range(len(images)))
+    if flow_out is not None:
+        with torch.no_grad():
+            for k in range(len(images)):
+                if k not in flows:
+                    flow_out.append(None)
+                    continue
+                hk, wk = images[k].shape[:2]
+                f = cfg.flow_max * torch.tanh(flows[k][0])
+                px = torch.sqrt((f[0] * wk / 2) ** 2 + (f[1] * hk / 2) ** 2)
+                flow_out.append({"mean_px": round(float(px.mean()), 2), "max_px": round(float(px.max()), 2)})
     return params, history
+
+
+def warp_image(img, flow):
+    """``img`` (H,W,C) resampled at p + flow(p). ``flow`` (1,2,gh,gw): a coarse (x, y) displacement
+    field in normalised units (2 = the whole width / height), upsampled smoothly to the image."""
+    import torch
+    import torch.nn.functional as F
+
+    H, W = img.shape[:2]
+    up = F.interpolate(flow, size=(H, W), mode="bilinear", align_corners=True)[0].permute(1, 2, 0)
+    xs = torch.linspace(-1 + 1 / W, 1 - 1 / W, W, device=img.device, dtype=img.dtype)
+    ys = torch.linspace(-1 + 1 / H, 1 - 1 / H, H, device=img.device, dtype=img.dtype)
+    grid = torch.stack(torch.meshgrid(xs, ys, indexing="xy"), -1)
+    out = F.grid_sample(img.permute(2, 0, 1)[None], (grid + up.to(img.dtype))[None], mode="bilinear",
+                        padding_mode="border", align_corners=False)
+    return out[0].permute(1, 2, 0)
 
 
 def se3_exp(xi, scale: float = 1.0):

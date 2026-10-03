@@ -490,6 +490,10 @@ def test_real3d_generates_the_3d_directly_with_flashworld_when_installed(ctx, rt
         install_fake_model(ctx.models, mid)
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["extra"]["engine"] == "qwen"            # Qwen views stay the default
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu",
+                          gen_engine="flashworld")
+    assert rep["status"] == "succeeded", rep.get("error")
     extra = rep["backend"]["extra"]
     assert extra["engine"] == "flashworld" and extra["assembly"] == "generated"
     gen = json.loads((job.dir / "fake_flashworld_generate.json").read_text())
@@ -501,7 +505,8 @@ def test_real3d_generates_the_3d_directly_with_flashworld_when_installed(ctx, rt
     assert Path(extra["turntable"]).name == "turntable.mp4"
     assert {m["id"] for m in rep["models"]} >= {"flashworld", "wan2.2-ti2v-5b-base"}
     # the text embedding is computed once and reused
-    job2, rep2, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    job2, rep2, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu",
+                            gen_engine="flashworld")
     assert rep2["status"] == "succeeded"
     assert Path(gen["embeds_path"] + ".calls").read_text().count("1") == 1
 
