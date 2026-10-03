@@ -815,12 +815,12 @@ def render_turntable(params, K, size, target_z, out_dir, sh_degree, torch, n=72,
     w, h = int(round(w0 * s / 2)) * 2, int(round(h0 * s / 2)) * 2
     Kr = np.array(K, np.float64).copy()
     Kr[:2] *= [[w / w0], [h / h0]]
-    Kt = torch.as_tensor(Kr, dtype=torch.float32, device="cuda")[None]
+    Kt = torch.as_tensor(Kr, dtype=torch.float32, device=params["means"].device)[None]
     os.makedirs(out_dir, exist_ok=True)
     base = np.eye(4) if base is None else np.asarray(base, np.float64)
     for k, c2w in enumerate(turntable_c2ws(target_z, n, yaw_deg=yaw_deg)):
         c2w = base @ c2w
-        vm = torch.linalg.inv(torch.as_tensor(c2w, dtype=torch.float32, device="cuda"))[None]
+        vm = torch.linalg.inv(torch.as_tensor(c2w, dtype=torch.float32, device=params["means"].device))[None]
         with torch.no_grad():
             rgb, _, _ = st.gsplat_render(params, vm, Kt, w, h, sh_degree)
         img = (rgb[..., :3].clamp(0, 1) * 255).round().byte().cpu().numpy()

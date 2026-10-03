@@ -27,8 +27,9 @@ MODE_HELP = {
 # "What do you want to make?" — each preset sets the advanced reconstruction controls.
 PRESETS = {
     "real3d": ("Real 3D from one photo (recommended)",
-               "AI makes 3 more views (45° left, 45° right, from above), then the multi-view engine reconstructs "
-               "real volume and scale from all four. Needs the Qwen-Image-Edit and Multi-view components."),
+               "With FlashWorld installed, the whole 3D scene is generated directly from your photo (every angle "
+               "from the same 3D). Without it, AI makes 3 more views and the multi-view engine reconstructs "
+               "them."),
     "quick": ("Quick 3D",
               "Depth from the photo alone (MoGe-2 / SHARP). Seconds; sharp from the front, flat from the side."),
     "around": ("360° around the subject (experimental)",
@@ -372,7 +373,11 @@ class CreatePage(QWidget):
 
             ctx = self.win.ctx
             need = []
-            if not (installed(ctx, "qwen") or (self.preset() == "around" and installed(ctx, "wan"))):
+            flashworld = self.preset() == "real3d" and installed(ctx, "flashworld")
+            if self.preset() == "real3d" and not flashworld:
+                msgs.append("Tip: install 'FlashWorld' in Components - it generates the 3D directly from your "
+                            "photo, without the double contours of separately drawn AI views.")
+            if not flashworld and not (installed(ctx, "qwen") or (self.preset() == "around" and installed(ctx, "wan"))):
                 need.append("Qwen-Image-Edit-2511 + Multiple-Angles" if self.preset() == "real3d"
                             else "Qwen-Image-Edit or Wan 2.2")
             if not all(m in ctx.models.entries and ctx.models.is_installed(m) for m in ("vggt-1b", "moge-2-vitl-normal")):

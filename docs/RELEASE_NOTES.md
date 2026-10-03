@@ -1,4 +1,31 @@
-# 2D2VR180 1.0.0-rc33 — a new way to build the 3D: Depth Anything 3's feed-forward splat
+# 2D2VR180 1.0.0-rc34 — Real 3D generated directly: FlashWorld
+
+## What's new in rc34
+
+- **A different strategy for "Real 3D from one photo".** Until rc33, an AI drew 3 more views of your photo
+  one by one, and the app tried to rebuild a 3D from them. Each view was drawn on its own: a slightly
+  different pose, hair and lantern. No reconstruction method can make one rigid 3D from that, so the
+  result showed double faces and layers.
+- **FlashWorld** (ICLR 2026) generates **the 3D itself**.
+  - It is a Wan 2.2 video model with a 3D Gaussian decoder. At each of its 4 steps it builds the Gaussians,
+    renders them and feeds them back into the model.
+  - Every angle comes from the same 3D, so it cannot ghost between views.
+  - The camera swings ±30° around your subject (±25° Fast, ±35° Quality) with a slight rise. Your photo is
+    the starting point.
+  - The result is placed in your photo's camera frame, at the subject's real distance (measured by MoGe-2).
+- **Install it from Settings → Components → "FlashWorld — Real 3D generated directly from one photo".**
+  - About 35 GB: the FlashWorld checkpoint is 20.9 GB, plus the Wan 2.2 VAE and text encoder (14 GB).
+  - It runs in the multi-view engine. No new Python environment is needed, but the multi-view engine updates
+    itself once (it adds diffusers and transformers).
+  - FlashWorld's weights are CC BY-NC-SA 4.0 (non-commercial). The code is Apache-2.0.
+  - Without it, "Real 3D" keeps using the previous flow.
+- **Memory.** The 21 GB checkpoint is read straight from disk and quantised to FP8 layer by layer, so it
+  never fills your RAM. The text encoder runs only once: its result is cached. On a 16 GB card the model
+  leaves the GPU while the 3D decoder works. If memory still runs out, it retries automatically with the
+  decoder on the CPU (slower).
+- **Not tested on a GPU before release.** It was checked on the CPU with the real VAE architecture and a
+  tiny transformer with random weights. Camera conventions were checked against FlashWorld's own code.
+  The first run on your RTX 4080 is the real test: please send the log and the turntable.
 
 ## What's new in rc33
 
@@ -494,7 +521,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc33-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc34-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |

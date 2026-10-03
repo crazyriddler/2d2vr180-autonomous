@@ -479,6 +479,33 @@ def test_real3d_uses_the_feedforward_splat_when_depth_anything_3_is_installed(ct
     assert "feed-forward" in rep["coverage"]["note"]
 
 
+def test_real3d_generates_the_3d_directly_with_flashworld_when_installed(ctx, rtx4080, photo, monkeypatch):
+    from conftest import REPO, install_fake_model
+    from twod2vr180.backends.generative import GenerativeSceneBackend
+
+    _fake_generative(monkeypatch)
+    monkeypatch.setattr(GenerativeSceneBackend, "flashworld_script",
+                        str(REPO / "tests" / "fakes" / "fake_flashworld_worker.py"))
+    for mid in QWEN_IDS + ("flashworld", "wan2.2-ti2v-5b-base"):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    extra = rep["backend"]["extra"]
+    assert extra["engine"] == "flashworld" and extra["assembly"] == "generated"
+    gen = json.loads((job.dir / "fake_flashworld_generate.json").read_text())
+    assert gen["frames"] == 24 and gen["swing_deg"] == 30 and gen["ckpt"].endswith("model.ckpt")
+    assert gen["base_dir"].endswith("wan2.2-ti2v-5b-base") and Path(gen["embeds_path"]).exists()
+    assert not (job.dir / "generated_views").exists()            # no separate AI views any more
+    cov = rep["coverage"]["by_splat"]
+    assert cov["inferred"] > 0 and cov["generative"] > 0           # the photo's part vs the invented part
+    assert Path(extra["turntable"]).name == "turntable.mp4"
+    assert {m["id"] for m in rep["models"]} >= {"flashworld", "wan2.2-ti2v-5b-base"}
+    # the text embedding is computed once and reused
+    job2, rep2, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep2["status"] == "succeeded"
+    assert Path(gen["embeds_path"] + ".calls").read_text().count("1") == 1
+
+
 def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, photo, monkeypatch):
     from conftest import install_fake_model
 

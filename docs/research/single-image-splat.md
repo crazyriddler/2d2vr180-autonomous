@@ -93,6 +93,7 @@ personal/research profile).
 | rc28 | Quality: 8-step Lightning LoRA for Qwen views; camera refinement for real multi-photo sets |
 | rc29 | AbsGS densification (absolute screen-space gradients) |
 | rc30 | Fix: DA3 Giant load; VGGT fallback |
+| rc34 | FlashWorld: the 3D generated directly (no separate views); Wan TI2V parts; runs in recon3d |
 | rc33 | DA3 feed-forward Gaussians (GS head) + gentle polish instead of training from scratch; raw FF splat exported |
 | rc32 | Subject masks for AI views (relaxed criteria), maskless candidates excluded, stronger angle check |
 | rc31 | Subject mode (cameras from the subject, background from the photo); joint engine depth instead of per-view MoGe-2 priors; turntable around the subject |

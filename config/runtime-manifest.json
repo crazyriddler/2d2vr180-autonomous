@@ -73,7 +73,7 @@
           "package_root": "src"
         }
       ],
-      "smoke_test": "import torch, gsplat, gsplat.strategy, vggt.models.vggt, moge.model.v2, open3d, sklearn, plyfile, addict, omegaconf; import importlib.util as u; assert u.find_spec('depth_anything_3'); print('cuda', torch.cuda.is_available())",
+      "smoke_test": "import torch, gsplat, gsplat.strategy, vggt.models.vggt, moge.model.v2, open3d, sklearn, plyfile, addict, omegaconf, diffusers, transformers, sentencepiece; import importlib.util as u; assert u.find_spec('depth_anything_3'); print('cuda', torch.cuda.is_available())",
       "network_at_inference": false,
       "lock": "locks/recon3d-cu124.txt",
       "local_versions": {

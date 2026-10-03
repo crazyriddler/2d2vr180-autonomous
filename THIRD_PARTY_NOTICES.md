@@ -24,7 +24,8 @@ runtime libraries under the NVIDIA EULA), torchvision, gsplat (Apache-2.0), MoGe
 (MIT), VGGT (VGGT License v1), Open3D (MIT), scikit-learn (BSD-3-Clause), Stability AI stable-virtual-camera
 (Stability AI Non-Commercial Research Community License), diffusers (Apache-2.0), open_clip (MIT),
 kornia (Apache-2.0), roma (BSD-3-Clause), VideoX-Fun (Apache-2.0), peft (Apache-2.0), gguf (MIT),
-bitsandbytes (MIT), Depth Anything 3 code (Apache-2.0), addict (MIT), transformers (Apache-2.0), omegaconf (BSD-3-Clause),
+bitsandbytes (MIT), Depth Anything 3 code (Apache-2.0), FlashWorld code (Apache-2.0, vendored in
+workers/flashworld with its LICENSE), accelerate (Apache-2.0), sentencepiece (Apache-2.0), ftfy (Apache-2.0), addict (MIT), transformers (Apache-2.0), omegaconf (BSD-3-Clause),
 librosa (ISC) and their dependencies.
 
 Models (config/model-manifest.json) — shown with their license before download:
@@ -41,6 +42,8 @@ Models (config/model-manifest.json) — shown with their license before download
 | Qwen-Image-Edit-2511 Multiple-Angles LoRA (fal) | Apache-2.0 | yes |
 | Qwen-Image-Edit-2511 Lightning LoRAs, 4 and 8 steps (lightx2v) | Apache-2.0 | yes |
 | Depth Anything 3 Nested Giant-Large 1.1 (ByteDance) | CC BY-NC 4.0 | no (downloaded by the user) |
+| FlashWorld weights (imlixinyang) | CC BY-NC-SA 4.0 | no (downloaded by the user) |
+| Wan2.2-TI2V-5B VAE and UMT5-XXL text encoder (Wan-AI) | Apache-2.0 | yes |
 | Stable Virtual Camera 1.1 | Stability AI Non-Commercial Research Community License (gated; outputs non-commercial) | **no** |
 | Stable Diffusion 2.1 VAE (sd2-community mirror) | CreativeML Open RAIL++-M | yes (use restrictions apply) |
 | OpenCLIP ViT-H/14 LAION-2B | MIT | yes |

@@ -50,8 +50,12 @@ verified (SHA256) before use.
 
 1. Open **Create** and drop one or more photos or videos (or click to browse).
 2. Answer **What do you want to make?**
-   - **Real 3D from one photo (recommended).** AI (Qwen-Image-Edit + Multiple-Angles) makes 3 more views of your
-     photo: 45° left, 45° right and from above.
+   - **Real 3D from one photo (recommended).**
+     - **With FlashWorld installed** (Components, ~35 GB): the whole 3D scene is generated directly from your
+       photo, as the camera swings around the subject. Every angle comes from the same 3D, so there are no
+       double contours. Takes a few minutes on an RTX 4080.
+     - **Without FlashWorld:** AI (Qwen-Image-Edit + Multiple-Angles) makes 3 more views of your photo: 45°
+       left, 45° right and from above.
      - In Auto and Quality, 2-3 candidates are made per angle, and the one that best behaves like a pure camera
        move of your photo is kept automatically. Views that contradict the photo are dropped.
      - The multi-view engine (Depth Anything 3 if installed, otherwise VGGT) then finds where each view was
