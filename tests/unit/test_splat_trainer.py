@@ -307,3 +307,51 @@ def test_training_can_start_from_ready_made_gaussians():
         out = ref_render(p, vm[:1], Kt[:1], 24, 24, 0)[0].clamp(0, 1)
     assert st.psnr(out, torch.from_numpy(imgs[0]).float() / 255) > 25       # already right from step 0
     assert hist[0][1] < 0.05
+
+
+def test_warp_image_identity_and_shift():
+    img = torch.rand(10, 16, 3)
+    assert torch.allclose(st.warp_image(img, torch.zeros(1, 2, 3, 3)), img, atol=1e-5)
+    f = torch.zeros(1, 2, 3, 3)
+    f[:, 0] = 2 / 16                                       # one pixel to the right, everywhere
+    out = st.warp_image(img, f)
+    assert torch.allclose(out[:, :-1], img[:, 1:], atol=1e-5)
+
+
+def test_view_alignment_absorbs_local_distortions_of_generated_views():
+    """AI views are each a little off locally; without alignment the splats average the copies (blur,
+    double contours), with it the photo's sharpness is kept."""
+    gt, pts, cols, c2ws, Ks, vm, Kt, imgs, _ = _scene()
+    rng = np.random.default_rng(5)
+    warped = [imgs[0]]
+    for i in (1, 2, 3):
+        f = torch.as_tensor(rng.normal(0, 0.12, (1, 2, 3, 3)), dtype=torch.float32)   # ~1.5 px, smooth
+        im = torch.from_numpy(imgs[i]).float() / 255
+        warped.append((st.warp_image(im, f).clamp(0, 1) * 255).round().byte().numpy())
+    cfg = st.TrainConfig(steps=300, sh_degree=0, densify=False, coarse_until=0.0, lr_sh0=0.05, log_every=50,
+                         flow_cells=3, flow_max=0.5, lr_flow=1e-2, flow_from=0.0)
+    noisy = pts + rng.normal(0, 0.03, pts.shape).astype(np.float32)
+
+    def fit(view_flow):
+        out = []
+        p, _ = st.train(warped, c2ws, Ks, [1, 1, 1, 1], noisy, np.full_like(cols, 0.5), cfg, device="cpu",
+                        render_fn=ref_render, view_flow=view_flow, flow_out=out)
+        with torch.no_grad():
+            r = [ref_render(p, vm[k:k + 1], Kt[k:k + 1], 24, 24, 0)[0].clamp(0, 1) for k in range(4)]
+        return np.mean([st.psnr(r[k], torch.from_numpy(imgs[k]).float() / 255) for k in range(4)]), out
+
+    base, _ = fit(None)
+    aligned, out = fit([False, True, True, True])
+    assert out[0] is None and out[1]["mean_px"] > 0.05
+    assert aligned > base + 0.3, (aligned, base)            # closer to the true, undistorted scene
+
+
+def test_frozen_geometry_only_changes_colours_and_opacities():
+    gt, pts, cols, c2ws, Ks, vm, Kt, imgs, _ = _scene()
+    cfg = st.TrainConfig(steps=20, sh_degree=0, densify=False, coarse_until=0.0, log_every=10, freeze_geometry=True)
+    p, _ = st.train(imgs, c2ws, Ks, [1, 1, 1, 1], pts, np.full_like(cols, 0.5), cfg, device="cpu",
+                    render_fn=ref_render)
+    ref = st.init_params(pts, np.full_like(cols, 0.5), cfg, "cpu")
+    for k in ("means", "scales", "quats"):
+        assert torch.equal(p[k].detach(), ref[k].detach())
+    assert not torch.equal(p["sh0"].detach(), ref["sh0"].detach())

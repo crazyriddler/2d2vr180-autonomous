@@ -257,3 +257,125 @@ def test_feedforward_init_keeps_the_subject_and_adds_the_photo_background():
     g2 = mv.ff_init_gaussians(G, [{}, {"generated": True}], [(None, {}), (None, {})],
                               [np.linspace(1, 5, h * w).reshape(h, w)] * 2, [None, None], None, None, K0, np.eye(4))
     assert 0.6 * 2 * h * w < len(g2["means"]) < 0.9 * 2 * h * w
+
+
+def test_duplicate_surfaces_of_generated_views_are_removed():
+    """Each view brings its own copy of a surface (ghosts in the turntable): the photo's copy is kept,
+    a generated view only adds what the photo does not show (here: what lies behind the photo's wall)."""
+    h, w = 20, 20
+    K = np.array([[20.0, 0, 10], [0, 20.0, 10], [0, 0, 1]])
+    photo_depth = np.full((h, w), 2.0)
+    valid = np.ones((h, w), bool)
+    X = np.array([[0.0, 0.0, 2.03],      # the same wall, 1.5 % off: duplicate
+                  [0.1, 0.0, 1.5],       # in front of the wall the photo sees: contradicts the photo
+                  [0.0, 0.1, 2.6],       # behind the wall: hidden from the photo, kept
+                  [5.0, 0.0, 2.0]])      # outside the photo's frame: kept
+    dup = mv.surface_duplicates(X, K, np.eye(4), photo_depth, valid, 0.04, in_front_too=True)
+    assert dup.tolist() == [True, True, False, False]
+    assert mv.surface_duplicates(X, K, np.eye(4), photo_depth, valid, 0.04).tolist() == [True, False, False, False]
+
+
+def test_feedforward_init_drops_generated_copies_and_uses_the_photo_layer():
+    V, h, w = 2, 16, 16
+    K = np.array([[16.0, 0, 8], [0, 16.0, 8], [0, 0, 1]])
+    ys, xs = np.mgrid[0:h, 0:w]
+    plane = np.stack([(xs + 0.5 - 8) / 16 * 2, (ys + 0.5 - 8) / 16 * 2, np.full((h, w), 2.0)], -1)
+    means = np.stack([plane, plane * [1, 1, 1.01]]).astype(np.float32)   # view 1 sees the same wall
+    G = {"means": means, "scales": np.full((V, h, w, 3), 0.01, np.float32),
+         "quats": np.tile([1, 0, 0, 0], (V, h, w, 1)).astype(np.float32), "dc": np.zeros((V, h, w, 3), np.float32),
+         "opacity": np.full((V, h, w), 0.6, np.float32)}
+    depth = [np.full((h, w), 2.0)] * 2
+    items = [{}, {"generated": True}]
+    vin = [(None, {}), (None, {})]
+    plain = mv.ff_init_gaussians(G, items, vin, depth, [None, None], None, None, K, np.eye(4), far_pct=100)
+    dedup = mv.ff_init_gaussians(G, items, vin, depth, [None, None], None, None, K, np.eye(4), far_pct=100,
+                                 cams=[(K, np.eye(4))] * 2)
+    assert len(dedup["means"]) == len(plain["means"]) // 2           # the generated view's copy is gone
+    # photo layer: one Gaussian per photo pixel (at 4x DA3's resolution) instead of DA3's for the photo
+    Kp = K * [[4], [4], [1]]
+    layer = np.full((64, 64), 2.0, np.float32)
+    layer[:, :2] = 0                                                 # e.g. a depth jump left out
+    img = np.random.default_rng(0).integers(0, 255, (64, 64, 3)).astype(np.uint8)
+    g = mv.ff_init_gaussians(G, items, vin, depth, [None, None], None, img, Kp, np.eye(4), far_pct=100,
+                             cams=[(K, np.eye(4))] * 2, photo_layer=layer)
+    assert len(g["means"]) == 64 * 62
+    assert np.allclose(g["dc"][0] * 0.28209479177387814 + 0.5, img[0, 2] / 255, atol=1e-5)
+
+
+def test_photo_layer_depth_is_smooth_and_skips_depth_jumps():
+    d = np.full((10, 10), 2.0)
+    d[:, 5:] = 4.0                                                  # a jump from 2 m to 4 m
+    d[:5, :5] = np.linspace(2.0, 2.05, 25).reshape(5, 5)
+    info = {"sx": 1.0, "sy": 1.0, "crop": 0, "w": 10}
+    out = mv.photo_layer_depth(d, info, (40, 40), None)
+    assert out.shape == (40, 40)
+    assert (out[:, 18:22] == 0).all()                               # around the jump: left out
+    assert (out[:, :12] > 0).all() and (out[:, 26:] > 0).all()
+    assert len(np.unique(out[:12, :12])) > 25                       # bilinear, not 2.5-px stairs
+
+
+def _look(eye, target):
+    f = np.asarray(target, float) - eye
+    f /= np.linalg.norm(f)
+    r = np.cross(f, [0, -1.0, 0])
+    r /= np.linalg.norm(r)
+    m = np.eye(4)
+    m[:3, 0], m[:3, 1], m[:3, 2], m[:3, 3] = r, np.cross(f, r), f, eye
+    return m
+
+
+def _wall_and_subject(cams, K, h, w):
+    """Depth maps of a subject (a 0.3 m square at z = 1) in front of a wall (z = 2), seen by `cams`."""
+    dd, masks = [], []
+    ys, xs = np.mgrid[0:h, 0:w]
+    for c2w in cams:
+        d_cam = np.stack([(xs + 0.5 - K[0, 2]) / K[0, 0], (ys + 0.5 - K[1, 2]) / K[1, 1], np.ones((h, w))], -1)
+        d_w = d_cam @ c2w[:3, :3].T
+        o = c2w[:3, 3]
+        t_wall = (2.0 - o[2]) / d_w[..., 2]
+        t_subj = (1.0 - o[2]) / d_w[..., 2]
+        p = o + d_w * t_subj[..., None]
+        on_subj = (np.abs(p[..., 0]) < 0.15) & (np.abs(p[..., 1]) < 0.15)
+        t = np.where(on_subj, t_subj, t_wall)
+        dd.append((t * d_cam[..., 2] / np.linalg.norm(d_cam, axis=-1) * np.linalg.norm(d_cam, axis=-1)).astype(np.float32))
+        masks.append(on_subj)
+    return dd, masks
+
+
+def test_mesh_keeps_the_subject_apart_from_the_wall_behind_it(tmp_path):
+    o3d = pytest.importorskip("open3d")
+    h, w = 120, 160
+    K = np.array([[150.0, 0, 80], [0, 150.0, 60], [0, 0, 1]])
+    cams = [_look(np.array([x, 0, 0.0]), [0, 0, 1.0]) for x in (0.0, -0.4, 0.4)]
+    dd, masks = _wall_and_subject(cams, K, h, w)
+    cc = [np.full((h, w, 3), 128, np.uint8)] * 3
+    out = mv.layered_mesh(dd, [K] * 3, cams, cc, masks, str(tmp_path))
+    assert out["subject"]["voxel_m"] < 0.003 and out["subject"]["faces"] > 1000
+    z = -np.asarray(o3d.io.read_triangle_mesh(str(tmp_path / "scene.obj")).vertices)[:, 2]    # OBJ is z-flipped
+    assert ((z > 0.9) & (z < 1.1)).any() and ((z > 1.9) & (z < 2.1)).any()
+    between = (z > 1.15) & (z < 1.85)
+    assert between.mean() < 0.01, between.mean()             # no skin joining the subject to the wall
+    zs = -np.asarray(o3d.io.read_triangle_mesh(str(tmp_path / "subject.obj")).vertices)[:, 2]
+    assert np.all(np.abs(zs - 1.0) < 0.05)
+
+
+def test_mesh_voxel_respects_the_face_budget():
+    K = np.array([[1000.0, 0, 500], [0, 1000.0, 400], [0, 0, 1]])
+    far = [np.full((800, 1000), 10.0, np.float32)]            # 80 m² of wall 10 m away
+    v = mv.budget_voxel(far, [K], 0.001, 500_000)
+    assert 2 * mv.surface_area(far, [K]) / v ** 2 <= 500_001
+    assert mv.budget_voxel([np.full((8, 10), 1.0, np.float32)], [K], 0.001, 500_000) == 0.001   # small: as asked
+
+
+def test_back_views_are_judged_by_angle_not_dropped():
+    """A view of the subject's back shares nothing with the photo: it must not score as inconsistent."""
+    h, w = 20, 20
+    vin0 = (np.zeros((h, w, 3), np.float32), {})
+    pred = {"pads": (0, 0), "depth": [np.full((h, w), 2.0), np.full((h, w), 2.0)], "conf": [np.ones((h, w))] * 2,
+            "K": [np.array([[20.0, 0, 10], [0, 20.0, 10], [0, 0, 1]])] * 2,
+            "w2c": [np.eye(4)[:3], np.diag([-1.0, 1.0, -1.0, 1.0])[:3] + np.array([[0, 0, 0, 0], [0, 0, 0, 0],
+                                                                                  [0, 0, 0, 4.0]])]}
+    sc, err, ang, ov = mv.rigidity_score(None, vin0, vin0, None, None, 180, predict=lambda a: pred)
+    assert abs(ang - 180) < 1 and sc < 0.8 and err is None          # kept (drop threshold 0.8)
+    sc45, *_ = mv.rigidity_score(None, vin0, vin0, None, None, 45, predict=lambda a: pred)
+    assert sc45 == 10.0                                             # a 45° view with no overlap stays suspect

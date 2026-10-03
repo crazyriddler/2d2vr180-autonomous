@@ -57,7 +57,7 @@ class JobOptions:
     export_sequence: bool = False        # fixed-camera video: also export one .ply per frame (4D sequence)
     generative: str = "off"              # off | capture | arc | orbit | explore | spiral: invent unseen views
     gen_assembly: str = "fusion"         # fusion (sharp: MoGe-2 per view, merged) | train (one optimised splat)
-    gen_engine: str = "auto"             # auto | qwen | wan | seva: model that invents the other views
+    gen_engine: str = "auto"             # auto | qwen | flashworld | wan | seva: model that invents the views
     generated_inputs: list = field(default_factory=list)   # inputs that are AI views (rebuild with own picks)
     ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
 

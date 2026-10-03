@@ -16,6 +16,7 @@ Coordinates: OpenCV, scene frame = reference camera.
 """
 
 import json
+import math
 import os
 import sys
 
@@ -222,6 +223,22 @@ def metric_scale(moge_path, vin, depth, conf, torch, max_views=4, device="cuda")
 
 
 def tsdf_mesh(depths, Ks, c2ws, colors, out_obj, voxel):
+    mesh = tsdf_fuse(depths, Ks, c2ws, colors, voxel)
+    return write_mesh(mesh, out_obj, voxel)
+
+
+def write_mesh(mesh, out_obj, voxel):
+    import numpy as np
+    import open3d as o3d
+
+    # OBJ viewers expect y up: flip OpenCV (y down, z forward)
+    mesh.transform(np.diag([1.0, -1.0, -1.0, 1.0]))
+    o3d.io.write_triangle_mesh(out_obj, mesh, write_vertex_colors=True)
+    return {"vertices": len(mesh.vertices), "faces": len(mesh.triangles), "voxel_m": voxel}
+
+
+def tsdf_fuse(depths, Ks, c2ws, colors, voxel):
+    """Open3D triangle mesh (OpenCV axes) fused from depth maps (0 = no depth) seen from the cameras."""
     import numpy as np
     import open3d as o3d
 
@@ -239,10 +256,59 @@ def tsdf_mesh(depths, Ks, c2ws, colors, out_obj, voxel):
     mesh = vol.extract_triangle_mesh()
     mesh.remove_degenerate_triangles()
     mesh.remove_unreferenced_vertices()
-    # OBJ viewers expect y up: flip OpenCV (y down, z forward)
-    mesh.transform(np.diag([1.0, -1.0, -1.0, 1.0]))
-    o3d.io.write_triangle_mesh(out_obj, mesh, write_vertex_colors=True)
-    return {"vertices": len(mesh.vertices), "faces": len(mesh.triangles), "voxel_m": voxel}
+    return mesh
+
+
+def surface_area(dd, Ks):
+    """Rough area (m²) of what the depth maps show: the largest single view's pixel footprints x 1.5."""
+
+    areas = [float((d[d > 0] ** 2).sum() / (K[0, 0] * K[1, 1])) for d, K in zip(dd, Ks)]
+    return 1.5 * max(areas) if areas else 0.0
+
+
+def budget_voxel(dd, Ks, voxel, max_faces):
+    """``voxel``, enlarged when it would give more than ``max_faces`` faces (~2 per voxel² of surface):
+    fusion time and memory grow with that count, and a mesh far behind the subject at the subject's
+    voxel size could take very long or not finish."""
+    return max(voxel, math.sqrt(2 * surface_area(dd, Ks) / max(max_faces, 1)))
+
+
+def layered_mesh(dd, Ks, c2ws, cc, subject_masks, out_dir, subject_detail=600, scene_detail=400,
+                 background_detail=250, subject_faces=1_500_000, background_faces=500_000):
+    """scene.obj from rendered depth maps, without the "frozen in carbonite" skin: with subject masks
+    the subject and the background are fused separately - the subject with fine voxels (its median
+    distance / subject_detail: ~1.4 mm at 0.84 m), the background coarser - so no surface joins the
+    subject's outline to the wall behind it. The subject alone is also written as subject.obj.
+    Without masks, one mesh at median distance / scene_detail. Depth jumps are left out either way."""
+    import numpy as np
+
+    dd = [np.where(depth_edges(d), 0.0, d).astype(np.float32) for d in dd]
+
+    def med(ds):
+        v = [np.median(d[d > 0]) for d in ds if np.any(d > 0)]
+        return float(np.median(v)) if v else None
+
+    sm = [None if m is None else resize_map(np.asarray(m, np.uint8), d.shape[1], d.shape[0]).astype(bool)
+          for m, d in zip(subject_masks or [None] * len(dd), dd)]
+    out = {}
+    if not any(m is not None for m in sm):
+        voxel = budget_voxel(dd, Ks, max(med(dd) / scene_detail, 5e-4), subject_faces)
+        out["scene"] = write_mesh(tsdf_fuse(dd, Ks, c2ws, cc, voxel), os.path.join(out_dir, "scene.obj"), voxel)
+        return out
+    zero = [np.zeros_like(d) for d in dd]
+    ds = [np.where(m, d, 0.0) if m is not None else z for d, m, z in zip(dd, sm, zero)]
+    db = [np.where(~m, d, 0.0) if m is not None else z for d, m, z in zip(dd, sm, zero)]
+    vs = budget_voxel(ds, Ks, max(med(ds) / subject_detail, 5e-4), subject_faces)
+    subject = tsdf_fuse(ds, Ks, c2ws, cc, vs)
+    mesh = subject
+    if med(db):
+        vb = budget_voxel(db, Ks, max(med(db) / background_detail, 1e-3), background_faces)
+        mesh = subject + tsdf_fuse(db, Ks, c2ws, cc, vb)
+    import copy
+
+    out["subject"] = write_mesh(copy.deepcopy(subject), os.path.join(out_dir, "subject.obj"), vs)
+    out["scene"] = write_mesh(mesh, os.path.join(out_dir, "scene.obj"), vs)
+    return out
 
 
 def vggt_on_image(map_v, info, h, w):
@@ -257,6 +323,56 @@ def vggt_on_image(map_v, info, h, w):
     xs = np.clip(xs, 0, map_v.shape[1] - 1)
     yc = np.clip(ys, 0, map_v.shape[0] - 1)
     return map_v[yc][:, xs], np.broadcast_to(inside_y[:, None], (h, w))
+
+
+def vggt_on_image_smooth(map_v, info, h, w):
+    """vggt_on_image with bilinear instead of nearest sampling: a low-resolution depth map brought to
+    the photo's pixels without the staircase that nearest sampling leaves (visible from the side)."""
+    import numpy as np
+
+    r = w / (info["sx"] * info.get("w", VGGT_W))
+    xs = np.clip((np.arange(w) + 0.5) / r / info["sx"] - 0.5, 0, map_v.shape[1] - 1)
+    ys = np.clip((np.arange(h) + 0.5) / r / info["sy"] - info["crop"] - 0.5, 0, map_v.shape[0] - 1)
+    x0, y0 = np.floor(xs).astype(int), np.floor(ys).astype(int)
+    x1, y1 = np.minimum(x0 + 1, map_v.shape[1] - 1), np.minimum(y0 + 1, map_v.shape[0] - 1)
+    fx, fy = (xs - x0)[None, :], (ys - y0)[:, None]
+    m = np.asarray(map_v, np.float64)
+    top = m[y0][:, x0] * (1 - fx) + m[y0][:, x1] * fx
+    bot = m[y1][:, x0] * (1 - fx) + m[y1][:, x1] * fx
+    return (top * (1 - fy) + bot * fy).astype(np.float32)
+
+
+def depth_edges(depth, ratio=1.05):
+    """Pixels next to a depth jump (3x3 neighbourhood max / min above ``ratio``): unprojected, they
+    become the streaks between a subject and what is behind it."""
+    import numpy as np
+
+    d = np.where(depth > 0, depth, np.nan)
+    p = np.pad(d, 1, mode="edge")
+    stack = np.stack([p[y:y + d.shape[0], x:x + d.shape[1]] for y in range(3) for x in range(3)])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        hi, lo = np.nanmax(stack, 0), np.nanmin(stack, 0)
+        return ~(hi / lo <= ratio)
+
+
+def pixel_gaussians(depth, img, K, c2w, keep=None, stride=1, opacity=0.95):
+    """One Gaussian per pixel (every ``stride``-th) of an image at its depth: the photo's own detail,
+    at full resolution, where the depth is valid and not on a depth jump."""
+    import numpy as np
+
+    ok = (depth > 0) & np.isfinite(depth)
+    if keep is not None:
+        ok &= keep
+    sub = np.zeros_like(ok)
+    sub[::stride, ::stride] = True
+    yy, xx = np.nonzero(ok & sub)
+    X = unproject(depth, K, c2w)[yy, xx].astype(np.float32)
+    sc = (depth[yy, xx] * stride / K[0, 0] * 0.7).astype(np.float32)
+    q = np.zeros((len(yy), 4), np.float32)
+    q[:, 0] = 1
+    col = img[yy, xx].astype(np.float32) / 255.0
+    return {"means": X, "scales": np.repeat(sc[:, None], 3, 1), "quats": q,
+            "dc": (col - 0.5) / 0.28209479177387814, "opacity": np.full(len(yy), opacity, np.float32)}
 
 
 def consistency_map(ref_img, ref_depth, K0, c2w0, img, depth, K, c2w, cell=4, sigma=0.12, floor=0.1):
@@ -493,8 +609,10 @@ def fuse_views(req, items, vin, c2w_v, K_v, depth, conf, device, torch, out_dir)
         try:
             dd = [np.nan_to_num(v.z, nan=0.0) for v in views]
             med = float(np.median(dd[ref_index][dd[ref_index] > 0]))
-            mesh_info = tsdf_mesh(dd, [v.K for v in views], [v.c2w for v in views], [v.image for v in views],
-                                  os.path.join(out_dir, "scene.obj"), max(med / 250, 1e-3))
+            Kv = [v.K for v in views]
+            mesh_info = tsdf_mesh(dd, Kv, [v.c2w for v in views], [v.image for v in views],
+                                  os.path.join(out_dir, "scene.obj"), budget_voxel(dd, Kv, max(med / 250, 1e-3),
+                                                                                   2_000_000))
             outputs["obj"] = os.path.join(out_dir, "scene.obj")
         except Exception as e:  # noqa: BLE001 - the mesh is optional
             log(f"mesh export failed: {e}")
@@ -532,7 +650,10 @@ def load_da3(model_dir, device):
 def try_load_da3(model_dir, device, torch):
     """Depth Anything 3, or None (logged) when it cannot be loaded: the caller then uses VGGT."""
     try:
-        return load_da3(model_dir, device)
+        model = load_da3(model_dir, device)
+        log("(Depth Anything 3's warning about 'e3nn' is expected and harmless: e3nn only rotates the "
+            "view-dependent colour bands, and this app uses the base colour of DA3's Gaussians)")
+        return model
     except Exception as e:  # noqa: BLE001 - VGGT is the fallback engine
         log(f"Depth Anything 3 could not be loaded ({type(e).__name__}: {e}); using VGGT instead")
         free(torch)
@@ -662,6 +783,9 @@ def da3_cameras(model, vin, torch, infer_gs=False):
     return res + (p.get("gaussians"),) if infer_gs else res
 
 
+BEHIND_DEG = 100      # generated views asked for beyond this angle mostly show what the photo cannot
+
+
 def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None, predict=None):
     """How well a generated view is explained as a pure camera move of the reference photo.
 
@@ -701,6 +825,10 @@ def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None, pred
     angle = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(rel[:3, :3]) - 1) / 2))))
     overlap = float(ok.mean())
     if ok.sum() < 500:
+        if target_deg and target_deg > BEHIND_DEG:
+            # a view of the back shares (almost) nothing with the photo, by design: judge it only by how
+            # far the camera moved, never as "inconsistent" (which would drop it)
+            return 0.4 + 0.01 * max(0.0, abs(angle - target_deg) - 25), None, angle, overlap
         return 10.0, None, angle, overlap
     a = ref_vin[0].reshape(-1, 3)[ok]
     b = cand_vin[0][vi[ok], ui[ok]]
@@ -828,6 +956,10 @@ def render_turntable(params, K, size, target_z, out_dir, sh_degree, torch, n=72,
     return n
 
 
+def mesh_view_ids(n, max_views=60):
+    return list(range(n))[:: max(1, n // max_views)]
+
+
 def splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60, max_side=1024, min_alpha=0.6):
     """Depth (expected depth, 0 where the splat is transparent) and colour of the
     trained splat seen from the training cameras, for TSDF meshing."""
@@ -836,7 +968,7 @@ def splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60, max_side=102
     import splat_trainer as st
 
     dev = params["means"].device
-    idx = list(range(len(c2ws)))[:: max(1, len(c2ws) // max_views)]
+    idx = mesh_view_ids(len(c2ws), max_views)
     dd, cc, ks, cs = [], [], [], []
     for i in idx:
         w0, h0 = sizes[i]
@@ -857,16 +989,68 @@ def splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60, max_side=102
     return dd, cc, ks, cs
 
 
-def ff_init_gaussians(G, items, vin, depth, subj, photo_depth, photo_img, K0, c2w0, far_pct=90.0):
+def surface_duplicates(X, K, c2w, depth, valid, tol, in_front_too=False):
+    """Which points X (N,3) lie on the surface that a view (K, c2w, depth map at K's resolution, valid
+    mask) already shows: inside its frame and within ``tol`` (relative) of its depth there. With
+    ``in_front_too`` points in front of that surface count as well (they would hide it)."""
+    import numpy as np
+
+    h, w = depth.shape
+    pc = (X - c2w[:3, 3]) @ c2w[:3, :3]
+    z = pc[:, 2]
+    zs = np.where(z > 1e-6, z, 1.0)
+    u = np.floor(K[0, 0] * pc[:, 0] / zs + K[0, 2]).astype(np.int64)
+    y = np.floor(K[1, 1] * pc[:, 1] / zs + K[1, 2]).astype(np.int64)
+    inside = (z > 1e-6) & (u >= 0) & (u < w) & (y >= 0) & (y < h)
+    ui, yi = np.clip(u, 0, w - 1), np.clip(y, 0, h - 1)
+    d = depth[yi, ui]
+    ok = inside & valid[yi, ui] & (d > 0)
+    near = np.abs(z - d) <= tol * d
+    if in_front_too:
+        near |= z < d
+    return ok & near
+
+
+def photo_layer_depth(engine_depth, info, hw, subject, photo_depth=None):
+    """The photo's depth at its training resolution for the photo layer: the camera engine's (joint,
+    consistent with the generated views) depth sampled smoothly; in subject mode the background from
+    ``photo_depth`` (MoGe-2, scaled on the subject). Pixels on depth jumps are 0 (left out)."""
+    import numpy as np
+
+    h, w = hw
+    d = vggt_on_image_smooth(engine_depth, info, h, w)
+    d = np.where(vggt_on_image(engine_depth, info, h, w)[1], d, 0.0)
+    jumps = vggt_on_image(depth_edges(engine_depth).astype(np.uint8), info, h, w)[0] > 0
+    if subject is not None:
+        m = resize_map(np.asarray(subject, np.uint8), w, h).astype(bool)
+        jumps &= m                                 # the engine's depth outside the subject is not used
+        bg = photo_depth if photo_depth is not None and photo_depth.shape == (h, w) else np.zeros((h, w))
+        d = np.where(m, d, bg)
+    d = np.where(jumps | depth_edges(d), 0.0, d)
+    return d.astype(np.float32)
+
+
+def ff_init_gaussians(G, items, vin, depth, subj, photo_depth, photo_img, K0, c2w0, far_pct=90.0,
+                      cams=None, dedup_tol=0.04, photo_layer=None):
     """Initial Gaussians from Depth Anything 3's feed-forward splat (per pixel of every view):
     border pixels and the farthest 10 % are left out (as DA3's own exporter does), generated views
     keep only their subject in subject mode, and there the photo's background is added from its
-    own depth (photo_depth, at the photo's training resolution)."""
+    own depth (photo_depth, at the photo's training resolution).
+    ``cams`` ([(K, c2w)] per view at the depth maps' resolution): removes the double copies that make
+    the splat look ghostly. Every view adds a copy of each surface it sees, at its own slightly
+    different depth; the photo's copy is kept wherever the photo sees the surface (a generated
+    view's Gaussian on or in front of the photo's surface is dropped), and of the generated views
+    the earlier one wins. Generated views then only add what the views before them do not show.
+    ``photo_layer`` ((H, W) depth at the photo's training resolution, edges zeroed): the photo's part
+    is one Gaussian per photo pixel with the photo's colours instead of DA3's (a few hundred pixels
+    wide, so 2-3 photo pixels per Gaussian: blurry, owner's rc33 test)."""
     import numpy as np
 
     V, h, w = G["means"].shape[:3]
     th, tw = max(1, int(8 / 256 * h)), max(1, int(8 / 256 * w))
     out = {k: [] for k in G}
+    valid = []
+    dropped = 0
     for v in range(V):
         m = np.zeros((h, w), bool)
         m[th:-th, tw:-tw] = True
@@ -876,11 +1060,31 @@ def ff_init_gaussians(G, items, vin, depth, subj, photo_depth, photo_img, K0, c2
             d = depth[v]
             m &= d <= np.percentile(d[d > 0], far_pct) if np.any(d > 0) else True
         m &= np.isfinite(G["means"][v]).all(-1)
+        valid.append(m)
+        sel = {k: G[k][v][m] for k in G}
+        if cams is not None and v > 0:
+            dup = np.zeros(len(sel["means"]), bool)
+            for i in range(v):
+                K, c2w = cams[i]
+                dup |= surface_duplicates(sel["means"], K, c2w, depth[i], valid[i], dedup_tol,
+                                          in_front_too=i == 0 and not items[0].get("generated"))
+            dropped += int(dup.sum())
+            sel = {k: a[~dup] for k, a in sel.items()}
+        if photo_layer is not None and v == 0:
+            continue
         for k in G:
-            out[k].append(G[k][v][m])
+            out[k].append(sel[k])
+    if photo_layer is not None:
+        layer = pixel_gaussians(photo_layer, photo_img, K0, c2w0)
+        for k in G:
+            out[k].insert(0, layer[k])
+        log(f"photo layer: {len(layer['means']):,} Gaussians, one per photo pixel")
     g = {k: np.concatenate(a) for k, a in out.items()}
     n_ff = len(g["means"])
-    if subj[0] is not None and photo_depth is not None:
+    if dropped:
+        log(f"feed-forward splat: {dropped:,} duplicate Gaussians of generated views removed (the photo's, "
+            "or an earlier view's, copy of the same surface is kept)")
+    if subj[0] is not None and photo_depth is not None and photo_layer is None:
         H, W = photo_depth.shape
         stride = max(1, int(round(W / (1.4 * w))))
         bg = ~resize_map(subj[0].astype(np.uint8), W, H).astype(bool) & (photo_depth > 0)
@@ -956,7 +1160,8 @@ def subject_setup(req, items, max_side, device, torch):
     from the subject alone, and letting generated views teach only the subject, avoids a 3D torn
     between the two (the photo alone provides the background)."""
     if (str(req.get("subject_mode", "auto")) == "off" or not req.get("moge_path")
-            or req.get("assembly") == "fusion" or not any(it.get("generated") for it in items)):
+            or "fusion" in (req.get("assembly"), req.get("ff_fallback"))
+            or not any(it.get("generated") for it in items)):
         return None
     paths = []
     for it in items:
@@ -1094,6 +1299,13 @@ def main(req):
         model = try_load_da3(req["da3_dir"], device, torch)
         if model is None:
             masks = None
+
+    if req.get("assembly") == "ff" and model is None:
+        req = dict(req, assembly=req.get("ff_fallback", "train"))   # no DA3: the assembly asked for before
+        fusion_mode = req["assembly"] == "fusion"
+        if fusion_mode and device == "cpu" and not (poses_only or req.get("allow_cpu")):
+            emit("error", code="cuda_unavailable", message="Multi-view reconstruction needs an NVIDIA GPU (CUDA).")
+            sys.exit(1)
 
     def mk(path):
         return masks.get(path) if masks else None
@@ -1268,8 +1480,12 @@ def main(req):
     if ff_gauss is not None:
         if scale and np.isfinite(scale) and scale > 0:      # MoGe metric scale applied to the cameras
             ff_gauss = dict(ff_gauss, means=ff_gauss["means"] * scale, scales=ff_gauss["scales"] * scale)
+        layer = photo_layer_depth(depth[0], vin[0][1], train_imgs[0].shape[:2], subj[0],
+                                  priors[0] if priors is not None else None) if req.get("photo_layer", True) else None
         ff_init = ff_init_gaussians(ff_gauss, items, vin, depth, subj,
-                                    priors[0] if priors is not None else None, train_imgs[0], Ks[0], c2ws[0])
+                                    priors[0] if priors is not None else None, train_imgs[0], Ks[0], c2ws[0],
+                                    cams=[(K_v[i], c2w_v[i]) for i in range(n)] if req.get("dedup", True) else None,
+                                    photo_layer=layer)
         ff_gauss = None
     if req.get("dry_run"):   # tests: everything up to the GPU training, on any device
         emit("result", dry_run=True, camera_engine=engine, views=n, points=int(len(points)), metric=metric,
@@ -1282,13 +1498,19 @@ def main(req):
                          max_gaussians=int(req.get("max_gaussians", 2_000_000)),
                          init_points=int(req.get("init_points", 400000)))
     ff_raw = None
-    if ff_init is not None:
-        # the feed-forward splat is already coherent: a short, gentle polish (positions move 10x
-        # slower) recovers the photo's detail without letting the generated views tear it apart again
+    # The owner's verdict (rc37): the raw DA3 splat looks better than any processing of it, so by
+    # default it IS the result - no training, no cleanup ("ff_polish" brings the colour polish back).
+    raw_final = ff_init is not None and not req.get("ff_polish", False)
+    if ff_init is not None and not raw_final:
+        # the feed-forward splat keeps each view's detail; training it like a scratch splat blurred it
+        # (owner, rc33: the raw DA3 splat looked better than the polished one). The polish now only
+        # adjusts colours and opacities - a ghost copy that the other views contradict fades out -
+        # and never moves, splits or prunes the Gaussians.
         cfg.steps = int(req.get("ff_refine_steps", 3000))
-        cfg.lr_means *= 0.1
         cfg.coarse_until = 0.0
-        cfg.max_gaussians = max(cfg.max_gaussians, int(len(ff_init["means"]) * 1.5))
+        cfg.freeze_geometry = True
+        cfg.densify = False
+        cfg.max_gaussians = max(cfg.max_gaussians, len(ff_init["means"]))
         try:     # the raw feed-forward result is kept for comparison
             raw = st.params_from_gaussians(ff_init, cfg, "cuda")
             ff_raw = os.path.join(out_dir, "scene_feedforward.ply")
@@ -1314,9 +1536,16 @@ def main(req):
     pose_opt = None
     if req.get("pose_refine", True):
         pose_opt = [k > 0 and (bool(it.get("generated")) or n <= 32) for k, it in enumerate(items)]
-    for attempt in range(3):
+    # ... and AI-drawn views are each a few pixels off locally (a hand, an ear): a smooth per-view
+    # image alignment absorbs that instead of averaging the copies into blur
+    view_flow = [bool(it.get("generated")) for it in items] if req.get("view_flow", True) else None
+    app_out, pose_out, flow_out, hist = [], [], [], []
+    if raw_final:
+        params = st.params_from_gaussians(ff_init, cfg, "cuda")
+        log(f"raw Depth Anything 3 splat used as the result ({len(ff_init['means']):,} Gaussians, not trained)")
+    for attempt in range(0 if raw_final else 3):
         oom = False
-        app_out, pose_out = [], []
+        app_out, pose_out, flow_out = [], [], []
         try:
             params, hist = st.train(train_imgs, c2ws, Ks, weights, points, colors, cfg, device="cuda",
                                     progress=lambda v, m: progress(0.37 + 0.5 * v, m),
@@ -1324,7 +1553,9 @@ def main(req):
                                     appearance=appearance if appearance and any(appearance) else None,
                                     appearance_out=app_out,
                                     pose_opt=pose_opt if pose_opt and any(pose_opt) else None,
-                                    pose_out=pose_out, init=ff_init)
+                                    pose_out=pose_out, init=ff_init,
+                                    view_flow=view_flow if view_flow and any(view_flow) else None,
+                                    flow_out=flow_out)
             break
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if "out of memory" not in str(e).lower() or attempt == 2:
@@ -1364,9 +1595,17 @@ def main(req):
             log("refined cameras of generated views: " +
                 ", ".join(f"{p['view']} {p['rotation_deg']}°" for p in pose_refined))
 
+    view_alignment = []
+    for i, f in enumerate(flow_out):
+        if f:
+            view_alignment.append({"view": items[i].get("label") or os.path.basename(items[i]["path"]), **f})
+    if view_alignment:
+        log("image alignment of generated views: " +
+            ", ".join(f"{a['view']} {a['mean_px']:.1f} px (max {a['max_px']:.1f})" for a in view_alignment))
+
     # ------------------------------------------------------------ cleanup
     sizes = [(im.shape[1], im.shape[0]) for im in train_imgs]
-    if req.get("cleanup", True):
+    if req.get("cleanup", True) and not raw_final:
         progress(0.87, "removing floaters and splats no view has seen")
         with torch.no_grad():
             keep = st.cleanup_mask(params, c2ws, Ks, sizes)
@@ -1440,7 +1679,8 @@ def main(req):
     if req.get("mesh", True):
         try:
             progress(0.92, "rendering depth for the mesh")
-            mesh_views = splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60)
+            mesh_views = splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60, max_side=1600,
+                                           min_alpha=0.5)
         except Exception as e:  # noqa: BLE001
             log(f"rendered depth for the mesh failed, using the engine depth: {e}")
     params = None  # free GPU memory before meshing
@@ -1457,10 +1697,16 @@ def main(req):
                 dd = [depth[i] for i in use]
                 cc = [(vin[i][0] * 255).astype(np.uint8) for i in use]
                 mK, mC = [K_crop[i] for i in use], [c2ws[i] for i in use]
-            med = float(np.median([np.median(d[d > 0]) for d in dd if np.any(d > 0)]))
-            mesh_info = tsdf_mesh(dd, mK, mC, cc, os.path.join(out_dir, "scene.obj"), max(med / 250, 1e-3))
-            mesh_info["source"] = "trained splat" if mesh_views else "engine depth"
+            ids = mesh_view_ids(n, 60) if mesh_views else use
+            layers = layered_mesh(dd, mK, mC, cc, [subj[i] for i in ids] if masks else None, out_dir)
+            mesh_info = dict(layers["scene"], source="splat" if mesh_views else "engine depth")
             outputs["obj"] = os.path.join(out_dir, "scene.obj")
+            if "subject" in layers:
+                mesh_info["subject"] = layers["subject"]
+                outputs["obj_subject"] = os.path.join(out_dir, "subject.obj")
+            log(f"mesh: {mesh_info['faces']:,} faces, voxel {mesh_info['voxel_m'] * 1000:.1f} mm"
+                + (f" (subject {layers['subject']['faces']:,} faces, separate from the background)"
+                   if "subject" in layers else ""))
         except Exception as e:  # noqa: BLE001 - the mesh is optional
             log(f"mesh export failed: {e}")
     counts_np = codes.cpu().numpy()
@@ -1468,8 +1714,8 @@ def main(req):
          metric_scale_factor=scale, views=n, real_views=sum(1 for it in items if not it.get("generated")),
          reference_psnr_db=round(ref_psnr, 2), splats=count, mesh=mesh_info, loss_history=hist[-20:],
          candidate_selection=selection,
-         pose_refinement=pose_refined, subject_mode=bool(masks),
-         assembly="ff" if ff_init is not None else "train",
+         pose_refinement=pose_refined, subject_mode=bool(masks), view_alignment=view_alignment,
+         assembly=("ff-raw" if raw_final else "ff") if ff_init is not None else "train",
          colour_correction=[None if a is None else {"gain": [round(a[0][c][c], 3) for c in range(3)],
                                                     "offset": [round(x, 3) for x in a[1]]} for a in app_out],
          provenance={"observed": int((counts_np == 0).sum()), "inferred": int((counts_np == 1).sum()),

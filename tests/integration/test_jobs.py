@@ -221,6 +221,16 @@ def test_several_photos_become_one_multiview_scene(ctx, rtx4080, tmp_path, monke
     assert rep["outputs"]["vr180"]["stills"]
     tt = rep["backend"]["extra"]["turntable"]
     assert tt and Path(tt).name == "turntable.mp4" and Path(tt).stat().st_size > 0
+    assert req["assembly"] == "fusion"                             # no Depth Anything 3 installed
+    # with Depth Anything 3, several real photos also give its raw splat (fusion only as fallback)
+    from conftest import install_fake_model
+
+    install_fake_model(ctx.models, "da3-nested-giant-large")
+    job, rep, _ = run_job(ctx, rtx4080, paths, mode="fast", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    req = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert req["assembly"] == "ff" and req["ff_fallback"] == "fusion" and req["ff_polish"] is False
+    assert rep["backend"]["extra"]["assembly"] == "ff-raw"
 
 
 def test_folder_of_photos_is_expanded(tmp_path):
@@ -431,16 +441,21 @@ def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypat
     assert rep["status"] == "succeeded", rep.get("error")
     gen = job.dir / "generated_views"
     enc = json.loads((gen / "stage_encode.json").read_text())
-    assert [(v["azimuth"], v["elevation"]) for v in enc["views"]] == [(315, 0), (45, 0), (0, 30)]
+    from twod2vr180.backends.generative import QWEN_VIEWS
+
+    angles = [(az, el) for _, az, el in QWEN_VIEWS[f"tri_{mode}"]]
+    assert angles[:5] == [(315, 0), (45, 0), (0, 30), (270, 0), (90, 0)]       # every mode has the sides
+    assert len(angles) == {"fast": 5, "auto": 9, "quality": 11}[mode]
+    assert [(v["azimuth"], v["elevation"]) for v in enc["views"]] == angles
     assert enc["angles_strength"] > 0 and enc["candidates"] == n_cand
     retry = 2 if n_cand > 1 else 0          # the fake scorer finds the first angle weak (Auto/Quality retry)
-    assert len(list(gen.glob("view*.png"))) == 3 * n_cand + retry
+    assert len(list(gen.glob("view*.png"))) == len(angles) * n_cand + retry
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "train" and len(mv["images"]) == 4      # the photo + exactly 3 views
+    assert mv["assembly"] == "train" and len(mv["images"]) == 1 + len(angles)     # the photo + the views
     assert not mv["images"][0]["generated"]
     if n_cand > 1:
-        assert [len(v["candidates"]) for v in mv["images"][1:]] == [n_cand + retry, n_cand, n_cand]
-        assert all(v["target_deg"] in (45, 30) for v in mv["images"][1:])
+        assert [len(v["candidates"]) for v in mv["images"][1:]] == [n_cand + retry] + [n_cand] * (len(angles) - 1)
+        assert {v["target_deg"] for v in mv["images"][1:]} >= {45, 30, 90}
     assert rep["backend"]["extra"]["assembly"] == "train"
     sheet = job.dir / "export" / "generated_views_sheet.jpg"
     assert sheet.exists() and rep["backend"]["extra"]["contact_sheet"].endswith("generated_views_sheet.jpg")
@@ -462,7 +477,7 @@ def test_quality_uses_the_8_step_lightning_lora_when_installed(ctx, rtx4080, pho
     assert ("qwen-edit-2511-lightning-8" in ids) == with_8
 
 
-def test_real3d_uses_the_feedforward_splat_when_depth_anything_3_is_installed(ctx, rtx4080, photo, monkeypatch):
+def test_real3d_outputs_the_raw_feedforward_splat_when_depth_anything_3_is_installed(ctx, rtx4080, photo, monkeypatch):
     from conftest import install_fake_model
 
     _fake_generative(monkeypatch)
@@ -471,12 +486,11 @@ def test_real3d_uses_the_feedforward_splat_when_depth_anything_3_is_installed(ct
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "ff" and mv["ff_refine_steps"] == 3000 and mv["pose_engine"] == "da3"
+    assert mv["assembly"] == "ff" and mv["pose_engine"] == "da3" and mv["ff_polish"] is False
     extra = rep["backend"]["extra"]
-    assert extra["assembly"] == "ff"
-    assert Path(extra["feedforward_ply"]).name == "scene_feedforward.ply" and Path(extra["feedforward_ply"]).exists()
-    assert Path(extra["turntable_feedforward"]).name == "turntable_feedforward.mp4"
-    assert "feed-forward" in rep["coverage"]["note"]
+    assert extra["assembly"] == "ff-raw"                       # the raw DA3 splat is the VR result
+    assert extra["feedforward_ply"] is None                    # nothing else to compare with
+    assert "unprocessed" in rep["coverage"]["note"]
 
 
 def test_real3d_generates_the_3d_directly_with_flashworld_when_installed(ctx, rtx4080, photo, monkeypatch):
@@ -490,6 +504,10 @@ def test_real3d_generates_the_3d_directly_with_flashworld_when_installed(ctx, rt
         install_fake_model(ctx.models, mid)
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["extra"]["engine"] == "qwen"            # Qwen views stay the default
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu",
+                          gen_engine="flashworld")
+    assert rep["status"] == "succeeded", rep.get("error")
     extra = rep["backend"]["extra"]
     assert extra["engine"] == "flashworld" and extra["assembly"] == "generated"
     gen = json.loads((job.dir / "fake_flashworld_generate.json").read_text())
@@ -501,7 +519,8 @@ def test_real3d_generates_the_3d_directly_with_flashworld_when_installed(ctx, rt
     assert Path(extra["turntable"]).name == "turntable.mp4"
     assert {m["id"] for m in rep["models"]} >= {"flashworld", "wan2.2-ti2v-5b-base"}
     # the text embedding is computed once and reused
-    job2, rep2, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    job2, rep2, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu",
+                            gen_engine="flashworld")
     assert rep2["status"] == "succeeded"
     assert Path(gen["embeds_path"] + ".calls").read_text().count("1") == 1
 

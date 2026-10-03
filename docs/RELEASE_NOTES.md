@@ -1,4 +1,91 @@
-# 2D2VR180 1.0.0-rc34 — Real 3D generated directly: FlashWorld
+# 2D2VR180 1.0.0-rc39 — A more complete 3D: more angles, and a mesh that is not set in stone
+
+## What's new in rc39
+
+- **Real 3D draws your subject from many more angles.**
+  - Fast: 5 views (45° and 90° to each side, from above).
+  - Auto: 9 views (adds 135° to each side, the back and from below).
+  - Quality: 11 views (adds raised 45° diagonals).
+  - Views of the back share almost nothing with your photo, so they are now judged by how far the camera
+    moved. Before, they would have been dropped as "inconsistent" and retried.
+- **The mesh (OBJ) is no longer "frozen in carbonite".**
+  - The fusion joined the outline of the subject to the wall behind it with a continuous skin. Now the
+    subject and the background are fused separately, and depth jumps are left out.
+  - The subject is fused with much finer voxels: about 1.4 mm for a subject 0.84 m away, about 5× more
+    detail than before.
+  - `subject.obj`, the subject alone without the background, is also exported.
+- **Mesh fusion is faster and always finishes.**
+  - Since the mesh is made from the splat, the whole photo background was fused with the subject's small
+    voxels. A background several times farther away then takes tens of times more voxels.
+  - The background now uses coarser voxels.
+  - A face budget caps every mesh: about 1.5 M faces for the subject and 0.5 M for the background. The
+    voxel grows when that budget would be exceeded.
+
+## rc38: The raw Depth Anything 3 splat is the result
+
+## What's new in rc38
+
+- **No more processing of the 3D.** In your tests, the raw Depth Anything 3 splat looked better than any
+  trained, polished or fused version. So whenever Depth Anything 3 is installed and can take the images,
+  its raw splat is the scene: the VR180 output, the PLY/SPLAT export and the turntable.
+  - This applies to every multi-view job: Real 3D from one photo, 360° around the subject, and several
+    photos of the same scene.
+  - The splat is not trained afterwards, and no splats are removed in a cleanup step.
+  - What rc37 added is kept, because it is part of how the raw splat is built, not processing on top: the
+    photo layer (one splat per photo pixel) and the removal of duplicate copies.
+  - The separate *Turntable: raw DA3 splat* button is no longer needed: *Play turntable* now shows it.
+- Without Depth Anything 3, or with more than 32 images or images of different shapes (long videos, for
+  example), the previous method is used.
+
+## rc37: Real 3D: back to AI views, with your photo's full detail
+
+## What's new in rc37
+
+- **"Real 3D from one photo" uses Qwen-Image-Edit views again.** That was the route that gave the most real
+  3D. FlashWorld is still available: choose it under *Generative engine*.
+- **Your photo keeps its full detail.** Depth Anything 3 builds its splat at about 504 pixels, so each
+  Gaussian covered 2–3 pixels of the photo, which looked blurry. Now the photo's part of the scene is one
+  Gaussian per photo pixel (1280 px in Auto), with the photo's own colours. The depth comes from Depth
+  Anything 3's joint estimate across all views, the smoother one that worked better. Pixels on depth edges
+  are left out, so there are no streaks between the subject and what is behind it.
+- **Fewer ghosts.** Every view used to add its own copy of each surface, each at a slightly different
+  depth, which made the result look ghostly. Now a generated view only adds what the photo, or an earlier
+  view, does not already show.
+- **The polish no longer erases detail.** The splat used to be trained like one built from scratch: points
+  moved, split and were pruned, which blurred it. Now only colours and opacities are adjusted. A ghost copy
+  that the other views contradict fades out, and the geometry stays as built.
+- **Local misalignments of AI views are absorbed.** Each AI-drawn view is usually a few pixels off here
+  and there, for example a hand or an ear. Each view now gets a small, smooth image alignment while
+  training, instead of the splat averaging the copies into blur. The log and the details panel show how
+  far each view had to be shifted.
+- The previous result (before the polish) is still exported as *Turntable: raw DA3 splat* for comparison.
+
+# 2D2VR180 1.0.0-rc36 — FlashWorld fits a 16 GB card
+
+## Fixed in rc36
+
+- **FlashWorld ran out of GPU memory, then seemed to hang.**
+  - FlashWorld passes all 24 views through its image encoder and 3D decoder at once. That needs about
+    24 GB of VRAM.
+  - The fallback then moved them to the CPU, which on Windows is so slow that it looked frozen: no GPU use,
+    1 % CPU.
+  - Now the views go through 4 at a time, then 1 at a time if memory is still short, always on the GPU.
+    Each view passes through on its own, so the result is identical. A CPU run of the real engine gave a
+    difference of exactly 0 between 1, 3 and all views at a time.
+  - The CPU fallback is gone.
+- The log now shows each of FlashWorld's 4 steps and the GPU memory peak, so progress is visible.
+
+## Fixed in rc35
+
+- **"Real 3D" with FlashWorld failed** with `AssertionError: torch.Size([1, 4])` as soon as generation
+  started.
+  - Cause: FlashWorld was written for a newer gsplat than 1.5.3, the version with ready-made Windows
+    builds. In 1.5.3's default "packed" mode, per-view background colours are rejected.
+  - FlashWorld now calls gsplat in unpacked mode. That changes only gsplat's internal memory layout, not
+    the image.
+  - A new test reproduces the exact error with the old call and passes with the new one.
+- Everything before that point already worked on the RTX 4080: the text encoding (cached), MoGe-2
+  measuring the subject at 0.84 m, and loading and quantising the 21 GB model in 22 seconds.
 
 ## What's new in rc34
 
@@ -521,7 +608,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc34-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc36-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |

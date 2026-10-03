@@ -27,9 +27,9 @@ MODE_HELP = {
 # "What do you want to make?" — each preset sets the advanced reconstruction controls.
 PRESETS = {
     "real3d": ("Real 3D from one photo (recommended)",
-               "With FlashWorld installed, the whole 3D scene is generated directly from your photo (every angle "
-               "from the same 3D). Without it, AI makes 3 more views and the multi-view engine reconstructs "
-               "them."),
+               "AI (Qwen-Image-Edit) draws your subject from 5-11 angles (sides, back, above, below); Depth Anything 3 "
+               "assembles them with your photo, which "
+               "keeps its full detail in front. (FlashWorld can be chosen as the generative engine instead.)"),
     "quick": ("Quick 3D",
               "Depth from the photo alone (MoGe-2 / SHARP). Seconds; sharp from the front, flat from the side."),
     "around": ("360° around the subject (experimental)",
@@ -248,7 +248,7 @@ class CreatePage(QWidget):
         gf.addRow("Backend", self.backend)
         self.generative = QComboBox()
         for label, val in (("Off — only what the photo shows", "off"),
-                           ("3 views (Qwen) — 45° left, 45° right, high angle → multi-view", "tri"),
+                           ("Real 3D views (Qwen) — 5 to 11 angles around the subject → multi-view", "tri"),
                            ("360° photo capture — 45°, 90°, 135°, 180°, 270°, above, below (Quality: more)",
                             "capture"),
                            ("Around the subject — sides, above and below (best for people)", "arc"),
@@ -263,6 +263,7 @@ class CreatePage(QWidget):
         self.engine = QComboBox()
         for label, val in (("Automatic — Qwen if installed, then Wan 2.2", "auto"),
                            ("Qwen-Image-Edit — sharp ~1 MP images per angle", "qwen"),
+                           ("FlashWorld — the 3D generated directly (Real 3D only)", "flashworld"),
                            ("Wan 2.2 — video camera moves (smooth, 704 px)", "wan"),
                            ("Stable Virtual Camera — scenes/objects (not people)", "seva")):
             self.engine.addItem(label, val)
@@ -374,9 +375,6 @@ class CreatePage(QWidget):
             ctx = self.win.ctx
             need = []
             flashworld = self.preset() == "real3d" and installed(ctx, "flashworld")
-            if self.preset() == "real3d" and not flashworld:
-                msgs.append("Tip: install 'FlashWorld' in Components - it generates the 3D directly from your "
-                            "photo, without the double contours of separately drawn AI views.")
             if not flashworld and not (installed(ctx, "qwen") or (self.preset() == "around" and installed(ctx, "wan"))):
                 need.append("Qwen-Image-Edit-2511 + Multiple-Angles" if self.preset() == "real3d"
                             else "Qwen-Image-Edit or Wan 2.2")
@@ -769,6 +767,11 @@ class ResultsPage(QWidget):
         if pr:
             html.append("<p><small>Cameras of the AI views refined during training: " +
                         ", ".join(f"{p['view']} {p['rotation_deg']:.1f}°" for p in pr) + "</small></p>")
+        va = extra.get("view_alignment") or []
+        if va:
+            html.append("<p><small>Local misalignment of the AI views absorbed while training (mean / max): " +
+                        ", ".join(f"{a['view']} {a['mean_px']:.1f}/{a['max_px']:.1f} px" for a in va) +
+                        "</small></p>")
         cc = [c for c in extra.get("colour_correction") or [] if c]
         if cc:
             gains = ", ".join("/".join(f"{g:.2f}" for g in c["gain"]) for c in cc)

@@ -56,14 +56,17 @@ def main(req):
     for i in range(6):
         Image.fromarray(np.roll(img, i * 10, axis=1)).resize((128, 96)).save(os.path.join(tt, f"frame_{i:03d}.jpg"))
     outputs = {"ply": str(ply), "cameras": os.path.join(out, "cameras.json"), "turntable_frames": tt}
-    if req.get("assembly") == "ff":       # the real worker's feed-forward comparison outputs
+    assembly = req.get("assembly", "train")
+    if assembly == "ff" and not req.get("ff_polish"):
+        assembly = "ff-raw"                # the real worker: the raw DA3 splat is the result
+    if assembly == "ff":                  # the real worker's feed-forward comparison outputs
         import shutil
 
         outputs["ply_feedforward"] = shutil.copy(ply, os.path.join(out, "scene_feedforward.ply"))
         outputs["turntable_feedforward_frames"] = shutil.copytree(tt, os.path.join(out, "turntable_feedforward"))
     progress(1.0, "fake multiview done")
     n = len(sc)
-    emit("result", outputs=outputs, assembly=req.get("assembly", "train"),
+    emit("result", outputs=outputs, assembly=assembly,
          vram_peak_mib=None,
          metric=True, views=len(views), real_views=sum(not v.get("generated") for v in views),
          provenance={"observed": n - (n // 3 if gen else 0), "inferred": 0, "generative": n // 3 if gen else 0})

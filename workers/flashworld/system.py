@@ -59,7 +59,7 @@ def _fix_causal_padding(module):
 class GenerationSystem(nn.Module):
     def __init__(self, vae_dir, transformer_config, scheduler_dir, ckpt_path=None, device="cuda",
                  offload_vae=False, offload_transformer_during_vae=False, fp8=True, log=print,
-                 state_dict=None):
+                 state_dict=None, frame_chunk=None):
         super().__init__()
         self.device = torch.device(device)
         self.offload_t5 = False
@@ -126,10 +126,43 @@ class GenerationSystem(nn.Module):
 
             FluxFp8GeMMProcessor(self.transformer)
 
+        if frame_chunk:
+            self._chunk_frames(int(frame_chunk))
+
         del self.vae.post_quant_conv, self.vae.decoder
         self.vae.to(self.device if not self.offload_vae else "cpu").to(torch.bfloat16)
         self.recon_decoder.to(self.device if not self.offload_vae else "cpu").to(torch.bfloat16)
         self.transformer.to(self.device if not self.offload_transformer_during_vae else "cpu")
+
+    def _chunk_frames(self, k):
+        """2D2VR180: run the VAE encoder and the 3D Gaussian decoder on k views at a time. Upstream runs
+        all views at once (~24 GB VRAM for 24 views of 480x704). Every view passes through them as its own
+        single-frame clip, so splitting the batch changes nothing but the peak memory."""
+        import types
+
+        dec, vae = self.recon_decoder, self.vae
+        dec_forward, vae_encode = dec.forward, vae.encode
+
+        def forward(feats, z, cameras):
+            B, T = cameras.shape[:2]
+            cams = cameras.flatten(0, 1)
+            parts = [dec_forward(feats[i:i + k], z[i:i + k], cams[i:i + k][None]).flatten(0, 1)
+                     for i in range(0, feats.shape[0], k)]
+            return torch.cat(parts, 0).unflatten(0, (B, T))
+
+        class _Latents:
+            def __init__(self, x):
+                self.x = x
+
+            def sample(self, generator=None):
+                return self.x
+
+        def encode(x, *a, **kw):
+            parts = [vae_encode(x[i:i + k], *a, **kw).latent_dist.sample() for i in range(0, x.shape[0], k)]
+            return types.SimpleNamespace(latent_dist=_Latents(torch.cat(parts, 0)))
+
+        dec.forward = forward
+        vae.encode = encode
 
     def latent_scale_fn(self, x):
         return (x - self.latents_mean) / self.latents_std
