@@ -89,3 +89,41 @@ def test_flashworld_render_call_is_valid_for_gsplat_1_5_3(monkeypatch):
     intr = torch.tensor([[40.0, 40.0, 16.0, 12.0]]).repeat(1, 2, 1)
     rgb, depth = render.gaussian_render(params[None], c2ws, intr, 32, 24, sh_degree=sh, bg_mode="white")[:2]
     assert rgb.shape[-2:] == (24, 32)
+
+
+def test_views_are_decoded_in_chunks_with_the_same_result():
+    """GenerationSystem._chunk_frames: the 3D decoder and VAE encoder get k views at a time (16 GB cards)
+    and the outputs are put back together in the original order and shape."""
+    import types
+
+    if "gsplat" not in sys.modules:
+        try:
+            import gsplat  # noqa: F401
+        except ImportError:
+            sys.modules["gsplat"] = types.SimpleNamespace(rasterization=None)
+    from flashworld.system import GenerationSystem
+
+    seen = []
+
+    class Dec(torch.nn.Module):
+        def forward(self, feats, z, cameras):           # (BT, C, 1, h, w), (BT, ...), (B, T, 11)
+            seen.append(feats.shape[0])
+            assert cameras.shape[1] == feats.shape[0]
+            g = feats.mean((1, 2, 3, 4))[:, None, None] + z.mean((1, 2, 3, 4))[:, None, None] + cameras.flatten(0, 1)[:, None, :1]
+            return g.expand(-1, 5, 7).unflatten(0, (cameras.shape[0], cameras.shape[1]))
+
+    class Vae:
+        def encode(self, x):
+            seen.append(x.shape[0])
+            return types.SimpleNamespace(latent_dist=types.SimpleNamespace(sample=lambda: x * 2))
+
+    T = 7
+    feats, z, cams = torch.randn(T, 4, 1, 3, 3), torch.randn(T, 2, 1, 3, 3), torch.randn(1, T, 11)
+    x = torch.randn(T, 3, 1, 8, 8)
+    ref_dec, ref_enc = Dec()(feats, z, cams), Vae().encode(x).latent_dist.sample()
+    sysm = types.SimpleNamespace(recon_decoder=Dec(), vae=Vae())
+    seen.clear()
+    GenerationSystem._chunk_frames(sysm, 3)
+    assert torch.equal(sysm.recon_decoder(feats, z, cams), ref_dec)
+    assert torch.equal(sysm.vae.encode(x).latent_dist.sample(), ref_enc)
+    assert seen == [3, 3, 1, 3, 3, 1]

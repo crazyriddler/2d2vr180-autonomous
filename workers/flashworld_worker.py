@@ -206,22 +206,34 @@ def generate(req, torch):
         tcfg = json.load(f)
     tcfg.update(req.get("transformer_overrides") or {})   # tests: a tiny transformer
     image_t = torch.from_numpy(cropped.copy()).float().permute(2, 0, 1) / 255.0 * 2 - 1
-    # 16 GB cards: the transformer (FP8, ~5 GB) leaves the GPU while the VAE / 3D decoder run; if that is
-    # still too much, the VAE and decoder run on the CPU (slower, ~9 GB peak - upstream's low-memory mode)
-    settings = [(bool(req.get("offload_vae", False)), bool(req.get("offload_transformer_during_vae", True)))]
-    if not settings[0][0]:
-        settings.append((True, True))
-    scene = t_norm = None
-    for attempt, (off_vae, off_tr) in enumerate(settings):
+    # Upstream runs the VAE and the 3D decoder on all views at once (~24 GB VRAM). Here they take
+    # `frame_chunk` views at a time (identical result) and the FP8 transformer leaves the GPU meanwhile;
+    # if memory still runs out, one view at a time. (Upstream's CPU offload of the VAE is far too slow.)
+    chunks = [int(req.get("frame_chunk", 4)), 1]
+    settings = [(False, True, c) for c in dict.fromkeys(chunks)]
+    for attempt, (off_vae, off_tr, chunk) in enumerate(settings):
         oom = False
-        progress(0.08, "loading FlashWorld" + (" (low-memory mode)" if off_vae else ""))
+        progress(0.08, f"loading FlashWorld ({chunk} view{'s' if chunk > 1 else ''} at a time)")
         system = GenerationSystem(os.path.join(base, "vae"), tcfg, os.path.join(base, "scheduler"), req["ckpt"],
                                   device=device, offload_vae=off_vae, offload_transformer_during_vae=off_tr,
-                                  log=log)
+                                  log=log, frame_chunk=chunk)
+        fg = system.forward_generator
+        steps = {"n": 0}
+
+        def logged_step(*a, _fg=fg, **k):     # FlashWorld's 4 steps: the 3D is decoded and re-rendered at each
+            steps["n"] += 1
+            progress(0.45 + 0.1 * steps["n"], f"generating the 3D scene: step {steps['n']}/4")
+            out = _fg(*a, **k)
+            if torch.cuda.is_available():
+                log(f"step {steps['n']}/4 done (GPU memory peak {torch.cuda.max_memory_allocated() / 2**30:.1f} GB)")
+            return out
+
+        system.forward_generator = logged_step
         try:
             progress(0.45, "generating the 3D scene (FlashWorld, 4 steps)")
             with torch.no_grad():
                 scene, _, t_norm = system.generate(cams, n, image_t, emb, 0, H, W)
+            log("step 4/4 done: 3D Gaussians decoded")
         except torch.cuda.OutOfMemoryError:
             if attempt == len(settings) - 1:
                 raise
@@ -232,7 +244,7 @@ def generate(req, torch):
 
             gc.collect()
             torch.cuda.empty_cache()
-            log("out of GPU memory; retrying with the VAE and 3D decoder on the CPU")
+            log("out of GPU memory; retrying with one view at a time")
             continue
         break
     scene = scene.detach().float().cpu()

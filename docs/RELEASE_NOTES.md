@@ -1,4 +1,17 @@
-# 2D2VR180 1.0.0-rc35 — fix: FlashWorld stopped at its first render
+# 2D2VR180 1.0.0-rc36 — FlashWorld fits a 16 GB card
+
+## Fixed in rc36
+
+- **FlashWorld ran out of GPU memory, then seemed to hang.**
+  - FlashWorld passes all 24 views through its image encoder and 3D decoder at once. That needs about
+    24 GB of VRAM.
+  - The fallback then moved them to the CPU, which on Windows is so slow that it looked frozen: no GPU use,
+    1 % CPU.
+  - Now the views go through 4 at a time, then 1 at a time if memory is still short, always on the GPU.
+    Each view passes through on its own, so the result is identical. A CPU run of the real engine gave a
+    difference of exactly 0 between 1, 3 and all views at a time.
+  - The CPU fallback is gone.
+- The log now shows each of FlashWorld's 4 steps and the GPU memory peak, so progress is visible.
 
 ## Fixed in rc35
 
@@ -533,7 +546,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc35-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc36-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
