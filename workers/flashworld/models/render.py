@@ -30,7 +30,8 @@ class GaussianRendererWithCheckpoint(torch.autograd.Function):
                                         near_plane=near_plane, far_plane=far_plane,
                                         render_mode="RGB+D",
                                         backgrounds=backgrounds[None],
-                                        rasterize_mode='classic') # (1, H, W, 4) 
+                                        rasterize_mode='classic',
+                                        packed=False) # (1, H, W, 4)  2D2VR180: gsplat 1.5.3's packed mode rejects per-view backgrounds
         # rendering[..., 3:] = rendering[..., 3:] + far_plane * (1 - alpha)
         return rendering
 

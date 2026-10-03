@@ -55,3 +55,37 @@ def test_crop_keeps_the_principal_point_mapping():
     out, s, x0, y0 = fw.crop_to(img, 48, 64)
     assert out.shape == (64, 48, 3)
     assert (200 / 2 - x0) * s == pytest.approx(24, abs=0.5) and (300 / 2 - y0) * s == pytest.approx(32, abs=0.5)
+
+
+def test_flashworld_render_call_is_valid_for_gsplat_1_5_3(monkeypatch):
+    """gsplat 1.5.3 (the version with Windows wheels) checks backgrounds against the projected means'
+    leading dims, which are empty in packed mode: per-view backgrounds of shape (1, D) then fail with
+    'AssertionError: torch.Size([1, 4])' (owner's rc34 run). FlashWorld must call it unpacked."""
+    import types
+
+    if "gsplat" not in sys.modules:
+        try:
+            import gsplat  # noqa: F401
+        except ImportError:                                  # CPU test machines: the module only has to import
+            monkeypatch.setitem(sys.modules, "gsplat", types.SimpleNamespace(rasterization=None))
+    import flashworld.models.render as render
+
+    def strict_rasterization(means, quats, scales, opacities, colors, viewmats, Ks, width, height,
+                             render_mode="RGB", backgrounds=None, packed=True, **kw):
+        C = viewmats.shape[0]
+        channels = 3 + (1 if "D" in render_mode else 0)
+        image_dims = () if packed else (C,)                 # what 1.5.3's rasterize_to_pixels derives
+        if backgrounds is not None:
+            bg = torch.cat([backgrounds, torch.zeros(C, 1)], -1) if "D" in render_mode else backgrounds
+            assert bg.shape == image_dims + (channels,), bg.shape
+        z = (means.sum() + quats.sum() + scales.sum() + opacities.sum() + colors.sum()) * 0
+        return torch.zeros(C, height, width, channels) + z, torch.zeros(C, height, width, 1), {}
+
+    monkeypatch.setattr(render, "rasterization", strict_rasterization)
+    n, sh = 50, 2
+    params = torch.cat([torch.randn(n, 3), torch.rand(n, 1), torch.rand(n, 3) * .1,
+                        torch.nn.functional.normalize(torch.randn(n, 4), dim=-1), torch.randn(n, (sh + 1) ** 2 * 3)], -1)
+    c2ws = torch.eye(4)[None, None].repeat(1, 2, 1, 1)
+    intr = torch.tensor([[40.0, 40.0, 16.0, 12.0]]).repeat(1, 2, 1)
+    rgb, depth = render.gaussian_render(params[None], c2ws, intr, 32, 24, sh_degree=sh, bg_mode="white")[:2]
+    assert rgb.shape[-2:] == (24, 32)

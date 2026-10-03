@@ -1,4 +1,16 @@
-# 2D2VR180 1.0.0-rc34 — Real 3D generated directly: FlashWorld
+# 2D2VR180 1.0.0-rc35 — fix: FlashWorld stopped at its first render
+
+## Fixed in rc35
+
+- **"Real 3D" with FlashWorld failed** with `AssertionError: torch.Size([1, 4])` as soon as generation
+  started.
+  - Cause: FlashWorld was written for a newer gsplat than 1.5.3, the version with ready-made Windows
+    builds. In 1.5.3's default "packed" mode, per-view background colours are rejected.
+  - FlashWorld now calls gsplat in unpacked mode. That changes only gsplat's internal memory layout, not
+    the image.
+  - A new test reproduces the exact error with the old call and passes with the new one.
+- Everything before that point already worked on the RTX 4080: the text encoding (cached), MoGe-2
+  measuring the subject at 0.84 m, and loading and quantising the 21 GB model in 22 seconds.
 
 ## What's new in rc34
 
@@ -521,7 +533,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc34-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc35-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
