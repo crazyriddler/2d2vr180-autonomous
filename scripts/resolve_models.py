@@ -14,12 +14,12 @@ import urllib.parse
 import urllib.request
 
 HF_REPOS = [
-    "berkerdooo/qwen-image-edit-2511-camera-angle-lora",
+    "lightx2v/Qwen-Image-Edit-2511-Lightning",
 ]
-HF_SEARCH = ["qwen-image-edit-2511 camera angle lora", "qwen image edit 2511 angle"]
+HF_SEARCH: list[str] = []
 GGUF_HEADERS: list[str] = []
 HF_TEXT = [  # small files whose content is needed (configs, model cards)
-    "berkerdooo/qwen-image-edit-2511-camera-angle-lora/README.md",
+    "lightx2v/Qwen-Image-Edit-2511-Lightning/README.md",
 ]
 URLS: list[str] = []  # non-HF downloads: hashed by streaming
 
