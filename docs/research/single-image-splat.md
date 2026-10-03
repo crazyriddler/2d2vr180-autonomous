@@ -57,6 +57,7 @@ personal/research profile).
 | rc22 | Post-training cleanup (unseen / transparent / oversized / isolated splats); AI views overview sheet |
 | rc23–24 | Automatic retry of weak AI views; rebuild with hand-picked candidates |
 | rc25 | Turntable preview video of every multi-view result |
+| rc26 | Per-view colour correction (appearance) for generated views; OBJ fused from the trained splat |
 
 ### Evaluated and deferred
 

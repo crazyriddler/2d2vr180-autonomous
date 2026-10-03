@@ -242,3 +242,20 @@ def test_colour_drift_of_generated_views_is_absorbed_by_appearance():
     assert corrected > base + 1.0
     assert out[0] is None and out[1] is not None
     assert out[1][0][2][2] < 0.95             # it learned to darken blue for the generated views
+
+
+def test_mesh_depth_is_rendered_from_the_trained_splat(monkeypatch):
+    import multiview_worker as mv
+
+    params, pts, _ = gt_params()
+    with torch.no_grad():
+        params["means"][40:] = torch.tensor([0.0, 0.0, -5.0])      # keep only the plane at z = 2
+        params["scales"][:] = np.log(0.12)
+    c2ws, Ks, sizes = make_views(3)
+    monkeypatch.setattr(st, "gsplat_render", ref_render)
+    dd, cc, ks, cs = mv.splat_depth_views(params, c2ws, Ks, sizes, torch, max_side=24, min_alpha=0.9)
+    assert len(dd) == len(cc) == len(ks) == len(cs) == 3
+    d = dd[0]
+    assert (d > 0).mean() > 0.3 and (d == 0).any()               # transparent border is left out
+    assert abs(float(np.median(d[d > 0])) - 2.0) < 0.15
+    assert cc[0].dtype == np.uint8 and cc[0].shape == (24, 24, 3)

@@ -1,4 +1,15 @@
-# 2D2VR180 1.0.0-rc25 — turntable preview
+# 2D2VR180 1.0.0-rc26 — truer colours and a mesh with real volume
+
+## What's new in rc26
+
+- **Colour drift of the AI views is corrected.** AI-generated views often come out slightly darker,
+  brighter or warmer than your photo. Before, the 3D averaged that drift into its colours.
+  - Training now learns a small colour correction for each AI view. Your photo is never corrected and
+    stays the colour reference.
+  - The splat keeps your photo's colours. Results lists the correction found for each view.
+- **The OBJ mesh has the same volume as the splat.** The mesh used to be built only from the photo's depth
+  map, which gave a relief. It is now fused from the trained splat's depth and colour seen from every view,
+  including the AI angles. The old method is kept as a fallback.
 
 ## What's new in rc25
 
@@ -389,7 +400,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc25-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc26-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |

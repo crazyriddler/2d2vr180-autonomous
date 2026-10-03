@@ -228,11 +228,13 @@ def tsdf_mesh(depths, Ks, c2ws, colors, out_obj, voxel):
     vol = o3d.pipelines.integration.ScalableTSDFVolume(
         voxel_length=voxel, sdf_trunc=voxel * 5, color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
     for d, K, c2w, col in zip(depths, Ks, c2ws, colors):
+        if not np.any(d > 0):
+            continue
         h, w = d.shape
         intr = o3d.camera.PinholeCameraIntrinsic(w, h, K[0, 0], K[1, 1], K[0, 2], K[1, 2])
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
             o3d.geometry.Image(np.ascontiguousarray(col)), o3d.geometry.Image(np.ascontiguousarray(d, np.float32)),
-            depth_scale=1.0, depth_trunc=float(np.percentile(d, 98)), convert_rgb_to_intensity=False)
+            depth_scale=1.0, depth_trunc=float(np.percentile(d[d > 0], 98)) * 1.001, convert_rgb_to_intensity=False)
         vol.integrate(rgbd, intr, np.linalg.inv(c2w))
     mesh = vol.extract_triangle_mesh()
     mesh.remove_degenerate_triangles()
@@ -616,6 +618,35 @@ def render_turntable(params, K, size, target_z, out_dir, sh_degree, torch, n=72,
     return n
 
 
+def splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60, max_side=1024, min_alpha=0.6):
+    """Depth (expected depth, 0 where the splat is transparent) and colour of the
+    trained splat seen from the training cameras, for TSDF meshing."""
+    import numpy as np
+
+    import splat_trainer as st
+
+    dev = params["means"].device
+    idx = list(range(len(c2ws)))[:: max(1, len(c2ws) // max_views)]
+    dd, cc, ks, cs = [], [], [], []
+    for i in idx:
+        w0, h0 = sizes[i]
+        s = min(1.0, max_side / max(w0, h0))
+        w, h = max(8, int(w0 * s)), max(8, int(h0 * s))
+        K = np.array(Ks[i], np.float64).copy()
+        K[:2] *= [[w / w0], [h / h0]]
+        vm = torch.linalg.inv(torch.as_tensor(np.asarray(c2ws[i]), dtype=torch.float32, device=dev))[None]
+        Kt = torch.as_tensor(K, dtype=torch.float32, device=dev)[None]
+        with torch.no_grad():
+            out, alpha, _ = st.gsplat_render(params, vm, Kt, w, h, 0, mode="RGB+ED")
+        a = alpha[..., 0]
+        d = torch.where(a > min_alpha, out[..., 3], torch.zeros_like(a))     # "ED" is already / alpha
+        dd.append(d.float().cpu().numpy())
+        cc.append((out[..., :3].clamp(0, 1) * 255).round().byte().cpu().numpy())
+        ks.append(K)
+        cs.append(np.asarray(c2ws[i], np.float64))
+    return dd, cc, ks, cs
+
+
 def drop_inconsistent(items, train_imgs, vin, threshold):
     """Remove generated views whose best candidate is still far from a pure camera move (they would
     teach the splat a different pose or face), keeping at least one generated view."""
@@ -955,19 +986,32 @@ def main(req):
     if turntable:
         outputs["turntable_frames"] = turntable
 
+    # the mesh is fused from the TRAINED splat's depth and colour in every view (same volume as the
+    # splat, generated angles included); the raw engine depth of the real views is the fallback
+    mesh_views = None
+    if req.get("mesh", True):
+        try:
+            progress(0.92, "rendering depth for the mesh")
+            mesh_views = splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60)
+        except Exception as e:  # noqa: BLE001
+            log(f"rendered depth for the mesh failed, using the engine depth: {e}")
     params = None  # free GPU memory before meshing
     torch.cuda.empty_cache()
     mesh_info = None
     if req.get("mesh", True):
         progress(0.93, "mesh (TSDF fusion)")
         try:
-            use = [i for i in range(n) if not items[i].get("generated")] or list(range(n))
-            use = use[:: max(1, len(use) // 60)]
-            med = float(np.median([np.median(depth[i][depth[i] > 0]) for i in use]))
-            dd = [depth[i] for i in use]
-            cc = [(vin[i][0] * 255).astype(np.uint8) for i in use]
-            mesh_info = tsdf_mesh(dd, [K_crop[i] for i in use], [c2ws[i] for i in use], cc,
-                                  os.path.join(out_dir, "scene.obj"), max(med / 250, 1e-3))
+            if mesh_views:
+                dd, cc, mK, mC = mesh_views
+            else:
+                use = [i for i in range(n) if not items[i].get("generated")] or list(range(n))
+                use = use[:: max(1, len(use) // 60)]
+                dd = [depth[i] for i in use]
+                cc = [(vin[i][0] * 255).astype(np.uint8) for i in use]
+                mK, mC = [K_crop[i] for i in use], [c2ws[i] for i in use]
+            med = float(np.median([np.median(d[d > 0]) for d in dd if np.any(d > 0)]))
+            mesh_info = tsdf_mesh(dd, mK, mC, cc, os.path.join(out_dir, "scene.obj"), max(med / 250, 1e-3))
+            mesh_info["source"] = "trained splat" if mesh_views else "engine depth"
             outputs["obj"] = os.path.join(out_dir, "scene.obj")
         except Exception as e:  # noqa: BLE001 - the mesh is optional
             log(f"mesh export failed: {e}")
