@@ -19,8 +19,8 @@ from .base import (NOVEL_VIEW_COMPLETION, SCENE_STATIC, SINGLE_VIEW, Availabilit
 from .multiview import MultiViewBackend
 
 TRAJECTORIES = {
-    "tri": "3 views: 45° to the left, 45° to the right and a high-angle shot from above, reconstructed with the "
-           "photo by the multi-view engine (trained splat)",
+    "tri": "Real 3D: 45° and 90° to each side and a high angle (Fast); Auto adds 135°, the back and a low "
+           "angle; Quality adds raised diagonals - assembled with the photo by the multi-view engine",
     "capture": "360° photo capture: 45°, 90°, 135°, 180° and 270°, overhead and from below (Quality adds 225°, "
                "315° and raised diagonals)",
     "arc": "around the subject: 45° to each side, from above and from below",
@@ -60,6 +60,17 @@ _CAPTURE = [("45°", 45, 0), ("90°", 90, 0), ("135°", 135, 0), ("180°", 180, 
             ("overhead", 0, 60), ("from below", 0, -30)]
 QWEN_VIEWS = {
     "tri": [("45° left", 315, 0), ("45° right", 45, 0), ("high angle", 0, 30)],
+    # Real 3D: more angles per quality mode, so the subject is a complete 3D object and not a relief
+    # "frozen" into what is behind it (owner, rc38). Fast: + the sides; Auto: + 135°, the back and from
+    # below; Quality: + raised diagonals. Depth Anything 3 takes up to 32 views.
+    "tri_fast": [("45° left", 315, 0), ("45° right", 45, 0), ("high angle", 0, 30), ("90° left", 270, 0),
+                 ("90° right", 90, 0)],
+    "tri_auto": [("45° left", 315, 0), ("45° right", 45, 0), ("high angle", 0, 30), ("90° left", 270, 0),
+                 ("90° right", 90, 0), ("135° left", 225, 0), ("135° right", 135, 0), ("back", 180, 0),
+                 ("low angle", 0, -30)],
+    "tri_quality": [("45° left", 315, 0), ("45° right", 45, 0), ("high angle", 0, 30), ("90° left", 270, 0),
+                    ("90° right", 90, 0), ("135° left", 225, 0), ("135° right", 135, 0), ("back", 180, 0),
+                    ("low angle", 0, -30), ("45° left raised", 315, 30), ("45° right raised", 45, 30)],
     "capture": _CAPTURE,
     "capture_full": _CAPTURE + [("225°", 225, 0), ("315°", 315, 0), ("45° raised", 45, 30), ("135° raised", 135, 30),
                                 ("225° raised", 225, 30), ("315° raised", 315, 30)],
@@ -155,7 +166,9 @@ def target_angle(view: dict) -> float:
 
 
 def detailed(traj: str, mode: str) -> str:
-    """360° capture in Quality mode adds the intermediate angles."""
+    """360° capture in Quality mode adds the intermediate angles; Real 3D gets more angles per mode."""
+    if traj == "tri":
+        return f"tri_{mode}" if f"tri_{mode}" in QWEN_VIEWS else "tri_auto"
     return "capture_full" if traj == "capture" and mode == "quality" else traj
 
 
@@ -421,7 +434,9 @@ class GenerativeSceneBackend(Backend):
             log(f"could not score the generated views ({e}); keeping them as they are")
             return out
         best = {s["view"]: min((s.get("scores") or {"": 9.0}).values()) for s in sel}
-        weak = [lb for lb, sc in best.items() if sc > float(options.get("retry_threshold", RETRY_THRESHOLD))]
+        behind = {v["label"] for v in mv_views if v.get("target_deg", 0) > 100}   # nothing to compare: no retry
+        weak = [lb for lb, sc in best.items()
+                if sc > float(options.get("retry_threshold", RETRY_THRESHOLD)) and lb not in behind]
         log("view consistency: " + ", ".join(f"{lb} {sc:.3f}" for lb, sc in best.items()))
         if not weak:
             return out

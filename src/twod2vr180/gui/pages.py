@@ -27,7 +27,8 @@ MODE_HELP = {
 # "What do you want to make?" — each preset sets the advanced reconstruction controls.
 PRESETS = {
     "real3d": ("Real 3D from one photo (recommended)",
-               "AI (Qwen-Image-Edit) draws 3 more views; Depth Anything 3 assembles them with your photo, which "
+               "AI (Qwen-Image-Edit) draws your subject from 5-11 angles (sides, back, above, below); Depth Anything 3 "
+               "assembles them with your photo, which "
                "keeps its full detail in front. (FlashWorld can be chosen as the generative engine instead.)"),
     "quick": ("Quick 3D",
               "Depth from the photo alone (MoGe-2 / SHARP). Seconds; sharp from the front, flat from the side."),
@@ -247,7 +248,7 @@ class CreatePage(QWidget):
         gf.addRow("Backend", self.backend)
         self.generative = QComboBox()
         for label, val in (("Off — only what the photo shows", "off"),
-                           ("3 views (Qwen) — 45° left, 45° right, high angle → multi-view", "tri"),
+                           ("Real 3D views (Qwen) — 5 to 11 angles around the subject → multi-view", "tri"),
                            ("360° photo capture — 45°, 90°, 135°, 180°, 270°, above, below (Quality: more)",
                             "capture"),
                            ("Around the subject — sides, above and below (best for people)", "arc"),

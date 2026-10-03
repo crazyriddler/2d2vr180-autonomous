@@ -51,8 +51,10 @@ verified (SHA256) before use.
 1. Open **Create** and drop one or more photos or videos (or click to browse).
 2. Answer **What do you want to make?**
    - **Real 3D from one photo (recommended).**
-     - AI (Qwen-Image-Edit + Multiple-Angles) makes 3 more views of your photo: 45° left, 45° right and
-       from above.
+     - AI (Qwen-Image-Edit + Multiple-Angles) draws your subject from more angles:
+       - Fast: 45° and 90° to each side and from above (5 views);
+       - Auto: also 135° to each side, the back and from below (9 views);
+       - Quality: also raised 45° diagonals (11 views).
      - In Auto and Quality, 2-3 candidates are made per angle, and the one that best behaves like a pure camera
        move of your photo is kept automatically. Views that contradict the photo are dropped.
      - The multi-view engine (Depth Anything 3 if installed, otherwise VGGT) finds where each view was taken

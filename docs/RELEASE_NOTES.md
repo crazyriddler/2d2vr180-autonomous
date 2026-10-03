@@ -1,4 +1,27 @@
-# 2D2VR180 1.0.0-rc38 — The raw Depth Anything 3 splat is the result
+# 2D2VR180 1.0.0-rc39 — A more complete 3D: more angles, and a mesh that is not set in stone
+
+## What's new in rc39
+
+- **Real 3D draws your subject from many more angles.**
+  - Fast: 5 views (45° and 90° to each side, from above).
+  - Auto: 9 views (adds 135° to each side, the back and from below).
+  - Quality: 11 views (adds raised 45° diagonals).
+  - Views of the back share almost nothing with your photo, so they are now judged by how far the camera
+    moved. Before, they would have been dropped as "inconsistent" and retried.
+- **The mesh (OBJ) is no longer "frozen in carbonite".**
+  - The fusion joined the outline of the subject to the wall behind it with a continuous skin. Now the
+    subject and the background are fused separately, and depth jumps are left out.
+  - The subject is fused with much finer voxels: about 1.4 mm for a subject 0.84 m away, about 5× more
+    detail than before.
+  - `subject.obj`, the subject alone without the background, is also exported.
+- **Mesh fusion is faster and always finishes.**
+  - Since the mesh is made from the splat, the whole photo background was fused with the subject's small
+    voxels. A background several times farther away then takes tens of times more voxels.
+  - The background now uses coarser voxels.
+  - A face budget caps every mesh: about 1.5 M faces for the subject and 0.5 M for the background. The
+    voxel grows when that budget would be exceeded.
+
+## rc38: The raw Depth Anything 3 splat is the result
 
 ## What's new in rc38
 

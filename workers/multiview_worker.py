@@ -16,6 +16,7 @@ Coordinates: OpenCV, scene frame = reference camera.
 """
 
 import json
+import math
 import os
 import sys
 
@@ -222,6 +223,22 @@ def metric_scale(moge_path, vin, depth, conf, torch, max_views=4, device="cuda")
 
 
 def tsdf_mesh(depths, Ks, c2ws, colors, out_obj, voxel):
+    mesh = tsdf_fuse(depths, Ks, c2ws, colors, voxel)
+    return write_mesh(mesh, out_obj, voxel)
+
+
+def write_mesh(mesh, out_obj, voxel):
+    import numpy as np
+    import open3d as o3d
+
+    # OBJ viewers expect y up: flip OpenCV (y down, z forward)
+    mesh.transform(np.diag([1.0, -1.0, -1.0, 1.0]))
+    o3d.io.write_triangle_mesh(out_obj, mesh, write_vertex_colors=True)
+    return {"vertices": len(mesh.vertices), "faces": len(mesh.triangles), "voxel_m": voxel}
+
+
+def tsdf_fuse(depths, Ks, c2ws, colors, voxel):
+    """Open3D triangle mesh (OpenCV axes) fused from depth maps (0 = no depth) seen from the cameras."""
     import numpy as np
     import open3d as o3d
 
@@ -239,10 +256,59 @@ def tsdf_mesh(depths, Ks, c2ws, colors, out_obj, voxel):
     mesh = vol.extract_triangle_mesh()
     mesh.remove_degenerate_triangles()
     mesh.remove_unreferenced_vertices()
-    # OBJ viewers expect y up: flip OpenCV (y down, z forward)
-    mesh.transform(np.diag([1.0, -1.0, -1.0, 1.0]))
-    o3d.io.write_triangle_mesh(out_obj, mesh, write_vertex_colors=True)
-    return {"vertices": len(mesh.vertices), "faces": len(mesh.triangles), "voxel_m": voxel}
+    return mesh
+
+
+def surface_area(dd, Ks):
+    """Rough area (m²) of what the depth maps show: the largest single view's pixel footprints x 1.5."""
+
+    areas = [float((d[d > 0] ** 2).sum() / (K[0, 0] * K[1, 1])) for d, K in zip(dd, Ks)]
+    return 1.5 * max(areas) if areas else 0.0
+
+
+def budget_voxel(dd, Ks, voxel, max_faces):
+    """``voxel``, enlarged when it would give more than ``max_faces`` faces (~2 per voxel² of surface):
+    fusion time and memory grow with that count, and a mesh far behind the subject at the subject's
+    voxel size could take very long or not finish."""
+    return max(voxel, math.sqrt(2 * surface_area(dd, Ks) / max(max_faces, 1)))
+
+
+def layered_mesh(dd, Ks, c2ws, cc, subject_masks, out_dir, subject_detail=600, scene_detail=400,
+                 background_detail=250, subject_faces=1_500_000, background_faces=500_000):
+    """scene.obj from rendered depth maps, without the "frozen in carbonite" skin: with subject masks
+    the subject and the background are fused separately - the subject with fine voxels (its median
+    distance / subject_detail: ~1.4 mm at 0.84 m), the background coarser - so no surface joins the
+    subject's outline to the wall behind it. The subject alone is also written as subject.obj.
+    Without masks, one mesh at median distance / scene_detail. Depth jumps are left out either way."""
+    import numpy as np
+
+    dd = [np.where(depth_edges(d), 0.0, d).astype(np.float32) for d in dd]
+
+    def med(ds):
+        v = [np.median(d[d > 0]) for d in ds if np.any(d > 0)]
+        return float(np.median(v)) if v else None
+
+    sm = [None if m is None else resize_map(np.asarray(m, np.uint8), d.shape[1], d.shape[0]).astype(bool)
+          for m, d in zip(subject_masks or [None] * len(dd), dd)]
+    out = {}
+    if not any(m is not None for m in sm):
+        voxel = budget_voxel(dd, Ks, max(med(dd) / scene_detail, 5e-4), subject_faces)
+        out["scene"] = write_mesh(tsdf_fuse(dd, Ks, c2ws, cc, voxel), os.path.join(out_dir, "scene.obj"), voxel)
+        return out
+    zero = [np.zeros_like(d) for d in dd]
+    ds = [np.where(m, d, 0.0) if m is not None else z for d, m, z in zip(dd, sm, zero)]
+    db = [np.where(~m, d, 0.0) if m is not None else z for d, m, z in zip(dd, sm, zero)]
+    vs = budget_voxel(ds, Ks, max(med(ds) / subject_detail, 5e-4), subject_faces)
+    subject = tsdf_fuse(ds, Ks, c2ws, cc, vs)
+    mesh = subject
+    if med(db):
+        vb = budget_voxel(db, Ks, max(med(db) / background_detail, 1e-3), background_faces)
+        mesh = subject + tsdf_fuse(db, Ks, c2ws, cc, vb)
+    import copy
+
+    out["subject"] = write_mesh(copy.deepcopy(subject), os.path.join(out_dir, "subject.obj"), vs)
+    out["scene"] = write_mesh(mesh, os.path.join(out_dir, "scene.obj"), vs)
+    return out
 
 
 def vggt_on_image(map_v, info, h, w):
@@ -543,8 +609,10 @@ def fuse_views(req, items, vin, c2w_v, K_v, depth, conf, device, torch, out_dir)
         try:
             dd = [np.nan_to_num(v.z, nan=0.0) for v in views]
             med = float(np.median(dd[ref_index][dd[ref_index] > 0]))
-            mesh_info = tsdf_mesh(dd, [v.K for v in views], [v.c2w for v in views], [v.image for v in views],
-                                  os.path.join(out_dir, "scene.obj"), max(med / 250, 1e-3))
+            Kv = [v.K for v in views]
+            mesh_info = tsdf_mesh(dd, Kv, [v.c2w for v in views], [v.image for v in views],
+                                  os.path.join(out_dir, "scene.obj"), budget_voxel(dd, Kv, max(med / 250, 1e-3),
+                                                                                   2_000_000))
             outputs["obj"] = os.path.join(out_dir, "scene.obj")
         except Exception as e:  # noqa: BLE001 - the mesh is optional
             log(f"mesh export failed: {e}")
@@ -715,6 +783,9 @@ def da3_cameras(model, vin, torch, infer_gs=False):
     return res + (p.get("gaussians"),) if infer_gs else res
 
 
+BEHIND_DEG = 100      # generated views asked for beyond this angle mostly show what the photo cannot
+
+
 def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None, predict=None):
     """How well a generated view is explained as a pure camera move of the reference photo.
 
@@ -754,6 +825,10 @@ def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None, pred
     angle = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(rel[:3, :3]) - 1) / 2))))
     overlap = float(ok.mean())
     if ok.sum() < 500:
+        if target_deg and target_deg > BEHIND_DEG:
+            # a view of the back shares (almost) nothing with the photo, by design: judge it only by how
+            # far the camera moved, never as "inconsistent" (which would drop it)
+            return 0.4 + 0.01 * max(0.0, abs(angle - target_deg) - 25), None, angle, overlap
         return 10.0, None, angle, overlap
     a = ref_vin[0].reshape(-1, 3)[ok]
     b = cand_vin[0][vi[ok], ui[ok]]
@@ -881,6 +956,10 @@ def render_turntable(params, K, size, target_z, out_dir, sh_degree, torch, n=72,
     return n
 
 
+def mesh_view_ids(n, max_views=60):
+    return list(range(n))[:: max(1, n // max_views)]
+
+
 def splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60, max_side=1024, min_alpha=0.6):
     """Depth (expected depth, 0 where the splat is transparent) and colour of the
     trained splat seen from the training cameras, for TSDF meshing."""
@@ -889,7 +968,7 @@ def splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60, max_side=102
     import splat_trainer as st
 
     dev = params["means"].device
-    idx = list(range(len(c2ws)))[:: max(1, len(c2ws) // max_views)]
+    idx = mesh_view_ids(len(c2ws), max_views)
     dd, cc, ks, cs = [], [], [], []
     for i in idx:
         w0, h0 = sizes[i]
@@ -1600,7 +1679,8 @@ def main(req):
     if req.get("mesh", True):
         try:
             progress(0.92, "rendering depth for the mesh")
-            mesh_views = splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60)
+            mesh_views = splat_depth_views(params, c2ws, Ks, sizes, torch, max_views=60, max_side=1600,
+                                           min_alpha=0.5)
         except Exception as e:  # noqa: BLE001
             log(f"rendered depth for the mesh failed, using the engine depth: {e}")
     params = None  # free GPU memory before meshing
@@ -1617,10 +1697,16 @@ def main(req):
                 dd = [depth[i] for i in use]
                 cc = [(vin[i][0] * 255).astype(np.uint8) for i in use]
                 mK, mC = [K_crop[i] for i in use], [c2ws[i] for i in use]
-            med = float(np.median([np.median(d[d > 0]) for d in dd if np.any(d > 0)]))
-            mesh_info = tsdf_mesh(dd, mK, mC, cc, os.path.join(out_dir, "scene.obj"), max(med / 250, 1e-3))
-            mesh_info["source"] = "trained splat" if mesh_views else "engine depth"
+            ids = mesh_view_ids(n, 60) if mesh_views else use
+            layers = layered_mesh(dd, mK, mC, cc, [subj[i] for i in ids] if masks else None, out_dir)
+            mesh_info = dict(layers["scene"], source="splat" if mesh_views else "engine depth")
             outputs["obj"] = os.path.join(out_dir, "scene.obj")
+            if "subject" in layers:
+                mesh_info["subject"] = layers["subject"]
+                outputs["obj_subject"] = os.path.join(out_dir, "subject.obj")
+            log(f"mesh: {mesh_info['faces']:,} faces, voxel {mesh_info['voxel_m'] * 1000:.1f} mm"
+                + (f" (subject {layers['subject']['faces']:,} faces, separate from the background)"
+                   if "subject" in layers else ""))
         except Exception as e:  # noqa: BLE001 - the mesh is optional
             log(f"mesh export failed: {e}")
     counts_np = codes.cpu().numpy()

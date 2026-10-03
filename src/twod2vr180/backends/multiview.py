@@ -140,6 +140,10 @@ class MultiViewBackend(Backend):
         if files.get("obj") and Path(files["obj"]).exists():
             obj = exp / "scene.obj"
             shutil.copy2(files["obj"], obj)
+        obj_subject = None
+        if files.get("obj_subject") and Path(files["obj_subject"]).exists():
+            obj_subject = exp / "subject.obj"           # the subject alone, without the background
+            shutil.copy2(files["obj_subject"], obj_subject)
         p = res.get("provenance") or {}
         if res.get("assembly") == "fusion":
             note = (f"Sharp fusion of {res.get('views')} views: splats from the photo's own pixels are INFERRED "
@@ -187,6 +191,7 @@ class MultiViewBackend(Backend):
                    "colour_correction": res.get("colour_correction") or [],
                    "pose_refinement": res.get("pose_refinement") or [],
                    "view_alignment": res.get("view_alignment") or [],
+                   "obj_subject": str(obj_subject) if obj_subject else None,
                    "subject_mode": bool(res.get("subject_mode")),
                    "feedforward_ply": str(ff_ply) if ff_ply else None,
                    "turntable_feedforward": str(ff_tt) if ff_tt else None})

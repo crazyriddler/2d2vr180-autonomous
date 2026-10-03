@@ -441,16 +441,21 @@ def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypat
     assert rep["status"] == "succeeded", rep.get("error")
     gen = job.dir / "generated_views"
     enc = json.loads((gen / "stage_encode.json").read_text())
-    assert [(v["azimuth"], v["elevation"]) for v in enc["views"]] == [(315, 0), (45, 0), (0, 30)]
+    from twod2vr180.backends.generative import QWEN_VIEWS
+
+    angles = [(az, el) for _, az, el in QWEN_VIEWS[f"tri_{mode}"]]
+    assert angles[:5] == [(315, 0), (45, 0), (0, 30), (270, 0), (90, 0)]       # every mode has the sides
+    assert len(angles) == {"fast": 5, "auto": 9, "quality": 11}[mode]
+    assert [(v["azimuth"], v["elevation"]) for v in enc["views"]] == angles
     assert enc["angles_strength"] > 0 and enc["candidates"] == n_cand
     retry = 2 if n_cand > 1 else 0          # the fake scorer finds the first angle weak (Auto/Quality retry)
-    assert len(list(gen.glob("view*.png"))) == 3 * n_cand + retry
+    assert len(list(gen.glob("view*.png"))) == len(angles) * n_cand + retry
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "train" and len(mv["images"]) == 4      # the photo + exactly 3 views
+    assert mv["assembly"] == "train" and len(mv["images"]) == 1 + len(angles)     # the photo + the views
     assert not mv["images"][0]["generated"]
     if n_cand > 1:
-        assert [len(v["candidates"]) for v in mv["images"][1:]] == [n_cand + retry, n_cand, n_cand]
-        assert all(v["target_deg"] in (45, 30) for v in mv["images"][1:])
+        assert [len(v["candidates"]) for v in mv["images"][1:]] == [n_cand + retry] + [n_cand] * (len(angles) - 1)
+        assert {v["target_deg"] for v in mv["images"][1:]} >= {45, 30, 90}
     assert rep["backend"]["extra"]["assembly"] == "train"
     sheet = job.dir / "export" / "generated_views_sheet.jpg"
     assert sheet.exists() and rep["backend"]["extra"]["contact_sheet"].endswith("generated_views_sheet.jpg")
