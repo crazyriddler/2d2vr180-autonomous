@@ -19,8 +19,8 @@ from .base import (NOVEL_VIEW_COMPLETION, SCENE_STATIC, SINGLE_VIEW, Availabilit
 from .multiview import MultiViewBackend
 
 TRAJECTORIES = {
-    "stereo": "stereo pair: the photo seen from slightly to the left and slightly to the right, nothing else "
-              "changed (2 views, trained splat)",
+    "tri": "3 views: 45° to the left, 45° to the right and a high-angle shot from above, reconstructed with the "
+           "photo by the multi-view engine (trained splat)",
     "capture": "360° photo capture: 45°, 90°, 135°, 180° and 270°, overhead and from below (Quality adds 225°, "
                "315° and raised diagonals)",
     "arc": "around the subject: 45° to each side, from above and from below",
@@ -43,15 +43,16 @@ QWEN_MODELS = ("qwen-image-edit-2511-q5", "qwen-image-edit-2511-base", "qwen-edi
 ENGINE_MODELS = {"qwen": QWEN_MODELS, "wan": WAN_MODELS, "seva": SEVA_MODELS}
 ENGINE_NAMES = {"qwen": "Qwen-Image-Edit-2511 + Multiple-Angles LoRA", "wan": "Wan 2.2 Fun 5B Control-Camera",
                 "seva": "Stable Virtual Camera"}
-ENGINE_TRAJECTORIES = {"qwen": ("stereo", "capture", "arc", "orbit"), "wan": tuple(TRAJECTORIES),
+ENGINE_TRAJECTORIES = {"qwen": ("tri", "capture", "arc", "orbit"), "wan": tuple(TRAJECTORIES),
                        "seva": ("arc", "orbit", "explore", "spiral", "capture")}
-ENGINE_TRAJECTORIES["wan"] = tuple(t for t in TRAJECTORIES if t != "stereo")
+ENGINE_TRAJECTORIES["wan"] = tuple(t for t in TRAJECTORIES if t != "tri")
 
 # Qwen views: (label, azimuth°, elevation°). Azimuth clockwise seen from above (90 = right side,
 # 180 = back); elevation + = camera above. The LoRA knows 8 azimuths and -30/0/30/60° elevations.
 _CAPTURE = [("45°", 45, 0), ("90°", 90, 0), ("135°", 135, 0), ("180°", 180, 0), ("270°", 270, 0),
             ("overhead", 0, 60), ("from below", 0, -30)]
 QWEN_VIEWS = {
+    "tri": [("45° left", 315, 0), ("45° right", 45, 0), ("high angle", 0, 30)],
     "capture": _CAPTURE,
     "capture_full": _CAPTURE + [("225°", 225, 0), ("315°", 315, 0), ("45° raised", 45, 30), ("135° raised", 135, 30),
                                 ("225° raised", 225, 30), ("315° raised", 315, 30)],
@@ -62,18 +63,8 @@ QWEN_VIEWS = {
 }
 QWEN_MEGAPIXELS = {"fast": 0.75, "auto": 1.0, "quality": 1.0}
 
-_KEEP = ("Keep everything else exactly the same: the same person, the same pose, the same facial expression and "
-         "gaze, the same hair, clothing and hands, the same lighting, colours and background. Only the viewpoint "
-         "changes.")
-# Stereo: two plain instructions (no angle LoRA, whose smallest step is 45 degrees).
-STEREO_VIEWS = [
-    {"label": "left", "azimuth": -8, "elevation": 0,
-     "prompt": "Move the camera slightly to the left, a small sideways step of about 8 degrees, still looking at "
-               "the same point. " + _KEEP},
-    {"label": "right", "azimuth": 8, "elevation": 0,
-     "prompt": "Move the camera slightly to the right, a small sideways step of about 8 degrees, still looking at "
-               "the same point. " + _KEEP},
-]
+# Candidates generated per view (the most rigid one - a pure camera move of the photo - is kept).
+QWEN_CANDIDATES = {"fast": 1, "auto": 2, "quality": 3}
 
 
 def installed(ctx, engine: str) -> bool:
@@ -93,6 +84,12 @@ def generation_engine(ctx, preferred: str | None = None, trajectory: str | None 
         if installed(ctx, e):
             return e
     return None
+
+
+def target_angle(view: dict) -> float:
+    """Camera change asked for a generated view, in degrees (for checking that it really moved)."""
+    az = float(view.get("azimuth", 0)) % 360
+    return max(min(az, 360 - az), abs(float(view.get("elevation", 0))))
 
 
 def detailed(traj: str, mode: str) -> str:
@@ -176,8 +173,8 @@ class GenerativeSceneBackend(Backend):
         assembly = options.get("assembly") or "fusion"
         if assembly not in ("fusion", "train"):
             assembly = "fusion"
-        if traj == "stereo":
-            assembly = "train"   # three nearly identical views: one optimised splat, nothing to fuse
+        if traj == "tri":
+            assembly = "train"   # photo + 3 views → the multi-view engine's trained splat
         ref = inp.frames[min(int(options.get("reference_frame_index", 0)), len(inp.frames) - 1)]
         log = options.get("log") or (lambda m: None)
         out_dir = str(inp.work_dir / "generated_views")
@@ -193,9 +190,8 @@ class GenerativeSceneBackend(Backend):
                    "gguf": str(next(iter(paths["qwen-image-edit-2511-q5"].values()))),
                    "lora_angles": str(next(iter(paths["qwen-edit-2511-angles-lora"].values()))),
                    "lora_lightning": str(next(iter(paths["qwen-edit-2511-lightning"].values()))),
-                   "views": STEREO_VIEWS if traj == "stereo" else
-                   [{"label": lb, "azimuth": az, "elevation": el} for lb, az, el in QWEN_VIEWS[plan]],
-                   "angles_strength": 0.0 if traj == "stereo" else 0.9,
+                   "views": [{"label": lb, "azimuth": az, "elevation": el} for lb, az, el in QWEN_VIEWS[plan]],
+                   "angles_strength": 0.9, "candidates": QWEN_CANDIDATES.get(mode, 1) if traj == "tri" else 1,
                    "distance": options.get("qwen_distance", "medium shot"),
                    "megapixels": QWEN_MEGAPIXELS.get(mode, 1.0), "steps": 4, "seed": int(options.get("seed", 42))}
             self._run_attempts(ctx, self.qwen_script, {**req, "stage": "encode"}, inp, progress, cancel, log,
@@ -223,7 +219,9 @@ class GenerativeSceneBackend(Backend):
             log(f"sharp fusion of the photo and {len(views) - 1} key views")
         # The real photo is sampled more often than any single generated view during training.
         w_in = max(4.0, len(views) / 10)
-        mv_views = [{"path": v["path"], "generated": bool(v["generated"]), "weight": 1.0 if v["generated"] else w_in}
+        mv_views = [{"path": v["path"], "generated": bool(v["generated"]), "weight": 1.0 if v["generated"] else w_in,
+                     **({"candidates": v["candidates"], "label": v.get("label", ""),
+                         "target_deg": target_angle(v)} if len(v.get("candidates") or []) > 1 else {})}
                     for v in views]
         gen_models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
                       for m in models]

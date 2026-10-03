@@ -215,20 +215,29 @@ def generate(req, torch, image, env):
     pipe = None
     views = [{"path": req["image"], "generated": False}]
     steps = int(req.get("steps", 4))
+    n_cand = max(1, int(req.get("candidates", 1)))
+    total = len(req["views"]) * n_cand
     for i, (v, enc) in enumerate(zip(req["views"], data["views"])):
-        p = os.path.join(out_dir, f"view{i:02d}.png")
-        if os.path.exists(p):
-            log(f"view {i + 1} ({v.get('label')}): already generated, reused")
-        else:
+        paths = []
+        for c in range(n_cand):
+            # candidate 0 keeps the old file name (results of earlier versions are reused)
+            p = os.path.join(out_dir, f"view{i:02d}.png" if c == 0 else f"view{i:02d}_c{c}.png")
+            paths.append(p)
+            if os.path.exists(p):
+                log(f"view {i + 1} ({v.get('label')}) candidate {c + 1}: already generated, reused")
+                continue
             if pipe is None:
                 pipe = load_pipeline(req, torch, placement)
-            log(f"view {i + 1}/{len(req['views'])} ({v.get('label')}): {enc['prompt']} · {w}x{h} · {placement}")
+            log(f"view {i + 1}/{len(req['views'])} ({v.get('label')}) candidate {c + 1}/{n_cand}: {enc['prompt']} · "
+                f"{w}x{h} · {placement}")
             e = enc["embeds"][None].to("cuda", torch.bfloat16)
             mask = torch.ones(e.shape[:2], dtype=torch.long, device="cuda")
+            done = i * n_cand + c
 
-            def on_step(pp, s, t, kw, i=i):
-                progress((i + (s + 1) / steps) / len(req["views"]),
-                         f"view {i + 1}/{len(req['views'])} ({v.get('label')}): step {s + 1}/{steps}")
+            def on_step(pp, s, t, kw, done=done, i=i, c=c):
+                progress((done + (s + 1) / steps) / total,
+                         f"view {i + 1}/{len(req['views'])} ({v.get('label')}), candidate {c + 1}/{n_cand}: "
+                         f"step {s + 1}/{steps}")
                 return {}
 
             oom = None
@@ -236,7 +245,7 @@ def generate(req, torch, image, env):
                 with torch.no_grad():
                     img = pipe(image=[image], prompt_embeds=e, prompt_embeds_mask=mask, true_cfg_scale=1.0,
                                num_inference_steps=steps, width=w, height=h,
-                               generator=torch.Generator("cuda").manual_seed(int(req.get("seed", 42)) + i),
+                               generator=torch.Generator("cuda").manual_seed(int(req.get("seed", 42)) + i + 1000 * c),
                                callback_on_step_end=on_step).images[0]
             except (torch.cuda.OutOfMemoryError, RuntimeError) as ex:
                 if "out of memory" not in str(ex).lower():
@@ -249,8 +258,8 @@ def generate(req, torch, image, env):
                              ("; retrying with a lighter setting" if more else ""))
                 sys.exit(1)
             img.save(p)
-        views.append({"path": p, "generated": True, "key": True, "label": v.get("label"),
-                      "azimuth": v.get("azimuth", 0), "elevation": v.get("elevation", 0)})
+        views.append({"path": paths[0], "candidates": paths, "generated": True, "key": True,
+                      "label": v.get("label"), "azimuth": v.get("azimuth", 0), "elevation": v.get("elevation", 0)})
     with open(os.path.join(out_dir, "views.json"), "w") as f:
         json.dump(views, f)
     emit("result", stage="generate", views=views, size=[w, h], placement=placement,

@@ -119,4 +119,5 @@ class MultiViewBackend(Backend):
             extra={"gaussians": len(scene), "views": res.get("views"), "real_views": res.get("real_views"),
                    "reference_psnr_db": res.get("reference_psnr_db"), "mesh": res.get("mesh"),
                    "assembly": res.get("assembly", "train"),
+                   "candidate_selection": res.get("candidate_selection") or [],
                    "metric_scale_factor": res.get("metric_scale_factor")})

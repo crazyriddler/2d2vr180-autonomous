@@ -278,7 +278,16 @@ class JobRunner:
 
             # ---------------------------------------------------- select
             sel = None
-            if (opts.generative != "off" and not opts.backend
+            assembly = opts.gen_assembly
+            wants_mv = opts.backend == "multiview" and kind == "photo"
+            if wants_mv and opts.generative == "off":
+                raise BackendError("Multi-view needs several photos of the same scene. For a single photo, choose "
+                                   "a generative mode (for example '3 views') to create the other views first.",
+                                   code="bad_input")
+            if wants_mv:
+                assembly = "train"   # generated views + photo → the multi-view engine's trained splat
+                log("multi-view backend on one photo: generating the views first, then a trained multi-view splat")
+            if (opts.generative != "off" and (not opts.backend or wants_mv)
                     and (kind == "photo" or inp.video_kind == "static_scene")):
                 sel = select(inp, hw, self.ctx, opts.mode, "generative_scene")
                 if sel.backend is None:
@@ -324,7 +333,7 @@ class JobRunner:
             ref_index = report.get("processing", {}).get("reference_frame_index", 0)
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index,
                      "trajectory": opts.generative if opts.generative != "off" else None,
-                     "assembly": opts.gen_assembly, "engine": opts.gen_engine,
+                     "assembly": assembly, "engine": opts.gen_engine,
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
             if bopts["hfov_deg"]:
                 log(f"EXIF field of view: {bopts['hfov_deg']:.1f}°")

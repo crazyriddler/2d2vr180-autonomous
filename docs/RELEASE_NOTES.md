@@ -1,3 +1,22 @@
+# 2D2VR180 1.0.0-rc17 — 3 views (Qwen) → multi-view, most consistent view chosen automatically
+
+## What's new in rc17
+
+- **New mode "3 views (Qwen)"** (replaces Stereo pair). Qwen-Image-Edit with the Multiple-Angles LoRA makes three
+  views of your photo: **45° to the left, 45° to the right, and a high-angle shot** from 30° above, looking
+  down. The photo and those three views go to the multi-view engine as a **trained splat**.
+- **Automatic consistency check.** Qwen redraws the image, so a view can come out with a slightly turned head
+  or a different expression. In Auto, 2 candidates are made per angle; in Quality, 3; in Fast, 1. Then:
+  1. The multi-view engine (VGGT) places the photo and each candidate in 3D.
+  2. It reprojects the photo into the candidate's view and measures how much does not match a pure camera
+     move.
+  3. It keeps the most consistent candidate.
+  - The choice and its scores are written to `job.log` and `run_report.json`.
+- **The Multi-view backend can be chosen for a single photo** when a generative mode is on. The views are
+  generated first, then reconstructed together with the photo as a trained multi-view splat. With generative
+  3D off, it explains that it needs more photos.
+- **Stereo pair removed.**
+
 # 2D2VR180 1.0.0-rc16 — stereo pair from one photo (Qwen)
 
 ## What's new in rc16
@@ -244,8 +263,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc16-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc16-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc17-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc17-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

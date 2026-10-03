@@ -328,6 +328,80 @@ def fuse_views(req, items, vin, c2w_v, K_v, depth, conf, device, torch, out_dir)
     return outputs, count, prov, mesh_info
 
 
+def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None):
+    """How well a generated view is explained as a pure camera move of the reference photo.
+
+    VGGT poses the pair and gives the photo's depth; the photo is reprojected into the candidate's
+    view and compared where both see the same surface. A changed pose, head turn or expression
+    shows up as colour mismatch. Lower is better. Returns (score, colour error, angle°, overlap)."""
+    import math
+
+    import numpy as np
+
+    p = run_vggt(model, [ref_vin[0], cand_vin[0]], dtype, torch)
+    h0, h1 = ref_vin[0].shape[0], cand_vin[0].shape[0]
+    pad0, pad1 = p["pads"]
+    d0, c0 = p["depth"][0][pad0:pad0 + h0], p["conf"][0][pad0:pad0 + h0]
+    d1 = p["depth"][1][pad1:pad1 + h1]
+    K0, K1 = np.array(p["K"][0], np.float64), np.array(p["K"][1], np.float64)
+    K0[1, 2] -= pad0
+    K1[1, 2] -= pad1
+    c2w0 = np.linalg.inv(np.vstack([p["w2c"][0], [0, 0, 0, 1]]))
+    w2c1 = np.vstack([p["w2c"][1], [0, 0, 0, 1]])
+    X = unproject(d0, K0, c2w0).reshape(-1, 3)
+    pc = X @ w2c1[:3, :3].T + w2c1[:3, 3]
+    z = pc[:, 2]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        u = np.floor(K1[0, 0] * pc[:, 0] / z + K1[0, 2])
+        v = np.floor(K1[1, 1] * pc[:, 1] / z + K1[1, 2])
+    w1 = cand_vin[0].shape[1]
+    inb = (z > 1e-6) & (u >= 0) & (u < w1) & (v >= 0) & (v < h1)
+    ui = np.where(inb, u, 0).astype(np.int64)
+    vi = np.where(inb, v, 0).astype(np.int64)
+    ok = inb & (z <= d1[vi, ui] * 1.05) & (c0.reshape(-1) >= np.percentile(c0, 50))
+    rel = w2c1 @ c2w0
+    angle = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(rel[:3, :3]) - 1) / 2))))
+    overlap = float(ok.mean())
+    if ok.sum() < 500:
+        return 10.0, None, angle, overlap
+    a = ref_vin[0].reshape(-1, 3)[ok]
+    b = cand_vin[0][vi[ok], ui[ok]]
+    diff = np.abs(a - b).mean(1)
+    # Changes are local (a turned head, a moved hand): the share of clearly mismatching pixels catches
+    # them, which a median would ignore; the mean error adds the overall fit.
+    err = float((diff > 0.12).mean() + diff.mean())
+    score = err + 0.5 * max(0.0, 0.25 - overlap)          # little shared surface: less trustworthy
+    if target_deg:
+        score += 0.003 * max(0.0, abs(angle - target_deg) - 15)   # it must really have moved
+    return score, err, angle, overlap
+
+
+def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side):
+    """For every view with several generated candidates keep the most rigid one (rigidity_score)."""
+    report = []
+    for i, it in enumerate(items):
+        cands = it.get("candidates") or []
+        if len(cands) < 2:
+            continue
+        scored = []
+        for path in cands:
+            img = load_rgb(path, max_side)
+            cv = vggt_input(img)
+            sc, err, ang, ov = rigidity_score(model, vin[0], cv, dtype, torch, it.get("target_deg"))
+            scored.append((sc, path, img, cv, err, ang, ov))
+            log(f"view {i} ({it.get('label', '')}) candidate {os.path.basename(path)}: score {sc:.4f} "
+                f"(colour error {err if err is None else round(err, 4)}, camera moved {ang:.1f}°, "
+                f"shared surface {ov:.0%})")
+        best = min(scored, key=lambda t: t[0])
+        items[i] = dict(it, path=best[1])
+        train_imgs[i], vin[i] = best[2], best[3]
+        report.append({"view": it.get("label", str(i)), "chosen": os.path.basename(best[1]),
+                       "scores": {os.path.basename(t[1]): round(t[0], 4) for t in scored},
+                       "camera_moved_deg": round(best[5], 1)})
+        log(f"view {i} ({it.get('label', '')}): kept {os.path.basename(best[1])}")
+    return report
+
+
 def main(req):
     import numpy as np
     import torch
@@ -368,6 +442,10 @@ def main(req):
     dtype = (torch.bfloat16 if device == "cpu" or torch.cuda.get_device_capability()[0] >= 8 else torch.float16)
     vram = env.get("vram_total_mib", 16000) / 1024
     chunk = int(req.get("chunk") or (24 if vram >= 15 else 12))
+    selection = []
+    if any(len(it.get("candidates") or []) > 1 for it in items):
+        progress(0.04, "choosing the most consistent generated views")
+        selection = select_candidates(items, train_imgs, vin, model, dtype, torch, max_side)
     c2w_v, K_v, depth, conf = estimate_cameras(vin, model, dtype, torch, chunk, int(req.get("overlap", 8)))
     del model
     free(torch)
@@ -393,7 +471,7 @@ def main(req):
                                                      out_dir)
         emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), metric=bool(scale),
              metric_scale_factor=scale, views=n_views, real_views=sum(1 for it in items if not it.get("generated")),
-             reference_psnr_db=None, splats=count, mesh=mesh_info, assembly="fusion",
+             reference_psnr_db=None, splats=count, mesh=mesh_info, assembly="fusion", candidate_selection=selection,
              provenance={"observed": 0, "inferred": int((prov == 1).sum()), "generative": int((prov == 2).sum())})
         return
 
@@ -421,6 +499,7 @@ def main(req):
     log(f"{len(points):,} initial points from {n} views")
     if poses_only:
         emit("result", outputs={}, poses_only=True, views=n, points=int(len(points)), metric_scale_factor=scale,
+             candidate_selection=selection,
              c2ws=[m.tolist() for m in c2w_v], vram_peak_mib=vram_peak_mib(torch))
         return
 
@@ -515,6 +594,7 @@ def main(req):
     emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), metric=bool(scale),
          metric_scale_factor=scale, views=n, real_views=sum(1 for it in items if not it.get("generated")),
          reference_psnr_db=round(ref_psnr, 2), splats=count, mesh=mesh_info, loss_history=hist[-20:],
+         candidate_selection=selection,
          provenance={"observed": int((counts_np == 0).sum()), "inferred": int((counts_np == 1).sum()),
                      "generative": int((counts_np == 2).sum())})
 
