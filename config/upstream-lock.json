@@ -259,6 +259,21 @@
    "gpu_smoke_test": "not run",
    "integration": "workers/qwen_views_worker.py: '<sks> [azimuth] [elevation] [distance]' prompts, one ~1 MP view per camera position from the photo, 4 Lightning steps; views assembled by sharp fusion.",
    "findings": "Owner asked for fewer, more widely spaced views (45/90/135/180/270, overhead, below) and an image model with higher per-view resolution than Wan video frames."
+  },
+  {
+   "name": "depth-anything-3",
+   "url": "https://github.com/ByteDance-Seed/Depth-Anything-3",
+   "role": "backend",
+   "commit": "3d835ec1a5802d64a8b8b15f817a1ab54809bfe4",
+   "commit_date": "2026-07-27",
+   "code_license": "Apache-2.0",
+   "model_license": "CC BY-NC 4.0 (depth-anything/DA3NESTED-GIANT-LARGE-1.1 rev b2359bdf726fb44ef62acca04d629dcf158053e7)",
+   "category": "redistributable-code-restricted-model",
+   "windows": "pure PyTorch; xformers optional (SwiGLU fallback); exporters (pycolmap, trimesh, moviepy, gsplat) and pose alignment (evo) are stubbed - inference needs torch, einops, addict, omegaconf, opencv, huggingface_hub, safetensors",
+   "vram": "1.4 B parameters (~6.8 GB) + activations for <= 32 views at 504 px",
+   "gpu_smoke_test": "not run",
+   "integration": "workers/multiview_worker.py: camera engine for <= 32 same-shape views (poses, depth, confidence, intrinsics, metric scale); VGGT kept for longer sequences and as fallback; also used for generated-candidate selection.",
+   "findings": "Paper/benchmark: +35.7 % pose accuracy and +23.6 % geometry vs VGGT; poses are the critical link of the owner's best flow (photo + generated views -> multi-view)."
   }
  ],
  "auxiliary_archives": [

@@ -21,6 +21,8 @@ QUALITY = {  # mode → (training steps, longest image side, splat cap)
     "auto": (9000, 960, 2_000_000),
     "quality": (15000, 1280, 3_000_000),
 }
+DA3_MODEL = "da3-nested-giant-large"   # preferred camera engine when installed (VGGT otherwise)
+DA3_RES = {"fast": 392, "auto": 504, "quality": 616}   # processing size (multiples of 14)
 FUSION = {  # sharp fusion: mode → (photo side, generated-view side, splat cap)
     "fast": (1024, 768, 2_000_000),
     "auto": (1536, 1024, 3_000_000),
@@ -74,6 +76,11 @@ class MultiViewBackend(Backend):
                "moge_path": str(ctx.models.paths("moge-2-vitl-normal")["model.pt"]),
                "max_side": int(options.get("max_side", side)), "steps": int(options.get("train_steps", steps)),
                "max_gaussians": cap, "mesh": bool(options.get("mesh", True)), "assembly": assembly}
+        da3 = DA3_MODEL in ctx.models.entries and ctx.models.is_installed(DA3_MODEL) and \
+            options.get("camera_engine", "auto") != "vggt"
+        if da3:
+            req.update(pose_engine="da3", da3_dir=str(ctx.models.model_dir(DA3_MODEL)),
+                       da3_res=DA3_RES.get(mode, 504))
         if assembly == "fusion":
             ref_side, gen_side, req["max_gaussians"] = FUSION.get(mode, FUSION["auto"])
             req.update(fuse_ref_side=ref_side, fuse_side=gen_side)
@@ -109,8 +116,9 @@ class MultiViewBackend(Backend):
         warnings = list(extra_warnings or [])
         if not res.get("metric"):
             warnings.append("Metric scale could not be estimated; stereo depth may need the eye-separation setting.")
+        used = list(self.model_ids(options)) + ([DA3_MODEL] if res.get("camera_engine") == "da3" else [])
         models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
-                  for m in self.model_ids(options)]
+                  for m in used]
         return BackendResult(
             backend=self.id, scene_ply=ply, splat=splat, obj=obj,
             cameras=[c for c in cams if not c.get("generated")],
@@ -118,6 +126,6 @@ class MultiViewBackend(Backend):
             worker_env=out["env"], models_used=models + list(extra_models or []), warnings=warnings,
             extra={"gaussians": len(scene), "views": res.get("views"), "real_views": res.get("real_views"),
                    "reference_psnr_db": res.get("reference_psnr_db"), "mesh": res.get("mesh"),
-                   "assembly": res.get("assembly", "train"),
+                   "assembly": res.get("assembly", "train"), "camera_engine": res.get("camera_engine", "vggt"),
                    "candidate_selection": res.get("candidate_selection") or [],
                    "metric_scale_factor": res.get("metric_scale_factor")})

@@ -43,6 +43,10 @@ COMPONENTS: list[Component] = [
               "Gaussian splat (VGGT + gsplat). Also used by Generative 3D. Needs an NVIDIA GPU with 10 GB+.", True),
     Component("model-vggt", "VGGT-1B — camera poses and depth from many views (non-commercial)", "model", "vggt-1b",
               "Finds where each photo/frame was taken and its depth.", True, ("engine-video",)),
+    Component("model-da3", "Depth Anything 3 (Nested Giant-Large) — better multi-view poses and depth "
+              "(non-commercial)", "model", "da3-nested-giant-large",
+              "Finds where each view was taken and its depth more accurately than VGGT, with real-world scale. "
+              "Used automatically by the multi-view engine when installed. ~6.8 GB.", True, ("engine-video",)),
     # ---------------------------------------------------------------- generative
     Component("engine-gen", "Generative engine (Qwen-Image-Edit, Wan 2.2, Stable Virtual Camera, LaMa)", "runtime", "gen-cu128",
               "Invents the parts of a scene a photo does not show (other sides of a subject, the surroundings "

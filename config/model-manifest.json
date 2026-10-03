@@ -550,6 +550,37 @@
      "size_bytes": 849608296
     }
    ]
+  },
+  {
+   "id": "da3-nested-giant-large",
+   "display_name": "Depth Anything 3 Nested Giant-Large 1.1 — multi-view poses, depth and metric scale",
+   "source": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+   "revision": "b2359bdf726fb44ef62acca04d629dcf158053e7",
+   "license": "CC BY-NC 4.0 (Hugging Face model card: license: cc-by-nc-4.0) — non-commercial use only",
+   "license_url": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+   "commercial_use": false,
+   "redistributable": false,
+   "required_vram_gb": 8,
+   "backends": [
+    "multiview",
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "config.json",
+     "url": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1/resolve/b2359bdf726fb44ef62acca04d629dcf158053e7/config.json",
+     "sha256": null,
+     "size_bytes": 3113
+    },
+    {
+     "path": "model.safetensors",
+     "url": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1/resolve/b2359bdf726fb44ef62acca04d629dcf158053e7/model.safetensors",
+     "sha256": "8ebe871a022ed58d2fc8fdfb2ebdb31d57b60fe39611c849095851a7b7c6020c",
+     "size_bytes": 6759558100
+    }
+   ]
   }
  ]
 }

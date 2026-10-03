@@ -1,3 +1,20 @@
+# 2D2VR180 1.0.0-rc20 — Depth Anything 3 camera engine
+
+## What's new in rc20
+
+- **Depth Anything 3 (Nested Giant-Large 1.1) as the multi-view camera engine.** Most of "Real 3D from one
+  photo" depends on where each view was taken and how deep each pixel is, and DA3 estimates both better than
+  VGGT: on its authors' benchmark, poses are 35.7% more accurate and geometry 23.6% better. It also gives
+  real-world scale directly.
+  - It is used automatically when installed: Components → *Depth Anything 3* (~6.8 GB; non-commercial
+    licence, like VGGT).
+  - It handles up to 32 views of the same shape. Long videos and mixed portrait/landscape photos keep using
+    VGGT.
+  - It also chooses the most consistent generated candidates.
+  - `run_report.json` and `job.log` show which camera engine was used.
+- **The Multi-view engine must be installed again** (Depth Anything 3's code was added). The app shows it as
+  needing an update.
+
 # 2D2VR180 1.0.0-rc19 — sharper, more solid multi-view training from few views
 
 ## What's new in rc19
@@ -304,8 +321,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc19-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc19-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc20-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc20-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

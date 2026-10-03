@@ -231,12 +231,14 @@ class RuntimeManager:
         if dest.exists():
             shutil.rmtree(dest)
         n = 0
+        root = archive.get("package_root", "").strip("/")     # e.g. "src" for src-layout projects
+        prefix = f"{root}/{pkg}/" if root else f"{pkg}/"
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             for name in z.namelist():
                 parts = name.split("/", 1)
-                if len(parts) < 2 or not parts[1].startswith(pkg + "/") or name.endswith("/"):
+                if len(parts) < 2 or not parts[1].startswith(prefix) or name.endswith("/"):
                     continue
-                rel = parts[1]
+                rel = parts[1][len(root) + 1:] if root else parts[1]
                 if ".." in rel.split("/"):
                     continue
                 target = site / rel

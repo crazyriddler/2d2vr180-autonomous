@@ -78,6 +78,8 @@ def test_copy_package_installs_subpackages_from_archive(tmp_path, monkeypatch):
         z.writestr("repo-abc/seva/modules/layers.py", "X = 1\n")
         z.writestr("repo-abc/demo.py", "")
         z.writestr("repo-abc/third_party/x.py", "")
+        z.writestr("repo-abc/src/depth_anything_3/__init__.py", "")
+        z.writestr("repo-abc/src/depth_anything_3/model/da3.py", "Y = 2\n")
 
     class Resp(io.BytesIO):
         def __enter__(self):
@@ -96,6 +98,10 @@ def test_copy_package_installs_subpackages_from_archive(tmp_path, monkeypatch):
                                                                           "stderr": ""})())
     rm = RuntimeManager(root=tmp_path / "rt", specs={})
     rm._copy_package(sys.executable, {"url": "https://x/archive/abc.zip", "copy_package": "seva"}, lambda m: None, None)
+    rm._copy_package(sys.executable, {"url": "https://x/archive/abc.zip", "copy_package": "depth_anything_3",
+                                      "package_root": "src"}, lambda m: None, None)
     monkeypatch.setattr(subprocess, "run", real_run)
+    assert (site / "depth_anything_3" / "model" / "da3.py").read_text() == "Y = 2\n"   # src layout
+    assert not (site / "src").exists()
     assert (site / "seva" / "modules" / "layers.py").read_text() == "X = 1\n"
     assert not (site / "demo.py").exists() and not (site / "third_party").exists()

@@ -248,7 +248,7 @@ def vggt_on_image(map_v, info, h, w):
     Returns (map at image pixels, mask of pixels that VGGT saw)."""
     import numpy as np
 
-    r = w / (info["sx"] * VGGT_W)
+    r = w / (info["sx"] * info.get("w", VGGT_W))
     xs = ((np.arange(w) + 0.5) / r / info["sx"]).astype(int)
     ys = ((np.arange(h) + 0.5) / r / info["sy"] - info["crop"]).astype(int)
     inside_y = (ys >= 0) & (ys < map_v.shape[0])
@@ -362,7 +362,7 @@ def fuse_views(req, items, vin, c2w_v, K_v, depth, conf, device, torch, out_dir)
         del out, t
         # this image's pixels → the view's VGGT pixels (see vggt_input)
         info = vin[i][1]
-        r = w / (info["sx"] * VGGT_W)
+        r = w / (info["sx"] * info.get("w", VGGT_W))
         zv, inside = vggt_on_image(depth[i], info, h, w)
         cv, _ = vggt_on_image(conf[i], info, h, w)
         ok = valid & inside & (cv > np.percentile(conf[i], 50))
@@ -416,7 +416,82 @@ def fuse_views(req, items, vin, c2w_v, K_v, depth, conf, device, torch, out_dir)
     return outputs, count, prov, mesh_info
 
 
-def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None):
+# ----------------------------------------------------------------------------- Depth Anything 3
+def da3_stub():
+    """DA3's API module imports its exporters (pycolmap, trimesh, moviepy, gsplat) and pose alignment
+    (evo) at import time; inference needs none of them, so those two modules are replaced."""
+    import types
+
+    def nope(*a, **k):
+        raise RuntimeError("this Depth Anything 3 feature is not bundled with 2D2VR180")
+
+    for name, attrs in (("depth_anything_3.utils.export", ("export",)),
+                        ("depth_anything_3.utils.pose_align", ("align_poses_umeyama",))):
+        if name not in sys.modules:
+            m = types.ModuleType(name)
+            for a in attrs:
+                setattr(m, a, nope)
+            sys.modules[name] = m
+
+
+def load_da3(model_dir, device):
+    da3_stub()
+    from depth_anything_3.api import DepthAnything3
+
+    return DepthAnything3.from_pretrained(model_dir).to(device).eval()
+
+
+def da3_size(img, res):
+    """Common processing size (h, w): longest side `res`, both multiples of DA3's 14-pixel patch."""
+    H0, W0 = img.shape[:2]
+    s = res / max(H0, W0)
+    return max(14, int(round(H0 * s / 14)) * 14), max(14, int(round(W0 * s / 14)) * 14)
+
+
+def da3_input(img, size):
+    """(float image at the DA3 size, info) - info maps DA3 pixels to the image like vggt_input's."""
+    import numpy as np
+    from PIL import Image
+
+    h, w = size
+    H0, W0 = img.shape[:2]
+    arr = np.asarray(Image.fromarray(img).resize((w, h), Image.BICUBIC), np.float32) / 255.0
+    return arr, {"sx": W0 / w, "sy": H0 / h, "crop": 0, "h": h, "w": w}
+
+
+def da3_predict(model, arrays, torch):
+    """Poses, intrinsics, depth and confidence for same-size float images; first view = world frame.
+    Same keys as run_vggt (pads are 0: no padding)."""
+    import numpy as np
+
+    imgs = [(np.clip(a, 0, 1) * 255).round().astype(np.uint8) for a in arrays]
+    h, w = imgs[0].shape[:2]
+    with torch.no_grad():
+        pred = model.inference(imgs, process_res=max(h, w), process_res_method="upper_bound_resize",
+                               ref_view_strategy="first")
+    if tuple(pred.depth.shape[1:]) != (h, w):
+        raise RuntimeError(f"Depth Anything 3 changed the image size {(h, w)} -> {tuple(pred.depth.shape[1:])}")
+    c2w = [np.linalg.inv(np.vstack([e, [0, 0, 0, 1]])) for e in np.asarray(pred.extrinsics, np.float64)]
+    inv0 = np.linalg.inv(c2w[0])
+    w2c = [np.linalg.inv(inv0 @ m)[:3] for m in c2w]
+    out = {"w2c": np.stack(w2c), "K": np.asarray(pred.intrinsics, np.float64),
+           "depth": np.asarray(pred.depth, np.float32), "conf": np.asarray(pred.conf, np.float32),
+           "pads": [0] * len(imgs)}
+    free(torch)
+    return out
+
+
+def da3_cameras(model, vin, torch):
+    """estimate_cameras() with Depth Anything 3 (all views at once)."""
+    import numpy as np
+
+    progress(0.1, f"camera poses and depth (Depth Anything 3, {len(vin)} views)")
+    p = da3_predict(model, [v[0] for v in vin], torch)
+    c2w = [np.linalg.inv(np.vstack([e, [0, 0, 0, 1]])) for e in p["w2c"]]
+    return c2w, [np.array(k) for k in p["K"]], list(p["depth"]), list(p["conf"])
+
+
+def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None, predict=None):
     """How well a generated view is explained as a pure camera move of the reference photo.
 
     VGGT poses the pair and gives the photo's depth; the photo is reprojected into the candidate's
@@ -426,7 +501,7 @@ def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None):
 
     import numpy as np
 
-    p = run_vggt(model, [ref_vin[0], cand_vin[0]], dtype, torch)
+    p = (predict or (lambda arrays: run_vggt(model, arrays, dtype, torch)))([ref_vin[0], cand_vin[0]])
     h0, h1 = ref_vin[0].shape[0], cand_vin[0].shape[0]
     pad0, pad1 = p["pads"]
     d0, c0 = p["depth"][0][pad0:pad0 + h0], p["conf"][0][pad0:pad0 + h0]
@@ -464,7 +539,7 @@ def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None):
     return score, err, angle, overlap
 
 
-def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side):
+def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side, prep=None, predict=None):
     """For every view with several generated candidates keep the most rigid one (rigidity_score)."""
     report = []
     for i, it in enumerate(items):
@@ -474,8 +549,8 @@ def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side):
         scored = []
         for path in cands:
             img = load_rgb(path, max_side)
-            cv = vggt_input(img)
-            sc, err, ang, ov = rigidity_score(model, vin[0], cv, dtype, torch, it.get("target_deg"))
+            cv = (prep or vggt_input)(img)
+            sc, err, ang, ov = rigidity_score(model, vin[0], cv, dtype, torch, it.get("target_deg"), predict)
             scored.append((sc, path, img, cv, err, ang, ov))
             log(f"view {i} ({it.get('label', '')}) candidate {os.path.basename(path)}: score {sc:.4f} "
                 f"(colour error {err if err is None else round(err, 4)}, camera moved {ang:.1f}°, "
@@ -488,6 +563,32 @@ def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side):
                        "camera_moved_deg": round(best[5], 1)})
         log(f"view {i} ({it.get('label', '')}): kept {os.path.basename(best[1])}")
     return report
+
+
+def vggt_stage(req, items, train_imgs, vin, device, torch, max_side, env):
+    """VGGT poses + depth (chunked for long sequences), with candidate selection first."""
+    from vggt.models.vggt import VGGT
+
+    progress(0.03, "loading VGGT")
+    vdir = req["vggt_dir"]
+    if os.path.exists(os.path.join(vdir, "config.json")) and os.path.exists(os.path.join(vdir, "model.safetensors")):
+        model = VGGT.from_pretrained(vdir)
+    else:
+        model = VGGT()
+        sd = torch.load(os.path.join(vdir, "model.pt"), map_location="cpu", weights_only=True)
+        model.load_state_dict(sd)
+    model = model.to(device).eval()
+    dtype = (torch.bfloat16 if device == "cpu" or torch.cuda.get_device_capability()[0] >= 8 else torch.float16)
+    vram = env.get("vram_total_mib", 16000) / 1024
+    chunk = int(req.get("chunk") or (24 if vram >= 15 else 12))
+    selection = []
+    if any(len(it.get("candidates") or []) > 1 for it in items):
+        progress(0.04, "choosing the most consistent generated views")
+        selection = select_candidates(items, train_imgs, vin, model, dtype, torch, max_side)
+    c2w_v, K_v, depth, conf = estimate_cameras(vin, model, dtype, torch, chunk, int(req.get("overlap", 8)))
+    del model
+    free(torch)
+    return c2w_v, K_v, depth, conf, vin, selection
 
 
 def main(req):
@@ -516,30 +617,35 @@ def main(req):
     vin = [vggt_input(im) for im in train_imgs]
 
     # ------------------------------------------------------------ poses + depth
-    from vggt.models.vggt import VGGT
-
-    progress(0.03, "loading VGGT")
-    vdir = req["vggt_dir"]
-    if os.path.exists(os.path.join(vdir, "config.json")) and os.path.exists(os.path.join(vdir, "model.safetensors")):
-        model = VGGT.from_pretrained(vdir)
+    engine = req.get("pose_engine") or "vggt"
+    a0 = train_imgs[0].shape[1] / train_imgs[0].shape[0]
+    same_shape = all(abs(im.shape[1] / im.shape[0] / a0 - 1) < 0.03 for im in train_imgs)
+    if (engine == "da3" and req.get("da3_dir") and len(items) <= int(req.get("da3_max_views", 32))
+            and same_shape):
+        progress(0.03, "loading Depth Anything 3")
+        model = load_da3(req["da3_dir"], device)
+        size = da3_size(train_imgs[0], int(req.get("da3_res", 504)))
+        vin = [da3_input(im, size) for im in train_imgs]
+        selection = []
+        if any(len(it.get("candidates") or []) > 1 for it in items):
+            progress(0.04, "choosing the most consistent generated views")
+            selection = select_candidates(items, train_imgs, vin, model, None, torch, max_side,
+                                          prep=lambda im: da3_input(im, size),
+                                          predict=lambda arrays: da3_predict(model, arrays, torch))
+        c2w_v, K_v, depth, conf = da3_cameras(model, vin, torch)
+        del model
+        free(torch)
+        metric_engine = bool(req.get("da3_metric", True))
     else:
-        model = VGGT()
-        sd = torch.load(os.path.join(vdir, "model.pt"), map_location="cpu", weights_only=True)
-        model.load_state_dict(sd)
-    model = model.to(device).eval()
-    dtype = (torch.bfloat16 if device == "cpu" or torch.cuda.get_device_capability()[0] >= 8 else torch.float16)
-    vram = env.get("vram_total_mib", 16000) / 1024
-    chunk = int(req.get("chunk") or (24 if vram >= 15 else 12))
-    selection = []
-    if any(len(it.get("candidates") or []) > 1 for it in items):
-        progress(0.04, "choosing the most consistent generated views")
-        selection = select_candidates(items, train_imgs, vin, model, dtype, torch, max_side)
-    c2w_v, K_v, depth, conf = estimate_cameras(vin, model, dtype, torch, chunk, int(req.get("overlap", 8)))
-    del model
-    free(torch)
-
+        if engine == "da3":
+            log("Depth Anything 3 not used (not installed, too many views or mixed image shapes); using VGGT")
+        engine = "vggt"
+        c2w_v, K_v, depth, conf, vin, selection = vggt_stage(req, items, train_imgs, vin, device, torch,
+                                                              max_side, env)
+        metric_engine = False
+    log(f"camera engine: {engine}")
     scale = None
-    if req.get("moge_path"):
+    if req.get("moge_path") and not (engine == "da3" and metric_engine):
         progress(0.32, "metric scale (MoGe-2)")
         try:
             scale = metric_scale(req["moge_path"], vin, depth, conf, torch, device=device)
@@ -550,6 +656,7 @@ def main(req):
         depth = [d * scale for d in depth]
         for m in c2w_v:
             m[:3, 3] *= scale
+    metric = bool(scale) or (engine == "da3" and metric_engine)
 
     if fusion_mode and not poses_only:
         if not req.get("moge_path"):
@@ -557,8 +664,8 @@ def main(req):
             sys.exit(1)
         outputs, count, prov, mesh_info = fuse_views(req, items, vin, c2w_v, K_v, depth, conf, device, torch,
                                                      out_dir)
-        emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), metric=bool(scale),
-             metric_scale_factor=scale, views=n_views, real_views=sum(1 for it in items if not it.get("generated")),
+        emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), metric=metric,
+             metric_scale_factor=scale, views=n_views, camera_engine=engine, real_views=sum(1 for it in items if not it.get("generated")),
              reference_psnr_db=None, splats=count, mesh=mesh_info, assembly="fusion", candidate_selection=selection,
              provenance={"observed": 0, "inferred": int((prov == 1).sum()), "generative": int((prov == 2).sum())})
         return
@@ -718,7 +825,7 @@ def main(req):
         except Exception as e:  # noqa: BLE001 - the mesh is optional
             log(f"mesh export failed: {e}")
     counts_np = codes.cpu().numpy()
-    emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), metric=bool(scale),
+    emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), metric=metric, camera_engine=engine,
          metric_scale_factor=scale, views=n, real_views=sum(1 for it in items if not it.get("generated")),
          reference_psnr_db=round(ref_psnr, 2), splats=count, mesh=mesh_info, loss_history=hist[-20:],
          candidate_selection=selection,
