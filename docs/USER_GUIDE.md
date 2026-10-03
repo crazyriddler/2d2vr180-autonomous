@@ -57,6 +57,8 @@ verified (SHA256) before use.
      - The multi-view engine (Depth Anything 3 if installed, otherwise VGGT) then finds where each view was
        taken and trains a 3D splat from the four. That gives real volume and real-world scale.
      - **Results → AI views overview** shows every candidate, its score and which one was used.
+     - **Results → Play turntable** plays a short video of the 3D swinging left and right, so you can judge its
+       volume without the headset.
    - **Quick 3D.** Depth from the photo alone (MoGe-2 / SHARP). Takes seconds, but it is a relief rather than
      full volume.
    - **360° around the subject (experimental).** The sides, back, top and bottom are invented and joined with

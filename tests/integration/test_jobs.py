@@ -219,6 +219,8 @@ def test_several_photos_become_one_multiview_scene(ctx, rtx4080, tmp_path, monke
     req = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     assert [Path(v["path"]).name for v in req["images"]][0] == "frame_00000.png"
     assert rep["outputs"]["vr180"]["stills"]
+    tt = rep["backend"]["extra"]["turntable"]
+    assert tt and Path(tt).name == "turntable.mp4" and Path(tt).stat().st_size > 0
 
 
 def test_folder_of_photos_is_expanded(tmp_path):

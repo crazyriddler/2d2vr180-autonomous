@@ -141,6 +141,11 @@ class MultiViewBackend(Backend):
             note += (f", only by generated views GENERATIVE ({p.get('generative', 0):,})." if p.get("generative")
                      else ".")
         warnings = list(extra_warnings or [])
+        turntable = None
+        if files.get("turntable_frames"):
+            turntable, err = encode_turntable(Path(files["turntable_frames"]), exp / "turntable.mp4")
+            if err:
+                warnings.append(f"Turntable preview not encoded: {err}")
         if not res.get("metric"):
             warnings.append("Metric scale could not be estimated; stereo depth may need the eye-separation setting.")
         used = list(self.model_ids(options)) + ([DA3_MODEL] if res.get("camera_engine") == "da3" else [])
@@ -155,4 +160,30 @@ class MultiViewBackend(Backend):
                    "reference_psnr_db": res.get("reference_psnr_db"), "mesh": res.get("mesh"),
                    "assembly": res.get("assembly", "train"), "camera_engine": res.get("camera_engine", "vggt"),
                    "candidate_selection": res.get("candidate_selection") or [],
-                   "metric_scale_factor": res.get("metric_scale_factor")})
+                   "metric_scale_factor": res.get("metric_scale_factor"),
+                   "turntable": str(turntable) if turntable else None})
+
+
+def encode_turntable(frames: Path, dest: Path, fps: int = 24) -> tuple[Path | None, str | None]:
+    """JPEG frames rendered by the worker -> H.264 MP4 with the bundled FFmpeg."""
+    import subprocess
+
+    from ..media import find_ffmpeg
+
+    if not any(frames.glob("frame_*.jpg")):
+        return None, "no frames"
+    ff = find_ffmpeg()
+    if not ff:
+        return None, "FFmpeg not found"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [ff, "-y", "-loglevel", "error", "-framerate", str(fps), "-i", str(frames / "frame_%03d.jpg"),
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-movflags", "+faststart", str(dest)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                           creationflags=0x08000000 if __import__("sys").platform == "win32" else 0)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, str(e)
+    if r.returncode != 0 or not dest.exists():
+        return None, (r.stderr or "ffmpeg failed").strip().splitlines()[-1][:200]
+    shutil.rmtree(frames, ignore_errors=True)
+    return dest, None

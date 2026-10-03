@@ -569,6 +569,53 @@ def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side, pre
     return report
 
 
+def turntable_c2ws(target_z, n=72, yaw_deg=30.0, pitch_deg=6.0):
+    """Camera path that swings around the subject: starts at the photo's camera, goes yaw_deg to each
+    side (with a slight rise and fall) and comes back. OpenCV frame, photo camera = identity."""
+    import math
+
+    import numpy as np
+
+    c = np.array([0.0, 0.0, float(target_z)])
+    out = []
+    for k in range(n):
+        t = k / n
+        yaw = math.radians(yaw_deg) * math.sin(2 * math.pi * t)
+        pitch = math.radians(pitch_deg) * math.sin(4 * math.pi * t)
+        cy, sy, cp, sp = math.cos(-yaw), math.sin(-yaw), math.cos(pitch), math.sin(pitch)
+        R = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]]) @ np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
+        m = np.eye(4)
+        m[:3, :3] = R
+        m[:3, 3] = c - R @ c
+        out.append(m)
+    return out
+
+
+def render_turntable(params, K, size, target_z, out_dir, sh_degree, torch, n=72, width=960, base=None):
+    """JPEG frames of the trained splat seen along turntable_c2ws (the app encodes them to MP4)."""
+    import numpy as np
+    from PIL import Image
+
+    import splat_trainer as st
+
+    w0, h0 = size
+    s = min(1.0, width / w0)
+    w, h = int(round(w0 * s / 2)) * 2, int(round(h0 * s / 2)) * 2
+    Kr = np.array(K, np.float64).copy()
+    Kr[:2] *= [[w / w0], [h / h0]]
+    Kt = torch.as_tensor(Kr, dtype=torch.float32, device="cuda")[None]
+    os.makedirs(out_dir, exist_ok=True)
+    base = np.eye(4) if base is None else np.asarray(base, np.float64)
+    for k, c2w in enumerate(turntable_c2ws(target_z, n)):
+        c2w = base @ c2w
+        vm = torch.linalg.inv(torch.as_tensor(c2w, dtype=torch.float32, device="cuda"))[None]
+        with torch.no_grad():
+            rgb, _, _ = st.gsplat_render(params, vm, Kt, w, h, sh_degree)
+        img = (rgb[..., :3].clamp(0, 1) * 255).round().byte().cpu().numpy()
+        Image.fromarray(img).save(os.path.join(out_dir, f"frame_{k:03d}.jpg"), quality=90)
+    return n
+
+
 def drop_inconsistent(items, train_imgs, vin, threshold):
     """Remove generated views whose best candidate is still far from a pure camera move (they would
     teach the splat a different pose or face), keeping at least one generated view."""
@@ -848,6 +895,22 @@ def main(req):
             params = st.subset(params, keep)
             log(f"cleanup: removed {removed:,} of {len(keep):,} splats (unseen, transparent, oversized or isolated)")
 
+    # ------------------------------------------------------------ turntable preview
+    turntable = None
+    if req.get("turntable", True):
+        try:
+            progress(0.875, "rendering a turntable preview")
+            # orbit centre: median depth of the splats in front of the photo's camera
+            w2c0 = np.linalg.inv(c2ws[0])
+            m = params["means"].detach().float().cpu().numpy()
+            z = m @ w2c0[2, :3] + w2c0[2, 3]
+            zc = float(np.median(z[z > 0])) if np.any(z > 0) else 2.0
+            turntable = os.path.join(out_dir, "turntable")
+            render_turntable(params, Ks[0], sizes[0], zc, turntable, cfg.sh_degree, torch, base=c2ws[0])
+        except Exception as e:  # noqa: BLE001 - a preview only
+            log(f"turntable preview failed: {e}")
+            turntable = None
+
     # ------------------------------------------------------------ provenance
     progress(0.88, "labelling observed / inferred / generated splats")
     real = [i for i, it in enumerate(items) if not it.get("generated")]
@@ -884,6 +947,8 @@ def main(req):
     with open(os.path.join(out_dir, "cameras.json"), "w") as f:
         json.dump(cams, f)
     outputs = {"ply": ply, "cameras": os.path.join(out_dir, "cameras.json")}
+    if turntable:
+        outputs["turntable_frames"] = turntable
 
     params = None  # free GPU memory before meshing
     torch.cuda.empty_cache()

@@ -1,4 +1,13 @@
-# 2D2VR180 1.0.0-rc24 — rebuild with your own picks
+# 2D2VR180 1.0.0-rc25 — turntable preview
+
+## What's new in rc25
+
+- **Turntable preview of every multi-view 3D result.** Right after training, the trained splat is rendered
+  from a camera that swings 30° left and right of your photo, with a slight rise and fall. It is saved as
+  `export/turntable.mp4` (3 s, 24 fps).
+  - This lets you judge the real volume (and spot flat or broken areas) without putting on the headset.
+  - Open it with **Results → Play turntable**.
+  - It is a preview only: if rendering fails, the result is unaffected and a warning explains why.
 
 ## What's new in rc24
 
@@ -380,7 +389,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc24-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc25-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |

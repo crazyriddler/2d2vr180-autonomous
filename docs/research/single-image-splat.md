@@ -55,6 +55,8 @@ personal/research profile).
 | rc20 | Depth Anything 3 Nested Giant-Large 1.1 camera engine (VGGT fallback) |
 | rc21 | Photo + 3 views trained at photo detail (1280/1600 px) with SH degree 1; inconsistent views dropped |
 | rc22 | Post-training cleanup (unseen / transparent / oversized / isolated splats); AI views overview sheet |
+| rc23–24 | Automatic retry of weak AI views; rebuild with hand-picked candidates |
+| rc25 | Turntable preview video of every multi-view result |
 
 ### Evaluated and deferred
 
