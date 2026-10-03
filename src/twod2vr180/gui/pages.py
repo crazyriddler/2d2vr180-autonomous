@@ -205,6 +205,7 @@ class CreatePage(QWidget):
         gf = QFormLayout(gbox)
         self.generative = QComboBox()
         for label, val in (("Off — only what the photo shows", "off"),
+                           ("Stereo pair (Qwen) — slightly left + slightly right, nothing else changes", "stereo"),
                            ("360° photo capture — 45°, 90°, 135°, 180°, 270°, above, below (Quality: more)",
                             "capture"),
                            ("Around the subject — sides, above and below (best for people)", "arc"),

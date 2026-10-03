@@ -416,3 +416,35 @@ def test_qwen_cannot_explore_falls_back_to_wan(ctx, rtx4080, photo, monkeypatch)
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="explore", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["backend"]["extra"]["engine"] == "wan"
+
+
+def test_qwen_stereo_pair_goes_to_trained_multiview(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="stereo", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    gen = job.dir / "generated_views"
+    enc = json.loads((gen / "stage_encode.json").read_text())
+    assert [v["label"] for v in enc["views"]] == ["left", "right"] and enc["angles_strength"] == 0.0
+    assert all("Keep everything else exactly the same" in v["prompt"] for v in enc["views"])
+    assert len(list(gen.glob("view*.png"))) == 2                 # only two generated images
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["assembly"] == "train" and len(mv["images"]) == 3
+    assert not mv["images"][0]["generated"] and all(v["generated"] for v in mv["images"][1:])
+    assert rep["backend"]["extra"]["assembly"] == "train"
+
+
+def test_stereo_view_prompt_is_used_verbatim():
+    import sys
+
+    from conftest import REPO
+
+    sys.path.insert(0, str(REPO / "workers"))
+    import qwen_views_worker as q
+    from twod2vr180.backends.generative import STEREO_VIEWS
+
+    assert q.view_prompt(STEREO_VIEWS[0]) == STEREO_VIEWS[0]["prompt"]
+    assert q.view_prompt({"azimuth": 90, "elevation": 0}).startswith("<sks> right side view")

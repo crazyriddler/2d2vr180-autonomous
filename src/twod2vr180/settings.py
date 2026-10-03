@@ -57,7 +57,7 @@ class Settings:
             self.mode = "auto"
         if self.renderer not in ("auto", "gpu", "cpu"):
             self.renderer = "auto"
-        if self.generative not in ("off", "capture", "arc", "orbit", "explore", "spiral"):
+        if self.generative not in ("off", "stereo", "capture", "arc", "orbit", "explore", "spiral"):
             self.generative = "off"
         if self.gen_assembly not in ("fusion", "train"):
             self.gen_assembly = "fusion"

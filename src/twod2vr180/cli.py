@@ -273,7 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
     j.add_argument("--renderer", default="auto", choices=["auto", "gpu", "cpu"])
     j.add_argument("--no-fill-holes", action="store_true")
     j.add_argument("--no-ai-fill", action="store_true", help="do not use LaMa for VR180 holes")
-    j.add_argument("--generative", default="off", choices=["off", "capture", "arc", "orbit", "explore", "spiral"],
+    j.add_argument("--generative", default="off", choices=["off", "stereo", "capture", "arc", "orbit", "explore", "spiral"],
                    help="photos: invent unseen views (Wan 2.2 / Stable Virtual Camera) and build a full 3D scene")
     j.add_argument("--engine", default="auto", choices=["auto", "qwen", "wan", "seva"],
                    help="generative 3D: model that invents the other views (auto: Qwen, then Wan, then SEVA)")

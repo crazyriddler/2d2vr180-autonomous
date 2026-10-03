@@ -402,7 +402,7 @@ def main(req):
     prompt = req.get("prompt") or PROMPT
     embeds = cached_embeddings(req["model_dir"], [prompt, req.get("negative_prompt") or NEGATIVE], out_dir, torch)
     views = [{"path": req["image"], "generated": False}]
-    every = max(1, int(req.get("every", 2)))
+    every = int(req.get("every", 2))       # <= 0: save only the key frames (sharp fusion)
     pipe = None
     for si, c2ws in enumerate(plan):
         done = os.path.join(out_dir, f"shot{si}.json")
@@ -432,7 +432,7 @@ def main(req):
             sys.exit(1)
         keys = set(shot_key_frames(kind, si, len(frames)))
         shot_views = []
-        for fi in sorted(set(range(every, len(frames), every)) | keys):      # frame 0 is the photo itself
+        for fi in sorted((set(range(every, len(frames), every)) if every > 0 else set()) | keys):  # 0 = photo
             p = os.path.join(out_dir, f"shot{si}_{fi:03d}.png")
             Image.fromarray((frames[fi] * 255).round().astype(np.uint8)).save(p)
             shot_views.append({"path": p, "generated": True, "shot": si, "frame": fi, "key": fi in keys})
