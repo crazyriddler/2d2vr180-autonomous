@@ -161,7 +161,8 @@ class MultiViewBackend(Backend):
                    "assembly": res.get("assembly", "train"), "camera_engine": res.get("camera_engine", "vggt"),
                    "candidate_selection": res.get("candidate_selection") or [],
                    "metric_scale_factor": res.get("metric_scale_factor"),
-                   "turntable": str(turntable) if turntable else None})
+                   "turntable": str(turntable) if turntable else None,
+                   "colour_correction": res.get("colour_correction") or []})
 
 
 def encode_turntable(frames: Path, dest: Path, fps: int = 24) -> tuple[Path | None, str | None]:

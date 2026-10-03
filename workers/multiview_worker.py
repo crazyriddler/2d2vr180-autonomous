@@ -852,12 +852,17 @@ def main(req):
     # Cap the allocator below the card's size: on Windows an over-full GPU silently spills into
     # shared system memory (10-50x slower); an out-of-memory error lets us retry smaller instead.
     torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.94)))
+    # generated views may drift in exposure / white balance: learn a colour correction for each
+    appearance = [bool(it.get("generated")) for it in items] if req.get("appearance", True) else None
     for attempt in range(3):
         oom = False
+        app_out = []
         try:
             params, hist = st.train(train_imgs, c2ws, Ks, weights, points, colors, cfg, device="cuda",
                                     progress=lambda v, m: progress(0.37 + 0.5 * v, m),
-                                    pixel_weights=pixel_w, depth_priors=priors)
+                                    pixel_weights=pixel_w, depth_priors=priors,
+                                    appearance=appearance if appearance and any(appearance) else None,
+                                    appearance_out=app_out)
             break
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if "out of memory" not in str(e).lower() or attempt == 2:
@@ -971,6 +976,8 @@ def main(req):
          metric_scale_factor=scale, views=n, real_views=sum(1 for it in items if not it.get("generated")),
          reference_psnr_db=round(ref_psnr, 2), splats=count, mesh=mesh_info, loss_history=hist[-20:],
          candidate_selection=selection,
+         colour_correction=[None if a is None else {"gain": [round(a[0][c][c], 3) for c in range(3)],
+                                                    "offset": [round(x, 3) for x in a[1]]} for a in app_out],
          provenance={"observed": int((counts_np == 0).sum()), "inferred": int((counts_np == 1).sum()),
                      "generative": int((counts_np == 2).sum())})
 

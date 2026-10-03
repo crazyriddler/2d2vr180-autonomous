@@ -756,6 +756,10 @@ class ResultsPage(QWidget):
             state = "dropped" if s.get("dropped") else f"used {s.get('chosen')}"
             scores = ", ".join(f"{k} {v:.3f}" for k, v in (s.get("scores") or {}).items())
             html.append(f"<p><small>{s.get('view')}: {state} — scores {scores}</small></p>")
+        cc = [c for c in extra.get("colour_correction") or [] if c]
+        if cc:
+            gains = ", ".join("/".join(f"{g:.2f}" for g in c["gain"]) for c in cc)
+            html.append(f"<p><small>Colour drift of the AI views corrected (R/G/B gain per view: {gains})</small></p>")
         cov = (rep.get("coverage") or {}).get("by_splat")
         if cov:
             html.append("<p><b>Geometry provenance</b>: " + ", ".join(f"{k} {v:.0%}" for k, v in cov.items() if v)
