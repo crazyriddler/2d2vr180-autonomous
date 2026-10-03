@@ -54,6 +54,8 @@ class TrainConfig:
     lr_pose: float = 1e-4          # camera refinement of generated views (rad / scene-scale units)
     pose_reg: float = 1e-3
     pose_from: float = 0.1         # start refining poses after this fraction of the steps
+    absgrad: bool = True           # AbsGS densification: grows splats in fine texture (hair, fabric)
+    grow_grad2d: float = 0.0008    # gsplat's threshold for absgrad (0.0002 without)
 
 
 def knn_scales(points, k: int = 4):
@@ -127,7 +129,7 @@ def ssim(a, b):
     return m.mean()
 
 
-def gsplat_render(params, viewmat, K, width, height, sh_degree, mode="RGB"):
+def gsplat_render(params, viewmat, K, width, height, sh_degree, mode="RGB", absgrad=False):
     import torch
     from gsplat import rasterization
 
@@ -136,7 +138,7 @@ def gsplat_render(params, viewmat, K, width, height, sh_degree, mode="RGB"):
         means=params["means"], quats=params["quats"], scales=params["scales"].exp(),
         opacities=params["opacities"].sigmoid(), colors=colors, viewmats=viewmat, Ks=K,
         width=width, height=height, sh_degree=sh_degree, near_plane=0.01, far_plane=1e10, packed=False,
-        render_mode=mode)
+        render_mode=mode, absgrad=absgrad)
     return out[0], alpha[0], info
 
 
@@ -165,7 +167,9 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
     import torch.nn.functional as F
 
     cfg = cfg or TrainConfig()
-    render_fn = render_fn or gsplat_render
+    if render_fn is None:
+        def render_fn(*a, **k):
+            return gsplat_render(*a, absgrad=cfg.densify and cfg.absgrad, **k)
     torch.manual_seed(cfg.seed)
     params = init_params(points, colors, cfg, device)
     scale = scene_scale(c2ws, points)
@@ -183,7 +187,8 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         from gsplat.strategy import DefaultStrategy
 
         strategy = DefaultStrategy(verbose=False, refine_stop_iter=int(cfg.steps * 0.75),
-                                   reset_every=max(3000, cfg.steps // 4))
+                                   reset_every=max(3000, cfg.steps // 4), absgrad=cfg.absgrad,
+                                   grow_grad2d=cfg.grow_grad2d if cfg.absgrad else 0.0002)
         strategy.check_sanity(params, opt)
         state = strategy.initialize_state(scene_scale=scale)
     gts = [torch.from_numpy(np.ascontiguousarray(im)).to(device) for im in images]
