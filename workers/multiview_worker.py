@@ -653,7 +653,8 @@ def main(req):
     poses_only = bool(req.get("stop_after_poses"))   # CI self-test on machines without a GPU
     device = "cuda" if env["cuda_available"] else "cpu"
     fusion_mode = req.get("assembly") == "fusion"
-    if device == "cpu" and not (poses_only or req.get("score_only") or (fusion_mode and req.get("allow_cpu"))):
+    if device == "cpu" and not (poses_only or req.get("score_only") or req.get("dry_run")
+                                or (fusion_mode and req.get("allow_cpu"))):
         emit("error", code="cuda_unavailable", message="Multi-view reconstruction needs an NVIDIA GPU (CUDA).")
         sys.exit(1)
     out_dir = req["output_dir"]
@@ -792,6 +793,12 @@ def main(req):
                                              Ks[i], c2ws[i])
                 log(f"view {i} ({it.get('label', '')}): {float((pixel_w[i] < 0.5).mean()):.0%} of its pixels "
                     "contradict the photo and are down-weighted")
+    if req.get("dry_run"):   # tests: everything up to the GPU training, on any device
+        emit("result", dry_run=True, camera_engine=engine, views=n, points=int(len(points)), metric=metric,
+             priors=[p is not None for p in (priors or [None] * n)],
+             down_weighted=[None if m is None else float((m < 0.5).mean()) for m in (pixel_w or [None] * n)],
+             candidate_selection=selection, c2ws=[m.tolist() for m in c2ws])
+        return
     cfg = st.TrainConfig(steps=int(req.get("steps", 10000)), sh_degree=int(req.get("sh_degree", 3)),
                          max_gaussians=int(req.get("max_gaussians", 2_000_000)),
                          init_points=int(req.get("init_points", 400000)))
