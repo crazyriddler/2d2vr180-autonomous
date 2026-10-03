@@ -65,3 +65,19 @@ def test_rigid_candidate_beats_a_changed_one(monkeypatch):
     monkeypatch.setattr(mv, "run_vggt", still)
     s_still, _, ang0, _ = mv.rigidity_score(None, ref, (tex, {}), None, None, target_deg=45)
     assert ang0 < 0.5 and s_still > 0.05
+
+
+def test_consistency_map_flags_only_the_changed_region():
+    rng = np.random.default_rng(1)
+    tex = (np.repeat(np.repeat(rng.random((H // 6, W // 7 + 1, 3)), 6, 0), 7, 1)[:H, :W] * 255).astype(np.uint8)
+    cam = yaw_c2w(10)
+    view = (render(tex.astype(np.float32) / 255, cam) * 255).astype(np.uint8)
+    view = np.clip(view.astype(int) + 12, 0, 255).astype(np.uint8)       # a little brighter overall
+    changed = view.copy()
+    changed[30:90, 200:330] = (rng.random((60, 130, 3)) * 255).astype(np.uint8)
+    d0, d1 = plane_depth(np.eye(4)), plane_depth(cam)
+    conf_ok = mv.consistency_map(tex, d0, K, np.eye(4), view, d1, K, cam)
+    conf = mv.consistency_map(tex, d0, K, np.eye(4), changed, d1, K, cam)
+    assert conf_ok.shape == (H, W) and np.median(conf_ok) > 0.9          # brightness offset is ignored
+    assert conf[40:80, 215:315].mean() < 0.4                               # the changed region
+    assert conf[:, :150].mean() > 0.85                                      # the rest stays trusted

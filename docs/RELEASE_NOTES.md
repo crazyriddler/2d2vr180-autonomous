@@ -1,3 +1,25 @@
+# 2D2VR180 1.0.0-rc19 — sharper, more solid multi-view training from few views
+
+## What's new in rc19
+
+This release is for "Real 3D from one photo", and for any multi-view job with up to 24 photos.
+
+- **Confidence maps for generated views.**
+  - The photo is reprojected in 3D into each AI view and compared pixel by pixel, after removing the overall
+    brightness and colour difference.
+  - Regions that contradict the photo get almost no weight in training: a slightly turned head, a moved
+    hand or a different expression.
+  - What only the AI view shows (the sides, the top) keeps full weight.
+  - `job.log` says how much of each view was down-weighted.
+- **Sharp depth priors.** MoGe-2 depth of every view, scaled onto the multi-view geometry, guides the
+  rendered depth during the first 60% of training. With only 4 views this avoids floaters and flat or doubled
+  surfaces between views.
+- **Denser, sharper start.** The initial point cloud comes from those aligned MoGe-2 depths at full training
+  resolution, instead of VGGT's coarser 518-pixel depth.
+- When training runs out of GPU memory, the failed attempt's memory is now really freed before retrying.
+- Research behind these changes: VidSplat, ReconX and confidence fusion for generated views; FSGS, D²GS and
+  HBSplat for depth priors (see `docs/research/single-image-splat.md`).
+
 # 2D2VR180 1.0.0-rc18 — simpler Create page
 
 ## What's new in rc18
@@ -282,8 +304,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc18-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc18-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc19-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc19-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

@@ -243,6 +243,99 @@ def tsdf_mesh(depths, Ks, c2ws, colors, out_obj, voxel):
     return {"vertices": len(mesh.vertices), "faces": len(mesh.triangles), "voxel_m": voxel}
 
 
+def vggt_on_image(map_v, info, h, w):
+    """Sample a VGGT-resolution map (cropped VGGT frame, see vggt_input) on an (h, w) image of the same view.
+    Returns (map at image pixels, mask of pixels that VGGT saw)."""
+    import numpy as np
+
+    r = w / (info["sx"] * VGGT_W)
+    xs = ((np.arange(w) + 0.5) / r / info["sx"]).astype(int)
+    ys = ((np.arange(h) + 0.5) / r / info["sy"] - info["crop"]).astype(int)
+    inside_y = (ys >= 0) & (ys < map_v.shape[0])
+    xs = np.clip(xs, 0, map_v.shape[1] - 1)
+    yc = np.clip(ys, 0, map_v.shape[0] - 1)
+    return map_v[yc][:, xs], np.broadcast_to(inside_y[:, None], (h, w))
+
+
+def consistency_map(ref_img, ref_depth, K0, c2w0, img, depth, K, c2w, cell=4, sigma=0.12, floor=0.1):
+    """Per-pixel confidence (H, W) in [floor, 1] for a generated view: the photo is reprojected into it
+    (with the photo's depth) and colours are compared where both see the same surface, after removing
+    the overall colour/brightness offset between the two images. Pixels the photo does not see (new
+    content) get 1 - they are what the view is for."""
+    import numpy as np
+
+    h, w = depth.shape
+    X = unproject(ref_depth, K0, c2w0)
+    ok0 = np.isfinite(ref_depth) & (ref_depth > 0)
+    X, cols = X[ok0], ref_img[ok0].astype(np.float32) / 255.0
+    w2c = np.linalg.inv(c2w)
+    pc = X @ w2c[:3, :3].T + w2c[:3, 3]
+    z = pc[:, 2]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        u = np.floor(K[0, 0] * pc[:, 0] / z + K[0, 2])
+        v = np.floor(K[1, 1] * pc[:, 1] / z + K[1, 2])
+    inb = (z > 1e-6) & (u >= 0) & (u < w) & (v >= 0) & (v < h)
+    ui, vi = u[inb].astype(np.int64), v[inb].astype(np.int64)
+    zj = depth[vi, ui]
+    vis = (zj > 0) & (z[inb] <= zj * 1.08)
+    ui, vi, c0 = ui[vis], vi[vis], cols[inb][vis]
+    c1 = img[vi, ui].astype(np.float32) / 255.0
+    if len(c0) < 200:
+        return np.ones((h, w), np.float32)
+    c1 = c1 - np.median(c1 - c0, axis=0)            # global colour / exposure difference
+    diff = np.abs(c1 - c0).mean(1)
+    gh, gw = (h + cell - 1) // cell, (w + cell - 1) // cell
+    acc = np.zeros(gh * gw, np.float64)
+    cnt = np.zeros(gh * gw, np.float64)
+    idx = (vi // cell) * gw + (ui // cell)
+    np.add.at(acc, idx, diff)
+    np.add.at(cnt, idx, 1.0)
+    conf = np.ones(gh * gw, np.float32)
+    seen = cnt > 0
+    conf[seen] = np.exp(-((acc[seen] / cnt[seen]) / sigma) ** 2)
+    conf = np.maximum(conf.reshape(gh, gw), floor)
+    return np.repeat(np.repeat(conf, cell, 0), cell, 1)[:h, :w].astype(np.float32)
+
+
+def mono_priors(moge_path, imgs, vin, depth, conf, device, torch):
+    """MoGe-2 depth of every view at its training resolution, scaled onto the view's VGGT depth.
+    Returns a list of (H, W) depth maps in scene units (0 where unknown)."""
+    import numpy as np
+    from moge.model.v2 import MoGeModel
+
+    import fusion as fu
+
+    model = MoGeModel.from_pretrained(moge_path).to(device).eval()
+    out = []
+    for i, img in enumerate(imgs):
+        progress(0.33 + 0.02 * i / len(imgs), f"sharp depth priors (MoGe-2) {i + 1}/{len(imgs)}")
+        h, w = img.shape[:2]
+        t = torch.from_numpy(img).to(device).float().div(255).permute(2, 0, 1)
+        with torch.no_grad():
+            res = model.infer(t, resolution_level=9, use_fp16=device == "cuda")
+        zm = res["depth"].float().cpu().numpy()
+        valid = np.isfinite(zm) & (zm > 0)
+        if "mask" in res:
+            valid &= res["mask"].cpu().numpy().astype(bool)
+        del res, t
+        zv, inside = vggt_on_image(depth[i], vin[i][1], h, w)
+        cv, _ = vggt_on_image(conf[i], vin[i][1], h, w)
+        s = fu.align_scale(zm, zv, valid & inside & (cv >= np.percentile(conf[i], 50)))
+        out.append(np.where(valid, zm * s, 0.0).astype(np.float32) if s else None)
+    del model
+    free(torch)
+    return out
+
+
+def resize_map(m, w, h):
+    """Nearest-neighbour resize of a 2-D map (None passes through)."""
+    if m is None:
+        return None
+    import fusion as fu
+
+    return fu.resample(m, (h, w))
+
+
 def fuse_views(req, items, vin, c2w_v, K_v, depth, conf, device, torch, out_dir):
     """Sharp assembly (generated views): MoGe-2 depth per view, scaled onto the VGGT depth of that
     view, merged by coverage (fusion.py) - no optimisation, so nothing is averaged into blur."""
@@ -270,14 +363,9 @@ def fuse_views(req, items, vin, c2w_v, K_v, depth, conf, device, torch, out_dir)
         # this image's pixels → the view's VGGT pixels (see vggt_input)
         info = vin[i][1]
         r = w / (info["sx"] * VGGT_W)
-        xs = ((np.arange(w) + 0.5) / r / info["sx"]).astype(int)
-        ys = ((np.arange(h) + 0.5) / r / info["sy"] - info["crop"]).astype(int)
-        inside_y = (ys >= 0) & (ys < depth[i].shape[0])
-        xs = np.clip(xs, 0, depth[i].shape[1] - 1)
-        yc = np.clip(ys, 0, depth[i].shape[0] - 1)
-        zv = depth[i][yc][:, xs]
-        cv = conf[i][yc][:, xs]
-        ok = valid & inside_y[:, None] & (cv > np.percentile(conf[i], 50))
+        zv, inside = vggt_on_image(depth[i], info, h, w)
+        cv, _ = vggt_on_image(conf[i], info, h, w)
+        ok = valid & inside & (cv > np.percentile(conf[i], 50))
         s = fu.align_scale(zm, zv, ok)
         if s is None:
             if i == 0:
@@ -475,9 +563,21 @@ def main(req):
              provenance={"observed": 0, "inferred": int((prov == 1).sum()), "generative": int((prov == 2).sum())})
         return
 
+    # ------------------------------------------------------------ depth priors (sparse views)
+    n = len(items)
+    Ks = np.stack([to_original_K(K_v[i], vin[i][1], 0) for i in range(n)])
+    priors = None
+    if (req.get("depth_prior", True) and req.get("moge_path") and n <= int(req.get("prior_max_views", 24))
+            and not poses_only):
+        try:
+            priors = mono_priors(req["moge_path"], train_imgs, vin, depth, conf, device, torch)
+            log("MoGe-2 depth priors: " + ", ".join("-" if p is None else "ok" for p in priors))
+        except Exception as e:  # noqa: BLE001 - priors are an improvement, not a requirement
+            log(f"depth priors unavailable: {e}")
+            priors = None
+
     # ------------------------------------------------------------ initial points
     progress(0.35, "building the initial point cloud")
-    n = len(items)
     per_view = max(2000, int(req.get("init_points", 400000) * 1.5 / n))
     rng = np.random.default_rng(0)
     pts, cols = [], []
@@ -486,6 +586,16 @@ def main(req):
         a = vin[i][0]
         Kc = K_v[i]
         K_crop.append(Kc)
+        if priors is not None and priors[i] is not None:
+            # dense and sharp: the aligned MoGe-2 depth at training resolution
+            d = priors[i]
+            yy, xx = np.nonzero(d > 0)
+            if len(yy) > per_view:
+                sel = rng.choice(len(yy), per_view, replace=False)
+                yy, xx = yy[sel], xx[sel]
+            pts.append(unproject(d, Ks[i], c2w_v[i])[yy, xx])
+            cols.append(train_imgs[i][yy, xx].astype(np.float32) / 255.0)
+            continue
         d, c = depth[i], conf[i]
         ok = (d > 0) & np.isfinite(d) & (c > max(1.0, np.percentile(c, 35)))
         yy, xx = np.nonzero(ok)
@@ -504,9 +614,17 @@ def main(req):
         return
 
     # ------------------------------------------------------------ training
-    Ks = np.stack([to_original_K(K_v[i], vin[i][1], 0) for i in range(n)])
     c2ws = np.stack(c2w_v)
     weights = [float(it.get("weight", 1.0)) for it in items]
+    pixel_w = None
+    if priors is not None and priors[0] is not None and any(it.get("generated") for it in items):
+        pixel_w = [None] * n
+        for i, it in enumerate(items):
+            if it.get("generated") and priors[i] is not None:
+                pixel_w[i] = consistency_map(train_imgs[0], priors[0], Ks[0], c2ws[0], train_imgs[i], priors[i],
+                                             Ks[i], c2ws[i])
+                log(f"view {i} ({it.get('label', '')}): {float((pixel_w[i] < 0.5).mean()):.0%} of its pixels "
+                    "contradict the photo and are down-weighted")
     cfg = st.TrainConfig(steps=int(req.get("steps", 10000)), sh_degree=int(req.get("sh_degree", 3)),
                          max_gaussians=int(req.get("max_gaussians", 2_000_000)),
                          init_points=int(req.get("init_points", 400000)))
@@ -514,13 +632,17 @@ def main(req):
     # shared system memory (10-50x slower); an out-of-memory error lets us retry smaller instead.
     torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.94)))
     for attempt in range(3):
+        oom = False
         try:
             params, hist = st.train(train_imgs, c2ws, Ks, weights, points, colors, cfg, device="cuda",
-                                    progress=lambda v, m: progress(0.37 + 0.5 * v, m))
+                                    progress=lambda v, m: progress(0.37 + 0.5 * v, m),
+                                    pixel_weights=pixel_w, depth_priors=priors)
             break
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if "out of memory" not in str(e).lower() or attempt == 2:
                 raise
+            oom = True
+        if oom:   # outside the except block: the traceback no longer pins the failed attempt's tensors
             import gc
 
             gc.collect()
@@ -530,6 +652,11 @@ def main(req):
             train_imgs = [np.asarray(Image.fromarray(im).resize((max(8, im.shape[1] * 3 // 4),
                                                                  max(8, im.shape[0] * 3 // 4)), Image.LANCZOS))
                           for im in train_imgs]
+            sizes_now = [(im.shape[1], im.shape[0]) for im in train_imgs]
+            if priors is not None:
+                priors = [resize_map(p, *sz) for p, sz in zip(priors, sizes_now)]
+            if pixel_w is not None:
+                pixel_w = [resize_map(p, *sz) for p, sz in zip(pixel_w, sizes_now)]
             Ks = Ks.copy()
             Ks[:, :2] *= 0.75
             cfg.max_gaussians = int(cfg.max_gaussians * 0.6)

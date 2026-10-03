@@ -36,7 +36,12 @@ def ref_render(params, viewmat, K, width, height, sh_degree, mode="RGB"):
         dep = dep + T * a * z[i]
         T = T * (1 - a)
     alpha = (1 - T)[..., None]
-    out = dep[..., None] if mode == "ED" else img
+    if mode == "ED":
+        out = dep[..., None]
+    elif mode == "RGB+ED":
+        out = torch.cat([img, dep[..., None]], -1)
+    else:
+        out = img
     return out, alpha, {}
 
 
@@ -140,3 +145,53 @@ def test_ssim_identity_and_knn():
     pts = torch.tensor([[0.0, 0, 0], [1, 0, 0], [0, 2, 0], [0, 0, 3]])
     d = st.knn_scales(pts, k=2)
     assert torch.allclose(d, torch.tensor([1.0, 1.0, 2.0, 3.0]))
+
+
+def _scene():
+    gt, pts, cols = gt_params()
+    c2ws, Ks, sizes = make_views()
+    vm = torch.linalg.inv(torch.as_tensor(c2ws, dtype=torch.float32))
+    Kt = torch.as_tensor(Ks, dtype=torch.float32)
+    with torch.no_grad():
+        imgs = [(ref_render(gt, vm[i:i + 1], Kt[i:i + 1], 24, 24, 0)[0].clamp(0, 1) * 255).round().byte().numpy()
+                for i in range(len(c2ws))]
+        deps = [ref_render(gt, vm[i:i + 1], Kt[i:i + 1], 24, 24, 0, mode="ED")[0][..., 0].numpy()
+                for i in range(len(c2ws))]
+    return gt, pts, cols, c2ws, Ks, vm, Kt, imgs, deps
+
+
+def test_low_confidence_pixels_do_not_corrupt_the_model():
+    gt, pts, cols, c2ws, Ks, vm, Kt, imgs, _ = _scene()
+    bad = [im.copy() for im in imgs]
+    for i in (1, 2, 3):                       # "generated" views with a changed region (e.g. a turned head)
+        bad[i][6:18, 6:18] = 255
+    conf = [None] + [np.ones((24, 24), np.float32) for _ in range(3)]
+    for c in conf[1:]:
+        c[6:18, 6:18] = 0.0
+    cfg = st.TrainConfig(steps=150, sh_degree=0, densify=False, coarse_until=0.0, lr_sh0=0.05, log_every=50)
+    rng = np.random.default_rng(1)
+    noisy = pts + rng.normal(0, 0.03, pts.shape).astype(np.float32)
+
+    def fit(pixel_weights):
+        p, _ = st.train(bad, c2ws, Ks, [1, 1, 1, 1], noisy, np.full_like(cols, 0.5), cfg, device="cpu",
+                        render_fn=ref_render, pixel_weights=pixel_weights)
+        with torch.no_grad():
+            out = ref_render(p, vm[1:2], Kt[1:2], 24, 24, 0)[0].clamp(0, 1)
+        return st.psnr(out, torch.from_numpy(imgs[1]).float() / 255)    # against the CLEAN view
+
+    assert fit(conf) > fit(None) + 1.0
+
+
+def test_depth_prior_runs_and_keeps_geometry():
+    gt, pts, cols, c2ws, Ks, vm, Kt, imgs, deps = _scene()
+    cfg = st.TrainConfig(steps=60, sh_degree=0, densify=False, coarse_until=0.0, lr_sh0=0.05, log_every=20,
+                         depth_weight=0.5, depth_until=1.0)
+    rng = np.random.default_rng(2)
+    noisy = pts + rng.normal(0, 0.05, pts.shape).astype(np.float32)
+    p, hist = st.train(imgs, c2ws, Ks, [1, 1, 1, 1], noisy, np.full_like(cols, 0.5), cfg, device="cpu",
+                       render_fn=ref_render, depth_priors=deps)
+    with torch.no_grad():
+        d, a, _ = ref_render(p, vm[:1], Kt[:1], 24, 24, 0, mode="ED")
+    m = (a[..., 0] > 0.5).numpy() & (deps[0] > 0)
+    assert np.isfinite(hist[-1][1])
+    assert np.median(np.abs(d[..., 0].numpy()[m] - deps[0][m]) / deps[0][m]) < 0.05

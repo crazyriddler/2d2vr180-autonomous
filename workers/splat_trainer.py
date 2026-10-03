@@ -11,7 +11,10 @@ Improvements over a minimal trainer:
   * D-SSIM + L1 photometric loss, coarse-to-fine resolution schedule,
   * scale regularisation (no needle splats that shimmer in VR) and opacity decay,
   * densification (gsplat DefaultStrategy) with a hard cap on the splat count,
-  * per-splat provenance: how many *real* (non-generated) views see each splat.
+  * per-splat provenance: how many *real* (non-generated) views see each splat,
+  * optional per-pixel confidence maps (generated views: pixels that contradict the photo count less),
+  * optional monocular depth priors (sparse views: rendered depth is pulled towards each view's
+    scale-aligned MoGe-2 depth early in training - fewer floaters, real surfaces between views).
 """
 
 from __future__ import annotations
@@ -44,6 +47,8 @@ class TrainConfig:
     lr_shN: float = 2.5e-3 / 20
     seed: int = 0
     log_every: int = 250
+    depth_weight: float = 0.1      # monocular depth prior (relative L1), decays linearly to 0 ...
+    depth_until: float = 0.6       # ... at this fraction of the steps
 
 
 def knn_scales(points, k: int = 4):
@@ -138,8 +143,11 @@ def scene_scale(c2ws: np.ndarray, points: np.ndarray) -> float:
 
 
 def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.ndarray, colors: np.ndarray,
-          cfg: TrainConfig | None = None, device="cuda", render_fn=None, progress=None, cancel=None):
-    """Optimise Gaussians. ``images``: list of (H,W,3) uint8 arrays (sizes may differ)."""
+          cfg: TrainConfig | None = None, device="cuda", render_fn=None, progress=None, cancel=None,
+          pixel_weights: list | None = None, depth_priors: list | None = None):
+    """Optimise Gaussians. ``images``: list of (H,W,3) uint8 arrays (sizes may differ).
+    ``pixel_weights``: per view None or an (H,W) float map in [0,1] (photometric confidence).
+    ``depth_priors``: per view None or an (H,W) depth map in scene units (0 = unknown)."""
     import torch
     import torch.nn.functional as F
 
@@ -166,6 +174,10 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         strategy.check_sanity(params, opt)
         state = strategy.initialize_state(scene_scale=scale)
     gts = [torch.from_numpy(np.ascontiguousarray(im)).to(device) for im in images]
+    pw = [None if m is None else torch.as_tensor(np.asarray(m, np.float32), device=device)
+          for m in (pixel_weights or [None] * len(images))]
+    dp = [None if m is None else torch.as_tensor(np.asarray(m, np.float32), device=device)
+          for m in (depth_priors or [None] * len(images))]
     viewmats = torch.linalg.inv(torch.as_tensor(np.asarray(c2ws), dtype=torch.float32)).to(device)
     Kt = torch.as_tensor(np.asarray(Ks), dtype=torch.float32).to(device)
     w = torch.as_tensor(np.asarray(weights, np.float64) / np.sum(weights), dtype=torch.float32)
@@ -178,21 +190,42 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         gt = gts[i].float() / 255.0
         K = Kt[i].clone()
         h, wd = gt.shape[:2]
+        wm, dm = pw[i], dp[i]
         if step < cfg.coarse_until * cfg.steps and min(h, wd) >= 64:
             h2, w2 = h // 2, wd // 2
             gt = F.interpolate(gt.permute(2, 0, 1)[None], size=(h2, w2), mode="area")[0].permute(1, 2, 0)
+            if wm is not None:
+                wm = F.interpolate(wm[None, None], size=(h2, w2), mode="area")[0, 0]
+            if dm is not None:
+                dm = F.interpolate(dm[None, None], size=(h2, w2), mode="nearest")[0, 0]
             K[:2] *= torch.tensor([[w2 / wd], [h2 / h]], device=K.device)
             h, wd = h2, w2
         sh_deg = min(step // 1000, cfg.sh_degree)
-        rgb, alpha, info = render_fn(params, viewmats[i:i + 1], K[None], wd, h, sh_deg)
+        lam_d = cfg.depth_weight * max(0.0, 1.0 - step / max(1.0, cfg.depth_until * cfg.steps))
+        use_depth = dm is not None and lam_d > 0
+        if use_depth:
+            out, alpha, info = render_fn(params, viewmats[i:i + 1], K[None], wd, h, sh_deg, mode="RGB+ED")
+            rgb, depth = out[..., :3], out[..., 3]
+        else:
+            rgb, alpha, info = render_fn(params, viewmats[i:i + 1], K[None], wd, h, sh_deg)
+            rgb = rgb[..., :3]
         if strategy is not None:
             strategy.step_pre_backward(params, opt, state, step, info)
-        rgb = rgb[..., :3]
-        l1 = (rgb - gt).abs().mean()
+        if wm is None:
+            l1 = (rgb - gt).abs().mean()
+            gt_s = gt
+        else:
+            l1 = ((rgb - gt).abs().mean(-1) * wm).sum() / wm.sum().clamp_min(1.0)
+            # pixels with low confidence follow the current render in SSIM (no gradient towards them)
+            gt_s = gt * wm[..., None] + rgb.detach() * (1 - wm[..., None])
         loss = l1
         if cfg.ssim_weight > 0:
             loss = (1 - cfg.ssim_weight) * l1 + cfg.ssim_weight * (
-                1 - ssim(rgb.permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None]))
+                1 - ssim(rgb.permute(2, 0, 1)[None], gt_s.permute(2, 0, 1)[None]))
+        if use_depth:
+            valid = (dm > 0) & (alpha[..., 0] > 0.5)
+            if bool(valid.any()):
+                loss = loss + lam_d * ((depth[valid] - dm[valid]).abs() / dm[valid]).mean()
         s = params["scales"].exp()
         if cfg.scale_reg > 0:
             ratio = s.max(1).values / s.min(1).values.clamp_min(1e-12)
