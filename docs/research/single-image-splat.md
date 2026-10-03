@@ -76,3 +76,11 @@ personal/research profile).
   "consistent generated views + pose engine + per-scene training" on detail for people in real scenes, and
   most of them have no released Windows-ready weights. PhGS's idea (post-hoc pruning and refinement of a
   feed-forward splat) is already covered by the rc22 cleanup and the training stage.
+- **Difix3D+ (NVIDIA, CVPR 2025) — generative repair of novel views.** Single-step SD-Turbo fine-tune
+  (`nvidia/difix`, `nvidia/difix_ref` with a reference image) that cleans splat renders. Difix3D+ uses it to
+  progressively add repaired pseudo-views during training. Code and weights are under the NVIDIA License
+  (non-commercial), and Stability's SD-Turbo community licence also applies. Repo commit `c76edc59`
+  (October 2026). It pins `diffusers==0.25.1` and ships a custom pipeline and multi-view UNet (~2.5 k lines);
+  the gen runtime has diffusers 0.37.1, so it needs porting or its own runtime. Its 576×1024 working
+  resolution is below our 1280–1600 px training views. Planned as an opt-in Advanced step once it can be
+  smoke-tested on the target GPU: render ±20° pseudo-views → Difix-ref with the photo → fine-tune.
