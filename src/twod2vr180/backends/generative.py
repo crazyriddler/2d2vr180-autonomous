@@ -62,6 +62,7 @@ QWEN_VIEWS = {
                                                                                 ("from below", 0, -30)],
 }
 QWEN_MEGAPIXELS = {"fast": 0.75, "auto": 1.0, "quality": 1.0}
+TRI_SIDE = {"fast": 960, "auto": 1280, "quality": 1600}      # training resolution for photo + 3 views
 
 # Candidates generated per view (the most rigid one - a pure camera move of the photo - is kept).
 QWEN_CANDIDATES = {"fast": 1, "auto": 2, "quality": 3}
@@ -225,8 +226,13 @@ class GenerativeSceneBackend(Backend):
                     for v in views]
         gen_models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
                       for m in models]
+        mv_opts = {**options, "max_side": 1024, "assembly": assembly}
+        if traj == "tri":
+            # photo + 3 views: train at the photo's detail, and with view-independent-ish colour (SH 1) -
+            # with so few views higher SH degrees overfit into colour flicker when the head moves
+            mv_opts.update(max_side=TRI_SIDE.get(mode, 1280), sh_degree=1)
         res = self.mv.reconstruct(
-            mv_views, inp, ctx, {**options, "max_side": 1024, "assembly": assembly}, progress, cancel,
+            mv_views, inp, ctx, mv_opts, progress, cancel,
             progress_range=(0.5, 0.97), extra_models=gen_models,
             extra_warnings=[f"Generative completion: {len(views) - 1} views were invented by {name} "
                             f"('{traj}'). Splats taken from those views are labelled GENERATIVE; they are "

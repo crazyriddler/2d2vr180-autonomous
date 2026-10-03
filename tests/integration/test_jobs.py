@@ -457,3 +457,15 @@ def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, phot
 def test_multiview_backend_on_one_photo_without_generation_explains(ctx, rtx4080, photo):
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", backend="multiview", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "failed" and "generative mode" in rep["error"]["message"]
+
+
+def test_real3d_trains_at_photo_detail_with_low_sh(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["max_side"] == 1600 and mv["sh_degree"] == 1

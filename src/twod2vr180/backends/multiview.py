@@ -76,6 +76,8 @@ class MultiViewBackend(Backend):
                "moge_path": str(ctx.models.paths("moge-2-vitl-normal")["model.pt"]),
                "max_side": int(options.get("max_side", side)), "steps": int(options.get("train_steps", steps)),
                "max_gaussians": cap, "mesh": bool(options.get("mesh", True)), "assembly": assembly}
+        if options.get("sh_degree") is not None:
+            req["sh_degree"] = int(options["sh_degree"])
         da3 = DA3_MODEL in ctx.models.entries and ctx.models.is_installed(DA3_MODEL) and \
             options.get("camera_engine", "auto") != "vggt"
         if da3:

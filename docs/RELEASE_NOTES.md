@@ -1,3 +1,18 @@
+# 2D2VR180 1.0.0-rc21 — tuned for "Real 3D from one photo"
+
+## What's new in rc21
+
+- **The photo's full detail.** With photo + 3 AI views the splat is trained at up to 1280 px (Auto) or 1600 px
+  (Quality) instead of 1024, so the front view keeps more of the photo's detail.
+- **Steadier colours when you move your head.** Colour is learnt with spherical harmonics of degree 1 instead
+  of 3. With only four views, higher degrees overfit into colour flicker and tinted patches between the
+  views.
+- **Inconsistent AI views are dropped.** If even the best candidate of an angle does not behave like a camera
+  move of the photo, that view is left out instead of teaching the 3D a different pose or face. At least one
+  AI view is always kept, and `job.log` says which view was dropped and why.
+- Fix: with Depth Anything 3, views could end up with too few initial points (different confidence scale
+  than VGGT).
+
 # 2D2VR180 1.0.0-rc20 — Depth Anything 3 camera engine
 
 ## What's new in rc20
@@ -321,8 +336,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc20-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc20-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc21-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc21-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 
