@@ -14,12 +14,16 @@ import urllib.parse
 import urllib.request
 
 HF_REPOS = [
-    "lightx2v/Qwen-Image-Edit-2511-Lightning",
+    "imlixinyang/FlashWorld",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
 ]
 HF_SEARCH: list[str] = []
 GGUF_HEADERS: list[str] = []
 HF_TEXT = [  # small files whose content is needed (configs, model cards)
-    "lightx2v/Qwen-Image-Edit-2511-Lightning/README.md",
+    "imlixinyang/FlashWorld/README.md",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/transformer/config.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/text_encoder/config.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/model_index.json",
 ]
 URLS: list[str] = []  # non-HF downloads: hashed by streaming
 
