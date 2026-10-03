@@ -749,6 +749,8 @@ class ResultsPage(QWidget):
                             f"{extra.get('trajectory', '')})")
             if extra.get("camera_engine"):
                 bits.append(f"camera engine: {extra['camera_engine']}")
+            if extra.get("subject_mode"):
+                bits.append("subject mode (background from your photo)")
             if extra.get("assembly"):
                 bits.append(f"assembly: {extra['assembly']}")
             html.append("<p>" + " · ".join(bits) + "</p>")

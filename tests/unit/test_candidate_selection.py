@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "workers"))
 import multiview_worker as mv  # noqa: E402
@@ -124,3 +125,64 @@ def test_da3_that_cannot_load_falls_back_to_vggt(monkeypatch):
     monkeypatch.setattr(mv, "log", logs.append)
     assert mv.try_load_da3("x", "cuda", FakeTorch) is None
     assert "using VGGT" in logs[0] and "ImportError" in logs[0]
+
+
+def _person_in_front_of_wall(h=300, w=200):
+    d = np.full((h, w), 3.0)                       # backdrop wall at 3 m, slightly tilted
+    d += np.linspace(0, 0.2, h)[:, None]
+    yy, xx = np.mgrid[0:h, 0:w]
+    person = ((xx - 80) / 45.0) ** 2 + ((yy - 170) / 120.0) ** 2 < 1
+    d[person] = 1.6 + 0.1 * np.sin(xx[person] / 9.0)
+    return d, person
+
+
+def test_subject_mask_finds_the_person_in_front_of_the_wall():
+    pytest.importorskip("scipy")
+    d, person = _person_in_front_of_wall()
+    m, why = mv.subject_mask(d)
+    assert m is not None, why
+    assert m[person].mean() > 0.98                  # the whole subject (slightly dilated)
+    assert m[~person].mean() < 0.05                 # and hardly any wall
+
+
+def test_no_subject_mode_for_a_scene_without_a_separate_subject():
+    pytest.importorskip("scipy")
+    h, w = 300, 200
+    ground = 1.0 + 9.0 * (1 - np.linspace(0, 1, h))[:, None] * np.ones((1, w))   # a landscape / floor
+    m, why = mv.subject_mask(ground)
+    assert m is None and "no separate subject" in why
+    assert mv.subject_mask(np.full((h, w), 2.0))[0] is None
+    room = np.exp(np.random.default_rng(0).uniform(0, 2, (h, w)))          # depths spread evenly
+    assert mv.subject_mask(room)[0] is None
+    d, person = _person_in_front_of_wall()
+    d[220:] = np.linspace(3.0, 1.2, 80)[:, None]                            # standing on a floor
+    assert mv.subject_mask(d)[0] is not None
+
+
+def test_masked_flattens_the_background():
+    img = np.full((40, 30, 3), 200, np.uint8)
+    m = np.zeros((40, 30), bool)
+    m[10:30, 5:20] = True
+    out = mv.masked(img, m)
+    assert (out[m] == 200).all() and (out[~m] == 128).all()
+
+
+def test_turntable_orbits_the_subject_and_stays_within_the_views():
+    d, person = _person_in_front_of_wall()
+    h, w = d.shape
+    K = np.array([[200.0, 0, w / 2], [0, 200.0, h / 2], [0, 0, 1]])
+    ys, xs = np.mgrid[0:h, 0:w]
+    pts = np.stack([(xs + .5 - w / 2) / 200 * d, (ys + .5 - h / 2) / 200 * d, d], -1).reshape(-1, 3)
+    c2w0 = np.eye(4)
+
+    def yawed(deg):
+        a = math.radians(deg)
+        m = np.eye(4)
+        m[:3, :3] = [[math.cos(a), 0, math.sin(a)], [0, 1, 0], [-math.sin(a), 0, math.cos(a)]]
+        return m
+
+    zc, yaw = mv.turntable_orbit(pts, [c2w0, yawed(40), yawed(-12)], K, (w, h), person)
+    assert 1.5 < zc < 1.75                          # around the person, not the wall at 3 m
+    assert abs(yaw - 28) < 0.5                      # 70 % of the widest view (40°)
+    zc_all, yaw_small = mv.turntable_orbit(pts, [c2w0, yawed(7)], K, (w, h))
+    assert zc_all > 2.5 and yaw_small == 8.0        # no mask: median of everything; small views: small swing

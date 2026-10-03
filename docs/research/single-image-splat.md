@@ -13,6 +13,18 @@
 So the base is: **a few strongly separated, consistent views + multi-view reconstruction + training**. Everything
 below improves one link of that chain.
 
+### Owner feedback to keep (October 2026)
+
+- **Sharp per-view MoGe-2 depth made the 3D worse** than the smoother joint multi-view depth (the earlier
+  option that fused the images). Each generated view's own monocular depth disagrees with the others', and
+  that pulls the splat apart. Since rc31, training uses the engine's joint depth (DA3 / VGGT) for the
+  initial points and the consistency check; MoGe-2 priors are off by default (`depth_prior`).
+  MoGe-2 is still used for single-view jobs, for the subject mask, and for the photo's own background in
+  subject mode (one view, nothing to disagree with).
+- **Studio portraits:** Qwen turns the person ~45° but keeps a plain backdrop as it was. DA3 then measured
+  only 5-8° of camera motion and training tore the person apart (rc30 test). Since rc31, subject mode
+  finds the cameras from the subject only, and generated views supervise only the subject.
+
 ## The chain and the state of the art for each link
 
 1. **View generation** (consistency is everything)
@@ -61,6 +73,8 @@ personal/research profile).
 | rc27 | Joint camera refinement (SE(3)) of generated views during training |
 | rc28 | Quality: 8-step Lightning LoRA for Qwen views; camera refinement for real multi-photo sets |
 | rc29 | AbsGS densification (absolute screen-space gradients) |
+| rc30 | Fix: DA3 Giant load; VGGT fallback |
+| rc31 | Subject mode (cameras from the subject, background from the photo); joint engine depth instead of per-view MoGe-2 priors; turntable around the subject |
 
 ### Evaluated and deferred
 

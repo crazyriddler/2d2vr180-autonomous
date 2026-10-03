@@ -1,4 +1,22 @@
-# 2D2VR180 1.0.0-rc30 — fix: Depth Anything 3 Giant failed to load
+# 2D2VR180 1.0.0-rc31 — Real 3D of a person in front of a backdrop no longer tears apart
+
+## Fixed in rc31
+
+- **Subject mode.** With a studio portrait, Qwen turns the person ~45° but leaves the plain backdrop as
+  it was. Depth Anything 3 then measured only 5–8° of camera movement, and training was torn between
+  "the camera moved 45°" (the person) and "the camera barely moved" (the wall). The splat came out
+  shredded. Now:
+  - The person is separated from the background by depth. Subject mode switches on only when the photo
+    clearly has two layers (a subject in front of a background), not for landscapes or rooms.
+  - The cameras are found from the person alone.
+  - AI views teach only the person. The background comes from your photo.
+  - Results shows "subject mode" when it was used.
+- **Joint multi-view depth instead of per-view MoGe-2 depth.** The sharper per-view MoGe-2 depth (since
+  rc19) made the 3D worse than the earlier, smoother option. Each AI view got its own depth that disagreed
+  with the others'. Training is back on the camera engine's depth (Depth Anything 3 / VGGT), which is
+  estimated for all views together and is consistent.
+- **The turntable swings around the subject, not around the wall behind it**, and only as far as the views
+  reach. Before, it always swung 30°, which showed areas nobody had seen.
 
 ## Fixed in rc30
 
@@ -445,7 +463,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc30-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc31-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |

@@ -299,7 +299,87 @@ def consistency_map(ref_img, ref_depth, K0, c2w0, img, depth, K, c2w, cell=4, si
     return np.repeat(np.repeat(conf, cell, 0), cell, 1)[:h, :w].astype(np.float32)
 
 
-def mono_priors(moge_path, imgs, vin, depth, conf, device, torch):
+def subject_mask(depth, valid=None, min_gap=1.25, min_sep=0.85, min_frac=0.03, max_frac=0.9):
+    """Subject (foreground) mask of a view from its monocular depth: Otsu threshold on log depth.
+
+    Returns (mask or None, reason). None when the depth is not clearly two-layered (a landscape, a
+    room): then there is no single subject in front of a background and the whole image is used."""
+    import numpy as np
+    from scipy import ndimage
+
+    d = np.asarray(depth, np.float64)
+    ok = np.isfinite(d) & (d > 0)
+    if valid is not None:
+        ok &= np.asarray(valid, bool)
+    if ok.mean() < 0.3:
+        return None, "too little valid depth"
+    ld = np.log(d[ok])
+    if ld.var() < 1e-8:
+        return None, "flat depth"
+    hist, edges = np.histogram(ld, 256)
+    p = hist / hist.sum()
+    c = (edges[:-1] + edges[1:]) / 2
+    w0 = np.cumsum(p)
+    m0 = np.cumsum(p * c)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sb = (m0[-1] * w0 - m0) ** 2 / (w0 * (1 - w0))
+    sb[~np.isfinite(sb)] = 0
+    k = int(np.argmax(sb))
+    t = c[k]
+    # share of the depth variance explained by two layers: ~0.99 for a person in front of a wall, 0.90 with
+    # a floor, 0.75 for a continuous ramp of depths (a landscape, a room) - which has no single subject
+    sep = float(sb[k] / ld.var())
+    near, far = ld[ld <= t], ld[ld > t]
+    if len(near) == 0 or len(far) == 0:
+        return None, "one depth layer"
+    gap = float(np.exp(far.mean() - near.mean()))
+    if sep < min_sep or gap < min_gap:
+        return None, f"no separate subject (layer separation {sep:.2f}, depth ratio {gap:.2f})"
+    fg = ok & (np.log(np.where(ok, d, 1.0)) <= t)
+    lab, nlab = ndimage.label(fg)
+    if nlab > 1:
+        sizes = ndimage.sum(fg, lab, range(1, nlab + 1))
+        fg = np.isin(lab, 1 + np.nonzero(sizes >= 0.2 * sizes.max())[0])
+    fg = ndimage.binary_fill_holes(fg)
+    fg = ndimage.binary_dilation(fg, iterations=max(1, round(0.004 * max(fg.shape))))
+    frac = float(fg.mean())
+    if not min_frac <= frac <= max_frac:
+        return None, f"subject covers {frac:.0%} of the image"
+    return fg, f"subject {frac:.0%} of the image (layer separation {sep:.2f}, depth ratio {gap:.2f})"
+
+
+def subject_masks(moge_path, paths, max_side, device, torch):
+    """subject_mask() for every image path (MoGe-2 depth at a moderate resolution)."""
+    import numpy as np
+    from moge.model.v2 import MoGeModel
+
+    model = MoGeModel.from_pretrained(moge_path).to(device).eval()
+    out = {}
+    for k, path in enumerate(paths):
+        progress(0.02 + 0.01 * k / max(1, len(paths)), f"finding the subject {k + 1}/{len(paths)}")
+        img = load_rgb(path, max_side)
+        t = torch.from_numpy(np.ascontiguousarray(img)).to(device).float().div(255).permute(2, 0, 1)
+        with torch.no_grad():
+            res = model.infer(t, resolution_level=6, use_fp16=device == "cuda")
+        valid = res["mask"].cpu().numpy().astype(bool) if "mask" in res else None
+        out[path] = subject_mask(res["depth"].float().cpu().numpy(), valid)
+        del res, t
+    del model
+    free(torch)
+    return out
+
+
+def masked(img, mask, grey=128):
+    """The image with everything outside the subject mask replaced by a flat grey."""
+    import numpy as np
+
+    if mask is None:
+        return img
+    m = resize_map(mask.astype(np.uint8), img.shape[1], img.shape[0]).astype(bool)
+    return np.where(m[..., None], img, np.uint8(grey)).astype(np.uint8)
+
+
+def mono_priors(moge_path, imgs, vin, depth, conf, device, torch, align_masks=None):
     """MoGe-2 depth of every view at its training resolution, scaled onto the view's VGGT depth.
     Returns a list of (H, W) depth maps in scene units (0 where unknown)."""
     import numpy as np
@@ -322,7 +402,10 @@ def mono_priors(moge_path, imgs, vin, depth, conf, device, torch):
         del res, t
         zv, inside = vggt_on_image(depth[i], vin[i][1], h, w)
         cv, _ = vggt_on_image(conf[i], vin[i][1], h, w)
-        s = fu.align_scale(zm, zv, valid & inside & (cv >= np.percentile(conf[i], 50)))
+        sel = valid & inside & (cv >= np.percentile(conf[i], 50))
+        if align_masks is not None and align_masks[i] is not None:
+            sel &= resize_map(align_masks[i].astype(np.uint8), w, h).astype(bool)   # the subject only
+        s = fu.align_scale(zm, zv, sel)
         out.append(np.where(valid, zm * s, 0.0).astype(np.float32) if s else None)
     del model
     free(torch)
@@ -463,15 +546,20 @@ def da3_size(img, res):
     return max(14, int(round(H0 * s / 14)) * 14), max(14, int(round(W0 * s / 14)) * 14)
 
 
-def da3_input(img, size):
-    """(float image at the DA3 size, info) - info maps DA3 pixels to the image like vggt_input's."""
+def da3_input(img, size, mask=None):
+    """(float image at the DA3 size, info) - info maps DA3 pixels to the image like vggt_input's.
+    With a subject mask the background is flattened to grey (the cameras are then found from the
+    subject alone) and the mask at the DA3 size is kept in info["mask"]."""
     import numpy as np
     from PIL import Image
 
     h, w = size
     H0, W0 = img.shape[:2]
-    arr = np.asarray(Image.fromarray(img).resize((w, h), Image.BICUBIC), np.float32) / 255.0
-    return arr, {"sx": W0 / w, "sy": H0 / h, "crop": 0, "h": h, "w": w}
+    arr = np.asarray(Image.fromarray(masked(img, mask)).resize((w, h), Image.BICUBIC), np.float32) / 255.0
+    info = {"sx": W0 / w, "sy": H0 / h, "crop": 0, "h": h, "w": w}
+    if mask is not None:
+        info["mask"] = resize_map(mask.astype(np.uint8), w, h).astype(bool)
+    return arr, info
 
 
 def da3_predict(model, arrays, torch):
@@ -539,6 +627,10 @@ def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None, pred
     ui = np.where(inb, u, 0).astype(np.int64)
     vi = np.where(inb, v, 0).astype(np.int64)
     ok = inb & (z <= d1[vi, ui] * 1.05) & (c0.reshape(-1) >= np.percentile(c0, 50))
+    if ref_vin[1].get("mask") is not None:                 # subject mode: the grey background says nothing
+        ok &= ref_vin[1]["mask"].reshape(-1)
+        if cand_vin[1].get("mask") is not None:
+            ok &= cand_vin[1]["mask"][vi, ui]
     rel = w2c1 @ c2w0
     angle = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(rel[:3, :3]) - 1) / 2))))
     overlap = float(ok.mean())
@@ -568,7 +660,7 @@ def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side, pre
         scored = []
         for path in cands:
             img = load_rgb(path, max_side)
-            cv = (prep or vggt_input)(img)
+            cv = prep(img, path) if prep else vggt_input(img)
             sc, err, ang, ov = rigidity_score(model, vin[0], cv, dtype, torch, it.get("target_deg"), predict)
             scored.append((sc, path, img, cv, err, ang, ov))
             log(f"view {i} ({it.get('label', '')}) candidate {os.path.basename(path)}: score {sc:.4f} "
@@ -606,7 +698,44 @@ def turntable_c2ws(target_z, n=72, yaw_deg=30.0, pitch_deg=6.0):
     return out
 
 
-def render_turntable(params, K, size, target_z, out_dir, sh_degree, torch, n=72, width=960, base=None):
+def turntable_orbit(means, c2ws, K, size, mask=None, max_yaw=30.0, min_yaw=8.0):
+    """(orbit distance, swing in degrees) for the turntable preview.
+
+    The orbit centre is the median depth of the splats that the photo shows inside the subject mask
+    (all splats in front of the camera without one), so the camera swings around the person, not
+    around the wall behind. The swing stays within ~70 % of the widest angle the views cover, so the
+    preview shows what was reconstructed rather than what nobody saw."""
+    import math
+
+    import numpy as np
+
+    c2ws = np.asarray(c2ws, np.float64)
+    w2c0 = np.linalg.inv(c2ws[0])
+    pc = means @ w2c0[:3, :3].T + w2c0[:3, 3]
+    z = pc[:, 2]
+    front = z > 1e-6
+    if mask is not None and front.any():
+        w, h = size
+        m = resize_map(np.asarray(mask, np.uint8), w, h).astype(bool)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            u = np.floor(K[0, 0] * pc[:, 0] / z + K[0, 2])
+            v = np.floor(K[1, 1] * pc[:, 1] / z + K[1, 2])
+        inb = front & (u >= 0) & (u < w) & (v >= 0) & (v < h)
+        sel = np.zeros(len(z), bool)
+        sel[inb] = m[v[inb].astype(int), u[inb].astype(int)]
+        if sel.sum() > 100:
+            front = sel
+    zc = float(np.median(z[front])) if front.any() else 2.0
+    widest = 0.0
+    for c in c2ws[1:]:
+        rel = w2c0 @ c
+        widest = max(widest, math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(rel[:3, :3]) - 1) / 2)))))
+    yaw = max(min_yaw, min(max_yaw, 0.7 * widest)) if len(c2ws) > 1 else min_yaw
+    return zc, yaw
+
+
+def render_turntable(params, K, size, target_z, out_dir, sh_degree, torch, n=72, width=960, base=None,
+                     yaw_deg=30.0):
     """JPEG frames of the trained splat seen along turntable_c2ws (the app encodes them to MP4)."""
     import numpy as np
     from PIL import Image
@@ -621,7 +750,7 @@ def render_turntable(params, K, size, target_z, out_dir, sh_degree, torch, n=72,
     Kt = torch.as_tensor(Kr, dtype=torch.float32, device="cuda")[None]
     os.makedirs(out_dir, exist_ok=True)
     base = np.eye(4) if base is None else np.asarray(base, np.float64)
-    for k, c2w in enumerate(turntable_c2ws(target_z, n)):
+    for k, c2w in enumerate(turntable_c2ws(target_z, n, yaw_deg=yaw_deg)):
         c2w = base @ c2w
         vm = torch.linalg.inv(torch.as_tensor(c2w, dtype=torch.float32, device="cuda"))[None]
         with torch.no_grad():
@@ -704,18 +833,57 @@ def vggt_stage(req, items, train_imgs, vin, device, torch, max_side, env):
     return c2w_v, K_v, depth, conf, vin, selection
 
 
+def subject_setup(req, items, max_side, device, torch):
+    """Subject mode for photo + generated views: {path: mask or None} for the photo, every generated
+    view and its candidates, or None to use whole images.
+
+    Image models redraw a person from a new angle but keep a plain studio backdrop as it was, so
+    the background says "the camera barely moved" while the person says "45°". Finding the cameras
+    from the subject alone, and letting generated views teach only the subject, avoids a 3D torn
+    between the two (the photo alone provides the background)."""
+    if (str(req.get("subject_mode", "auto")) == "off" or not req.get("moge_path")
+            or req.get("assembly") == "fusion" or not any(it.get("generated") for it in items)):
+        return None
+    paths = []
+    for it in items:
+        for path in [it["path"]] + list(it.get("candidates") or []):
+            if path not in paths:
+                paths.append(path)
+    try:
+        res = subject_masks(req["moge_path"], paths, max_side, device, torch)
+    except Exception as e:  # noqa: BLE001 - subject mode is an improvement, not a requirement
+        log(f"subject detection unavailable ({e}); using whole images")
+        return None
+    m0, why = res[items[0]["path"]]
+    log(f"photo: {why}")
+    if m0 is None:
+        log("no single subject in front of a background: cameras are found from the whole images")
+        return None
+    masks = {path: m for path, (m, _) in res.items()}
+    missing = [os.path.basename(path) for path, m in masks.items() if m is None]
+    if missing:
+        log(f"no subject found in {', '.join(missing)}; whole image used for those")
+    log("subject mode: cameras from the subject; generated views teach only the subject, the background "
+        "comes from the photo")
+    return masks
+
+
 def score_only(req, items, train_imgs, device, torch, env, max_side):
     """Score every generated candidate against the photo (no reconstruction): the app uses this to
     decide whether an angle needs more candidates."""
     a0 = train_imgs[0].shape[1] / train_imgs[0].shape[0]
     same_shape = all(abs(im.shape[1] / im.shape[0] / a0 - 1) < 0.03 for im in train_imgs)
-    model = try_load_da3(req["da3_dir"], device, torch) \
-        if req.get("pose_engine") == "da3" and req.get("da3_dir") and same_shape else None
+    use_da3 = req.get("pose_engine") == "da3" and req.get("da3_dir") and same_shape
+    masks = subject_setup(req, items, max_side, device, torch) if use_da3 else None
+    model = try_load_da3(req["da3_dir"], device, torch) if use_da3 else None
     if model is not None:
+        def mk(path):
+            return masks.get(path) if masks else None
+
         size = da3_size(train_imgs[0], int(req.get("da3_res", 504)))
-        vin = [da3_input(im, size) for im in train_imgs]
+        vin = [da3_input(im, size, mk(it["path"])) for im, it in zip(train_imgs, items)]
         sel = select_candidates(items, train_imgs, vin, model, None, torch, max_side,
-                                prep=lambda im: da3_input(im, size),
+                                prep=lambda im, path: da3_input(im, size, mk(path)),
                                 predict=lambda arrays: da3_predict(model, arrays, torch), min_candidates=1)
         engine = "da3"
     else:
@@ -768,19 +936,26 @@ def main(req):
     engine = req.get("pose_engine") or "vggt"
     a0 = train_imgs[0].shape[1] / train_imgs[0].shape[0]
     same_shape = all(abs(im.shape[1] / im.shape[0] / a0 - 1) < 0.03 for im in train_imgs)
-    model = None
+    model = masks = None
     if (engine == "da3" and req.get("da3_dir") and len(items) <= int(req.get("da3_max_views", 32))
             and same_shape):
+        masks = subject_setup(req, items, max_side, device, torch)
         progress(0.03, "loading Depth Anything 3")
         model = try_load_da3(req["da3_dir"], device, torch)
+        if model is None:
+            masks = None
+
+    def mk(path):
+        return masks.get(path) if masks else None
+
     if model is not None:
         size = da3_size(train_imgs[0], int(req.get("da3_res", 504)))
-        vin = [da3_input(im, size) for im in train_imgs]
+        vin = [da3_input(im, size, mk(it["path"])) for im, it in zip(train_imgs, items)]
         selection = []
         if any(len(it.get("candidates") or []) > 1 for it in items):
             progress(0.04, "choosing the most consistent generated views")
             selection = select_candidates(items, train_imgs, vin, model, None, torch, max_side,
-                                          prep=lambda im: da3_input(im, size),
+                                          prep=lambda im, path: da3_input(im, size, mk(path)),
                                           predict=lambda arrays: da3_predict(model, arrays, torch))
         dropped = drop_inconsistent(items, train_imgs, vin, float(req.get("drop_threshold", 0.8)))
         for sel in selection:
@@ -828,15 +1003,42 @@ def main(req):
     # ------------------------------------------------------------ depth priors (sparse views)
     n = len(items)
     Ks = np.stack([to_original_K(K_v[i], vin[i][1], 0) for i in range(n)])
+    subj = [mk(it["path"]) for it in items]           # subject masks of the views kept (None: whole image)
     priors = None
-    if (req.get("depth_prior", True) and req.get("moge_path") and n <= int(req.get("prior_max_views", 24))
+    # Per-view MoGe-2 depth is sharper, but each generated view gets its own depth that does not agree
+    # with the others' and the 3D is pulled apart (owner's tests, rc19-rc30): off unless asked for. The
+    # engine's joint multi-view depth (DA3 / VGGT) is used instead - smoother, but consistent.
+    if (req.get("depth_prior", False) and req.get("moge_path") and n <= int(req.get("prior_max_views", 24))
             and not poses_only):
         try:
-            priors = mono_priors(req["moge_path"], train_imgs, vin, depth, conf, device, torch)
+            priors = mono_priors(req["moge_path"], train_imgs, vin, depth, conf, device, torch,
+                                 align_masks=subj if masks else None)
+            if masks:   # a generated view's background is not a camera move of the photo's: unknown
+                priors = [p if p is None or not it.get("generated") or subj[i] is None
+                          else np.where(resize_map(subj[i].astype(np.uint8), p.shape[1], p.shape[0]) > 0, p, 0.0)
+                          .astype(np.float32) for i, (p, it) in enumerate(zip(priors, items))]
             log("MoGe-2 depth priors: " + ", ".join("-" if p is None else "ok" for p in priors))
         except Exception as e:  # noqa: BLE001 - priors are an improvement, not a requirement
             log(f"depth priors unavailable: {e}")
             priors = None
+
+    # subject mode: the engine saw a grey background in the photo, so its depth there means nothing; the
+    # photo's background depth comes from MoGe-2 (one view: nothing to disagree with), scaled on the subject
+    if masks and subj[0] is not None and req.get("moge_path") and not poses_only:
+        try:
+            p0 = priors[0] if priors is not None and priors[0] is not None else \
+                mono_priors(req["moge_path"], train_imgs[:1], vin[:1], depth[:1], conf[:1], device, torch,
+                            align_masks=subj[:1])[0]
+            if p0 is not None:
+                h0, w0 = train_imgs[0].shape[:2]
+                m0 = resize_map(subj[0].astype(np.uint8), w0, h0).astype(bool)
+                eng0 = vggt_on_image(depth[0], vin[0][1], h0, w0)[0]
+                photo_depth = np.where(m0, eng0, p0).astype(np.float32)
+                priors = priors if priors is not None else [None] * n
+                priors[0] = photo_depth if not req.get("depth_prior", False) else priors[0]
+                log("photo background depth from MoGe-2 (scaled on the subject)")
+        except Exception as e:  # noqa: BLE001
+            log(f"photo background depth unavailable: {e}")
 
     # ------------------------------------------------------------ initial points
     progress(0.35, "building the initial point cloud")
@@ -861,6 +1063,8 @@ def main(req):
         d, c = depth[i], conf[i]
         # confidence scales differ between engines (VGGT >= 1, DA3 not): keep the better 65 %
         ok = (d > 0) & np.isfinite(d) & (c >= np.percentile(c, 35))
+        if items[i].get("generated") and vin[i][1].get("mask") is not None:
+            ok &= vin[i][1]["mask"]
         yy, xx = np.nonzero(ok)
         if len(yy) > per_view:
             sel = rng.choice(len(yy), per_view, replace=False)
@@ -880,19 +1084,34 @@ def main(req):
     c2ws = np.stack(c2w_v)
     weights = [float(it.get("weight", 1.0)) for it in items]
     pixel_w = None
-    if priors is not None and priors[0] is not None and any(it.get("generated") for it in items):
+    if any(it.get("generated") for it in items):
+        # depth for the photo-consistency check: MoGe-2 priors when enabled, else the engine's joint depth
+        def view_depth(i):
+            if priors is not None and priors[i] is not None:
+                return priors[i]
+            h, w = train_imgs[i].shape[:2]
+            return vggt_on_image(depth[i], vin[i][1], h, w)[0]
+
         pixel_w = [None] * n
+        d0 = view_depth(0)
         for i, it in enumerate(items):
-            if it.get("generated") and priors[i] is not None:
-                pixel_w[i] = consistency_map(train_imgs[0], priors[0], Ks[0], c2ws[0], train_imgs[i], priors[i],
+            if it.get("generated"):
+                pixel_w[i] = consistency_map(train_imgs[0], d0, Ks[0], c2ws[0], train_imgs[i], view_depth(i),
                                              Ks[i], c2ws[i])
                 log(f"view {i} ({it.get('label', '')}): {float((pixel_w[i] < 0.5).mean()):.0%} of its pixels "
                     "contradict the photo and are down-weighted")
+    if masks and any(it.get("generated") and subj[i] is not None for i, it in enumerate(items)):
+        pixel_w = pixel_w or [None] * n
+        for i, it in enumerate(items):
+            if it.get("generated") and subj[i] is not None:
+                h, w = train_imgs[i].shape[:2]
+                m = resize_map(subj[i].astype(np.uint8), w, h).astype(np.float32)
+                pixel_w[i] = m if pixel_w[i] is None else pixel_w[i] * m
     if req.get("dry_run"):   # tests: everything up to the GPU training, on any device
         emit("result", dry_run=True, camera_engine=engine, views=n, points=int(len(points)), metric=metric,
              priors=[p is not None for p in (priors or [None] * n)],
              down_weighted=[None if m is None else float((m < 0.5).mean()) for m in (pixel_w or [None] * n)],
-             candidate_selection=selection, c2ws=[m.tolist() for m in c2ws])
+             subject_mode=bool(masks), candidate_selection=selection, c2ws=[m.tolist() for m in c2ws])
         return
     cfg = st.TrainConfig(steps=int(req.get("steps", 10000)), sh_degree=int(req.get("sh_degree", 3)),
                          max_gaussians=int(req.get("max_gaussians", 2_000_000)),
@@ -974,13 +1193,12 @@ def main(req):
     if req.get("turntable", True):
         try:
             progress(0.875, "rendering a turntable preview")
-            # orbit centre: median depth of the splats in front of the photo's camera
-            w2c0 = np.linalg.inv(c2ws[0])
-            m = params["means"].detach().float().cpu().numpy()
-            z = m @ w2c0[2, :3] + w2c0[2, 3]
-            zc = float(np.median(z[z > 0])) if np.any(z > 0) else 2.0
+            zc, yaw = turntable_orbit(params["means"].detach().float().cpu().numpy(), c2ws, Ks[0], sizes[0],
+                                      subj[0])
+            log(f"turntable: ±{yaw:.0f}° around a point {zc:.2f} in front of the photo's camera")
             turntable = os.path.join(out_dir, "turntable")
-            render_turntable(params, Ks[0], sizes[0], zc, turntable, cfg.sh_degree, torch, base=c2ws[0])
+            render_turntable(params, Ks[0], sizes[0], zc, turntable, cfg.sh_degree, torch, base=c2ws[0],
+                             yaw_deg=yaw)
         except Exception as e:  # noqa: BLE001 - a preview only
             log(f"turntable preview failed: {e}")
             turntable = None
@@ -1058,7 +1276,7 @@ def main(req):
          metric_scale_factor=scale, views=n, real_views=sum(1 for it in items if not it.get("generated")),
          reference_psnr_db=round(ref_psnr, 2), splats=count, mesh=mesh_info, loss_history=hist[-20:],
          candidate_selection=selection,
-         pose_refinement=pose_refined,
+         pose_refinement=pose_refined, subject_mode=bool(masks),
          colour_correction=[None if a is None else {"gain": [round(a[0][c][c], 3) for c in range(3)],
                                                     "offset": [round(x, 3) for x in a[1]]} for a in app_out],
          provenance={"observed": int((counts_np == 0).sum()), "inferred": int((counts_np == 1).sum()),
