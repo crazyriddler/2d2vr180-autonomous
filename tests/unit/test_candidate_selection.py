@@ -94,3 +94,33 @@ def test_hopeless_generated_views_are_dropped_but_one_is_kept():
     imgs, vin = list("PAB"), list("pab")
     mv.drop_inconsistent(items, imgs, vin, 0.8)
     assert [it.get("label") for it in items] == [None, "b"]          # the least bad one stays
+
+
+def test_da3_stub_serves_any_helper_the_model_files_import(monkeypatch):
+    for name in ("depth_anything_3.utils.export", "depth_anything_3.utils.pose_align"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    mv.da3_stub()
+    # the Giant / Nested models' Gaussian head imports this one (rc29 failed on it)
+    from depth_anything_3.utils.pose_align import align_poses_umeyama, batch_align_poses_umeyama  # noqa: F401
+    from depth_anything_3.utils.export import export  # noqa: F401
+    mod = sys.modules["depth_anything_3.utils.pose_align"]
+    assert not hasattr(mod, "__file__") and not hasattr(mod, "__path__")
+    for name in ("depth_anything_3.utils.export", "depth_anything_3.utils.pose_align"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+
+def test_da3_that_cannot_load_falls_back_to_vggt(monkeypatch):
+    class FakeTorch:
+        class cuda:
+            @staticmethod
+            def is_available():
+                return False
+
+    def broken(*a, **k):
+        raise ImportError("cannot import name 'something' from 'depth_anything_3'")
+
+    logs = []
+    monkeypatch.setattr(mv, "load_da3", broken)
+    monkeypatch.setattr(mv, "log", logs.append)
+    assert mv.try_load_da3("x", "cuda", FakeTorch) is None
+    assert "using VGGT" in logs[0] and "ImportError" in logs[0]

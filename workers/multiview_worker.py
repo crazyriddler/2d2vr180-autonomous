@@ -427,12 +427,15 @@ def da3_stub():
     def nope(*a, **k):
         raise RuntimeError("this Depth Anything 3 feature is not bundled with 2D2VR180")
 
-    for name, attrs in (("depth_anything_3.utils.export", ("export",)),
-                        ("depth_anything_3.utils.pose_align", ("align_poses_umeyama",))):
+    def stub_attr(attr):           # any function the model files import from them (e.g. the Giant
+        if attr.startswith("__"):  # models' Gaussian head imports batch_align_poses_umeyama)
+            raise AttributeError(attr)
+        return nope
+
+    for name in ("depth_anything_3.utils.export", "depth_anything_3.utils.pose_align"):
         if name not in sys.modules:
             m = types.ModuleType(name)
-            for a in attrs:
-                setattr(m, a, nope)
+            m.__getattr__ = stub_attr
             sys.modules[name] = m
 
 
@@ -441,6 +444,16 @@ def load_da3(model_dir, device):
     from depth_anything_3.api import DepthAnything3
 
     return DepthAnything3.from_pretrained(model_dir).to(device).eval()
+
+
+def try_load_da3(model_dir, device, torch):
+    """Depth Anything 3, or None (logged) when it cannot be loaded: the caller then uses VGGT."""
+    try:
+        return load_da3(model_dir, device)
+    except Exception as e:  # noqa: BLE001 - VGGT is the fallback engine
+        log(f"Depth Anything 3 could not be loaded ({type(e).__name__}: {e}); using VGGT instead")
+        free(torch)
+        return None
 
 
 def da3_size(img, res):
@@ -696,8 +709,9 @@ def score_only(req, items, train_imgs, device, torch, env, max_side):
     decide whether an angle needs more candidates."""
     a0 = train_imgs[0].shape[1] / train_imgs[0].shape[0]
     same_shape = all(abs(im.shape[1] / im.shape[0] / a0 - 1) < 0.03 for im in train_imgs)
-    if req.get("pose_engine") == "da3" and req.get("da3_dir") and same_shape:
-        model = load_da3(req["da3_dir"], device)
+    model = try_load_da3(req["da3_dir"], device, torch) \
+        if req.get("pose_engine") == "da3" and req.get("da3_dir") and same_shape else None
+    if model is not None:
         size = da3_size(train_imgs[0], int(req.get("da3_res", 504)))
         vin = [da3_input(im, size) for im in train_imgs]
         sel = select_candidates(items, train_imgs, vin, model, None, torch, max_side,
@@ -754,10 +768,12 @@ def main(req):
     engine = req.get("pose_engine") or "vggt"
     a0 = train_imgs[0].shape[1] / train_imgs[0].shape[0]
     same_shape = all(abs(im.shape[1] / im.shape[0] / a0 - 1) < 0.03 for im in train_imgs)
+    model = None
     if (engine == "da3" and req.get("da3_dir") and len(items) <= int(req.get("da3_max_views", 32))
             and same_shape):
         progress(0.03, "loading Depth Anything 3")
-        model = load_da3(req["da3_dir"], device)
+        model = try_load_da3(req["da3_dir"], device, torch)
+    if model is not None:
         size = da3_size(train_imgs[0], int(req.get("da3_res", 504)))
         vin = [da3_input(im, size) for im in train_imgs]
         selection = []
@@ -774,7 +790,8 @@ def main(req):
         free(torch)
         metric_engine = bool(req.get("da3_metric", True))
     else:
-        if engine == "da3":
+        if engine == "da3" and not (req.get("da3_dir") and len(items) <= int(req.get("da3_max_views", 32))
+                                    and same_shape):
             log("Depth Anything 3 not used (not installed, too many views or mixed image shapes); using VGGT")
         engine = "vggt"
         c2w_v, K_v, depth, conf, vin, selection = vggt_stage(req, items, train_imgs, vin, device, torch,

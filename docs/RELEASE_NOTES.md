@@ -1,4 +1,16 @@
-# 2D2VR180 1.0.0-rc29 — more detail in hair and fabric
+# 2D2VR180 1.0.0-rc30 — fix: Depth Anything 3 Giant failed to load
+
+## Fixed in rc30
+
+- **"Real 3D from one photo" failed** with `ImportError: cannot import name 'batch_align_poses_umeyama'
+  from 'depth_anything_3.utils.pose_align'`.
+  - Cause: the Giant / Nested Depth Anything 3 models build a Gaussian head that imports a pose-alignment
+    helper from a module 2D2VR180 replaces, because that module's dependencies are not bundled. The
+    replacement now serves every helper the model files import. Inference never calls them.
+  - Checked by building the Nested Giant-Large model from its configuration (1.69 B parameters) and
+    running a full inference on a portrait image.
+- **If Depth Anything 3 cannot be loaded, the job continues with VGGT** and the log says why, instead of
+  failing. This applies to both choosing the AI views and reconstructing.
 
 ## What's new in rc29
 
@@ -433,7 +445,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc29-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc30-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
