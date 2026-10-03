@@ -489,3 +489,22 @@ def test_weak_angle_gets_more_candidates(ctx, rtx4080, photo, monkeypatch):
     counts = {v["label"]: v.get("candidates") for v in req["views"]}
     assert counts["45° left"] == 4 and counts["45° right"] is None and counts["high angle"] is None
     assert len(list(gen.glob("view00*.png"))) == 4 and len(list(gen.glob("view01*.png"))) == 2
+
+
+def test_rebuild_with_own_picks_marks_ai_views(ctx, rtx4080, photo, tmp_path, monkeypatch):
+    from conftest import REPO
+    from twod2vr180.backends.multiview import MultiViewBackend
+
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_multiview_worker.py"))
+    import shutil
+
+    picks = []
+    for name in ("view00_c1.png", "view01.png"):
+        shutil.copy(photo, tmp_path / name)
+        picks.append(tmp_path / name)
+    job, rep, _ = run_job(ctx, rtx4080, [photo] + picks, mode="quality", backend="multiview",
+                          generated_inputs=[str(p) for p in picks], layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert [v["generated"] for v in mv["images"]] == [False, True, True]
+    assert mv["images"][0]["weight"] >= 4 and mv["max_side"] == 1600 and mv["sh_degree"] == 1

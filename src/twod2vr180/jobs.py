@@ -58,6 +58,7 @@ class JobOptions:
     generative: str = "off"              # off | capture | arc | orbit | explore | spiral: invent unseen views
     gen_assembly: str = "fusion"         # fusion (sharp: MoGe-2 per view, merged) | train (one optimised splat)
     gen_engine: str = "auto"             # auto | qwen | wan | seva: model that invents the other views
+    generated_inputs: list = field(default_factory=list)   # inputs that are AI views (rebuild with own picks)
     ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
 
 
@@ -334,6 +335,7 @@ class JobRunner:
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index,
                      "trajectory": opts.generative if opts.generative != "off" else None,
                      "assembly": assembly, "engine": opts.gen_engine,
+                     "generated_flags": [str(p) in {str(g) for g in opts.generated_inputs} for p in job.inputs],
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
             if bopts["hfov_deg"]:
                 log(f"EXIF field of view: {bopts['hfov_deg']:.1f}°")

@@ -553,8 +553,9 @@ class ResultsPage(QWidget):
         self.btn = {}
         for i, (key, label) in enumerate([("explore", "Explore in 3D"), ("vr", "View in VR (6DoF)"),
                                           ("vrimg", "Open VR180 image"), ("vrvid", "Play VR180 video"),
-                                          ("views", "AI views overview"), ("folder", "Open folder"),
-                                          ("export", "Copy results to…"), ("delete", "Delete")]):
+                                          ("views", "AI views overview"), ("rebuild", "Rebuild with my picks…"),
+                                          ("folder", "Open folder"), ("export", "Copy results to…"),
+                                          ("delete", "Delete")]):
             b = QPushButton(label)
             b.clicked.connect(lambda _=False, k=key: self.action(k))
             grid.addWidget(b, i // 4, i % 4)
@@ -619,6 +620,84 @@ class ResultsPage(QWidget):
         cand = d / "export" / "generated_views_sheet.jpg"
         return str(cand) if cand.exists() else None
 
+    @staticmethod
+    def _candidate_groups(d: Path, rep: dict) -> list[tuple[str, list[str], str | None]]:
+        """(label, candidate files, chosen file) per generated angle of a job (Qwen views)."""
+        import re
+
+        gen = d / "generated_views"
+        if not gen.exists():
+            return []
+        groups: dict[int, list[str]] = {}
+        for f in sorted(gen.glob("view*.png")):
+            m = re.match(r"view(\d+)(?:_c\d+)?\.png$", f.name)
+            if m:
+                groups.setdefault(int(m.group(1)), []).append(str(f))
+        sel = ((rep.get("backend") or {}).get("extra") or {}).get("candidate_selection") or []
+        out = []
+        for k, i in enumerate(sorted(groups)):
+            s = sel[k] if k < len(sel) else {}
+            chosen = next((c for c in groups[i] if Path(c).name == s.get("chosen")), None)
+            out.append((s.get("view") or f"view {i + 1}", groups[i], None if s.get("dropped") else chosen))
+        return out
+
+    def rebuild_with_picks(self, d: Path, rep: dict):
+        """Choose the candidate for every AI angle yourself and rebuild the 3D (no new generation)."""
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+
+        groups = self._candidate_groups(d, rep)
+        photo = Path((rep.get("input") or {}).get("path", ""))
+        if not photo.exists():
+            photo = d / "frames" / "frame_00000.png"
+        if not groups or not photo.exists():
+            QMessageBox.information(self, APP_NAME, "This result has no AI views to choose from.")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Rebuild with my picks")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(note("Pick the view to use for every angle (the automatic choice is preselected), or untick an "
+                           "angle to leave it out. The 3D is rebuilt from your photo and these views by the "
+                           "multi-view engine; nothing is generated again."))
+        grid = QGridLayout()
+        rows = []
+        for r, (label, files, chosen) in enumerate(groups):
+            use = QCheckBox(label)
+            use.setChecked(chosen is not None)
+            combo = QComboBox()
+            for f in files:
+                combo.addItem(Path(f).name, f)
+            combo.setCurrentIndex(max(combo.findData(chosen), 0) if chosen else 0)
+            thumb = QLabel()
+            thumb.setFixedSize(220, 150)
+            thumb.setAlignment(Qt.AlignCenter)
+
+            def show(_=None, c=combo, t=thumb):
+                pm = QPixmap(c.currentData())
+                t.setPixmap(pm.scaled(220, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+            combo.currentIndexChanged.connect(show)
+            show()
+            grid.addWidget(use, r, 0)
+            grid.addWidget(combo, r, 1)
+            grid.addWidget(thumb, r, 2)
+            rows.append((use, combo))
+        lay.addLayout(grid)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        picks = [c.currentData() for use, c in rows if use.isChecked()]
+        if not picks:
+            QMessageBox.information(self, APP_NAME, "Pick at least one view.")
+            return
+        opts = self.win.settings.job_options(backend="multiview", generative="off", gen_assembly="train",
+                                             generated_inputs=[str(p) for p in picks])
+        self.win.queue.add([photo] + [Path(p) for p in picks], opts)
+        QMessageBox.information(self, APP_NAME, f"Rebuilding from your photo and {len(picks)} chosen view(s) — "
+                                                "follow it on the Create page.")
+
     def _current(self) -> tuple[Path | None, dict]:
         it = self.list.currentItem()
         if not it:
@@ -645,6 +724,7 @@ class ResultsPage(QWidget):
         self.btn["vrvid"].setEnabled(bool(vr.get("videos")))
         sheet = self._sheet(d, rep)
         self.btn["views"].setEnabled(sheet is not None)
+        self.btn["rebuild"].setEnabled(bool(self._candidate_groups(d, rep)))
         extra = (rep.get("backend") or {}).get("extra") or {}
         html = [f"<h3>{Path((rep.get('input') or {}).get('path', '')).name}</h3>",
                 f"<p>Status: <b>{rep.get('status')}</b> · backend: {(rep.get('backend') or {}).get('name', '—')}"
@@ -700,6 +780,8 @@ class ResultsPage(QWidget):
             open_path(vr["stills"][0]["image"])
         elif key == "vrvid" and vr.get("videos"):
             open_path(vr["videos"][0]["path"])
+        elif key == "rebuild":
+            self.rebuild_with_picks(d, rep)
         elif key == "views" and self._sheet(d, rep):
             open_path(self._sheet(d, rep))
         elif key == "folder":

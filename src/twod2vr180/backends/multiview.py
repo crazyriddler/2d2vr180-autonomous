@@ -59,9 +59,19 @@ class MultiViewBackend(Backend):
     # ------------------------------------------------------------------ run
     def run(self, inp: JobInput, ctx: BackendContext, options: dict, progress, cancel) -> BackendResult:
         frames = list(inp.frames)
+        flags = list(options.get("generated_flags") or [])
+        flags = (flags + [False] * len(frames))[:len(frames)]
         ref = min(int(options.get("reference_frame_index", 0)), len(frames) - 1)
         frames.insert(0, frames.pop(ref))  # the reference view defines the scene frame
-        views = [{"path": str(p), "generated": False, "weight": 1.0} for p in frames]
+        flags.insert(0, flags.pop(ref))
+        views = [{"path": str(p), "generated": bool(g), "weight": 1.0} for p, g in zip(frames, flags)]
+        if any(flags) and not flags[0]:
+            # a photo plus AI views (e.g. rebuilt with the user's own picks): same settings as Real 3D
+            w_in = max(4.0, len(views) / 10)
+            views[0]["weight"] = w_in
+            mode = options.get("mode", "auto")
+            options = {**options, "max_side": {"fast": 960, "auto": 1280, "quality": 1600}.get(mode, 1280),
+                       "sh_degree": 1}
         return self.reconstruct(views, inp, ctx, options, progress, cancel)
 
     def score(self, views: list[dict], inp: JobInput, ctx: BackendContext, options: dict, progress, cancel,

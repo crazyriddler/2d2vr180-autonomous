@@ -1,3 +1,16 @@
+# 2D2VR180 1.0.0-rc24 — rebuild with your own picks
+
+## What's new in rc24
+
+- **Results → Rebuild with my picks…** For a "Real 3D from one photo" result:
+  - For every AI angle you pick which candidate to use, or untick the angle to leave it out. The automatic
+    choice is preselected, with a thumbnail.
+  - The 3D is then rebuilt from your photo and those views by the multi-view engine. Nothing is generated
+    again, so it takes minutes, not the full run.
+  - Your picks are still labelled as AI views: they weigh less than your photo and are marked *generative*.
+- The multi-view engine has a dry-run mode, so the whole new flow (candidate selection, Depth Anything 3,
+  MoGe-2 priors, confidence maps) can be checked end to end without a GPU.
+
 # 2D2VR180 1.0.0-rc23 — weak AI views are retried automatically
 
 ## What's new in rc23
@@ -367,8 +380,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc23-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc23-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc24-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 
