@@ -1,4 +1,14 @@
-# 2D2VR180 1.0.0-rc28 — finer AI views in Quality mode
+# 2D2VR180 1.0.0-rc29 — more detail in hair and fabric
+
+## What's new in rc29
+
+- **Finer texture in the 3D.** Training adds splats where detail is missing.
+  - Before, that check summed the image error signals, and in fine texture (hair, fabric, foliage)
+    opposite signals cancelled out, so those areas stayed blurry.
+  - It now uses their absolute size (AbsGS, as in gsplat's reference trainer), so fine texture gets the
+    splats it needs.
+  - The splat limit per quality mode is unchanged. If the GPU runs out of memory, training retries smaller
+    as before.
 
 ## What's new in rc28
 
@@ -423,7 +433,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc28-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc29-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |

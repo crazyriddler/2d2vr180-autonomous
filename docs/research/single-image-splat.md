@@ -60,6 +60,7 @@ personal/research profile).
 | rc26 | Per-view colour correction (appearance) for generated views; OBJ fused from the trained splat |
 | rc27 | Joint camera refinement (SE(3)) of generated views during training |
 | rc28 | Quality: 8-step Lightning LoRA for Qwen views; camera refinement for real multi-photo sets |
+| rc29 | AbsGS densification (absolute screen-space gradients) |
 
 ### Evaluated and deferred
 
