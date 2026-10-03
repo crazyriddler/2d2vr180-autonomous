@@ -14,17 +14,13 @@ import urllib.parse
 import urllib.request
 
 HF_REPOS = [
-    "Qwen/Qwen-Image-Edit-2511", "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
-    "lightx2v/Qwen-Image-Edit-2511-Lightning", "unsloth/Qwen-Image-Edit-2511-GGUF",
-    "QuantStack/Qwen-Image-Edit-2511-GGUF",
+    "depth-anything/DA3NESTED-GIANT-LARGE-1.1", "depth-anything/DA3-LARGE-1.1", "depth-anything/DA3-BASE",
 ]
-HF_SEARCH = ["Qwen-Image-Edit-2511 gguf", "Qwen-Image-Edit-2511-Multiple-Angles"]
-GGUF_HEADERS = [  # tensor names of GGUF files (read from the first MiBs, not downloaded)
-    "unsloth/Qwen-Image-Edit-2511-GGUF/qwen-image-edit-2511-Q5_K_M.gguf",
-]
+HF_SEARCH = ["DA3NESTED", "depth-anything DA3"]
+GGUF_HEADERS: list[str] = []
 HF_TEXT = [  # small files whose content is needed (configs, model cards)
-    "Qwen/Qwen-Image-Edit-2511/transformer/config.json", "Qwen/Qwen-Image-Edit-2511/model_index.json",
-    "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA/README.md",
+    "depth-anything/DA3NESTED-GIANT-LARGE-1.1/config.json", "depth-anything/DA3NESTED-GIANT-LARGE-1.1/README.md",
+    "depth-anything/DA3-BASE/config.json",
 ]
 URLS: list[str] = []  # non-HF downloads: hashed by streaming
 
