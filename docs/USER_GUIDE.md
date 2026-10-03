@@ -59,7 +59,8 @@ verified (SHA256) before use.
        and builds the 3D:
        - your photo's part is one splat per photo pixel, with the photo's own colours, so it keeps its detail;
        - the AI views only add what the photo does not show, so there are no double copies;
-       - a short polish adjusts only colours and opacities, and absorbs small misalignments of the AI views.
+       - this raw Depth Anything 3 splat is the result as it is: no training or cleanup afterwards. The same
+         applies to every multi-view job when Depth Anything 3 can take the images (up to 32 of the same shape).
      - **FlashWorld** (optional, Components, ~35 GB; choose it under *Generative engine*) generates the whole
        3D directly from the photo instead.
      - **Results → AI views overview** shows every candidate, its score and which one was used.

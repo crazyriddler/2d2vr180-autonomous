@@ -221,6 +221,16 @@ def test_several_photos_become_one_multiview_scene(ctx, rtx4080, tmp_path, monke
     assert rep["outputs"]["vr180"]["stills"]
     tt = rep["backend"]["extra"]["turntable"]
     assert tt and Path(tt).name == "turntable.mp4" and Path(tt).stat().st_size > 0
+    assert req["assembly"] == "fusion"                             # no Depth Anything 3 installed
+    # with Depth Anything 3, several real photos also give its raw splat (fusion only as fallback)
+    from conftest import install_fake_model
+
+    install_fake_model(ctx.models, "da3-nested-giant-large")
+    job, rep, _ = run_job(ctx, rtx4080, paths, mode="fast", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    req = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert req["assembly"] == "ff" and req["ff_fallback"] == "fusion" and req["ff_polish"] is False
+    assert rep["backend"]["extra"]["assembly"] == "ff-raw"
 
 
 def test_folder_of_photos_is_expanded(tmp_path):
@@ -462,7 +472,7 @@ def test_quality_uses_the_8_step_lightning_lora_when_installed(ctx, rtx4080, pho
     assert ("qwen-edit-2511-lightning-8" in ids) == with_8
 
 
-def test_real3d_uses_the_feedforward_splat_when_depth_anything_3_is_installed(ctx, rtx4080, photo, monkeypatch):
+def test_real3d_outputs_the_raw_feedforward_splat_when_depth_anything_3_is_installed(ctx, rtx4080, photo, monkeypatch):
     from conftest import install_fake_model
 
     _fake_generative(monkeypatch)
@@ -471,12 +481,11 @@ def test_real3d_uses_the_feedforward_splat_when_depth_anything_3_is_installed(ct
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "ff" and mv["ff_refine_steps"] == 3000 and mv["pose_engine"] == "da3"
+    assert mv["assembly"] == "ff" and mv["pose_engine"] == "da3" and mv["ff_polish"] is False
     extra = rep["backend"]["extra"]
-    assert extra["assembly"] == "ff"
-    assert Path(extra["feedforward_ply"]).name == "scene_feedforward.ply" and Path(extra["feedforward_ply"]).exists()
-    assert Path(extra["turntable_feedforward"]).name == "turntable_feedforward.mp4"
-    assert "feed-forward" in rep["coverage"]["note"]
+    assert extra["assembly"] == "ff-raw"                       # the raw DA3 splat is the VR result
+    assert extra["feedforward_ply"] is None                    # nothing else to compare with
+    assert "unprocessed" in rep["coverage"]["note"]
 
 
 def test_real3d_generates_the_3d_directly_with_flashworld_when_installed(ctx, rtx4080, photo, monkeypatch):

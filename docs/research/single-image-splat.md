@@ -55,6 +55,11 @@ below improves one link of that chain.
     the half-width, with 24 control points along the long side. It is applied to the render before the
     loss, so local misalignments of AI views are absorbed instead of averaged into blur.
   - Qwen is the default engine again. FlashWorld can still be chosen as the generative engine.
+- **rc37 feedback: "the raw DA3 splat is the splat".** The owner asked to drop all processing and use the raw
+  DA3 splat as the VR output, for every multi-view job (photo + AI views, 360°, multi-photo). Since rc38 the
+  worker writes the feed-forward splat as the scene: no training, no cleanup. The photo layer and duplicate
+  removal stay, as part of building it. Without DA3, or when DA3 cannot take the views, the assembly asked
+  for before is used. The colour polish is still available internally (`ff_polish`), off by default.
 - **New strategy (rc34+): generate the 3D directly.** FlashWorld (ICLR 2026 oral, code Apache-2.0, weights
   CC BY-NC-SA 4.0) is fine-tuned from Wan2.2-TI2V-5B. At every denoising step it decodes 3D Gaussians and
   renders them back into the model, so every view comes from one 3D. Inputs: one image, a text prompt and

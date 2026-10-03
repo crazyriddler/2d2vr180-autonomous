@@ -109,11 +109,16 @@ class MultiViewBackend(Backend):
         if da3:
             req.update(pose_engine="da3", da3_dir=str(ctx.models.model_dir(DA3_MODEL)),
                        da3_res=DA3_RES.get(mode, 504))
-            if assembly == "train" and any(v.get("generated") for v in views) and options.get("feedforward", True):
-                # photo + generated views: Depth Anything 3's feed-forward splat fuses them coherently;
-                # training from scratch on 4 slightly inconsistent views ghosts (owner tests, rc30-rc32)
+            if options.get("feedforward", True):
+                # Depth Anything 3's raw feed-forward splat is the result whenever DA3 can take the views
+                # (owner, rc37: it looks better than any trained / fused / polished version), for photos,
+                # generated views and multi-photo sets alike; the worker falls back to `ff_fallback`
+                # when DA3 cannot (too many views, mixed image shapes)
                 req["assembly"] = "ff"
+                req["ff_fallback"] = assembly
                 req["ff_refine_steps"] = int(options.get("ff_refine_steps", FF_REFINE.get(mode, 3000)))
+                # the raw splat is the result (owner, rc37: any processing looked worse)
+                req["ff_polish"] = bool(options.get("ff_polish", False))
         if assembly == "fusion":
             ref_side, gen_side, req["max_gaussians"] = FUSION.get(mode, FUSION["auto"])
             req.update(fuse_ref_side=ref_side, fuse_side=gen_side)
@@ -141,8 +146,10 @@ class MultiViewBackend(Backend):
                     f"(observed colours, network-predicted depth; {p.get('inferred', 0):,}); surfaces added from "
                     f"generated views are GENERATIVE ({p.get('generative', 0):,}).")
         else:
-            note = ("Depth Anything 3 feed-forward splat (the photo's own pixels in front, generated views only "
-                    "where the photo does not see), colours polished: " if res.get("assembly") == "ff" else "")
+            note = {"ff": "Depth Anything 3 feed-forward splat (the photo's own pixels in front, generated views "
+                          "only where the photo does not see), colours polished: ",
+                    "ff-raw": "Depth Anything 3 feed-forward splat, unprocessed (the photo's own pixels in front, "
+                              "generated views only where the photo does not see): "}.get(res.get("assembly"), "")
             note += (f"Trained on {res.get('views')} views ({res.get('real_views')} real). Splats seen by two or more "
                     f"real views are OBSERVED ({p.get('observed', 0):,}), by one real view INFERRED "
                     f"({p.get('inferred', 0):,})")

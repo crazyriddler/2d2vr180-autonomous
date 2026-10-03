@@ -1,4 +1,20 @@
-# 2D2VR180 1.0.0-rc37 — Real 3D: back to AI views, with your photo's full detail
+# 2D2VR180 1.0.0-rc38 — The raw Depth Anything 3 splat is the result
+
+## What's new in rc38
+
+- **No more processing of the 3D.** In your tests, the raw Depth Anything 3 splat looked better than any
+  trained, polished or fused version. So whenever Depth Anything 3 is installed and can take the images,
+  its raw splat is the scene: the VR180 output, the PLY/SPLAT export and the turntable.
+  - This applies to every multi-view job: Real 3D from one photo, 360° around the subject, and several
+    photos of the same scene.
+  - The splat is not trained afterwards, and no splats are removed in a cleanup step.
+  - What rc37 added is kept, because it is part of how the raw splat is built, not processing on top: the
+    photo layer (one splat per photo pixel) and the removal of duplicate copies.
+  - The separate *Turntable: raw DA3 splat* button is no longer needed: *Play turntable* now shows it.
+- Without Depth Anything 3, or with more than 32 images or images of different shapes (long videos, for
+  example), the previous method is used.
+
+## rc37: Real 3D: back to AI views, with your photo's full detail
 
 ## What's new in rc37
 

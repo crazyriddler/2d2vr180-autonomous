@@ -1078,7 +1078,8 @@ def subject_setup(req, items, max_side, device, torch):
     from the subject alone, and letting generated views teach only the subject, avoids a 3D torn
     between the two (the photo alone provides the background)."""
     if (str(req.get("subject_mode", "auto")) == "off" or not req.get("moge_path")
-            or req.get("assembly") == "fusion" or not any(it.get("generated") for it in items)):
+            or "fusion" in (req.get("assembly"), req.get("ff_fallback"))
+            or not any(it.get("generated") for it in items)):
         return None
     paths = []
     for it in items:
@@ -1216,6 +1217,13 @@ def main(req):
         model = try_load_da3(req["da3_dir"], device, torch)
         if model is None:
             masks = None
+
+    if req.get("assembly") == "ff" and model is None:
+        req = dict(req, assembly=req.get("ff_fallback", "train"))   # no DA3: the assembly asked for before
+        fusion_mode = req["assembly"] == "fusion"
+        if fusion_mode and device == "cpu" and not (poses_only or req.get("allow_cpu")):
+            emit("error", code="cuda_unavailable", message="Multi-view reconstruction needs an NVIDIA GPU (CUDA).")
+            sys.exit(1)
 
     def mk(path):
         return masks.get(path) if masks else None
@@ -1408,7 +1416,10 @@ def main(req):
                          max_gaussians=int(req.get("max_gaussians", 2_000_000)),
                          init_points=int(req.get("init_points", 400000)))
     ff_raw = None
-    if ff_init is not None:
+    # The owner's verdict (rc37): the raw DA3 splat looks better than any processing of it, so by
+    # default it IS the result - no training, no cleanup ("ff_polish" brings the colour polish back).
+    raw_final = ff_init is not None and not req.get("ff_polish", False)
+    if ff_init is not None and not raw_final:
         # the feed-forward splat keeps each view's detail; training it like a scratch splat blurred it
         # (owner, rc33: the raw DA3 splat looked better than the polished one). The polish now only
         # adjusts colours and opacities - a ghost copy that the other views contradict fades out -
@@ -1446,7 +1457,11 @@ def main(req):
     # ... and AI-drawn views are each a few pixels off locally (a hand, an ear): a smooth per-view
     # image alignment absorbs that instead of averaging the copies into blur
     view_flow = [bool(it.get("generated")) for it in items] if req.get("view_flow", True) else None
-    for attempt in range(3):
+    app_out, pose_out, flow_out, hist = [], [], [], []
+    if raw_final:
+        params = st.params_from_gaussians(ff_init, cfg, "cuda")
+        log(f"raw Depth Anything 3 splat used as the result ({len(ff_init['means']):,} Gaussians, not trained)")
+    for attempt in range(0 if raw_final else 3):
         oom = False
         app_out, pose_out, flow_out = [], [], []
         try:
@@ -1508,7 +1523,7 @@ def main(req):
 
     # ------------------------------------------------------------ cleanup
     sizes = [(im.shape[1], im.shape[0]) for im in train_imgs]
-    if req.get("cleanup", True):
+    if req.get("cleanup", True) and not raw_final:
         progress(0.87, "removing floaters and splats no view has seen")
         with torch.no_grad():
             keep = st.cleanup_mask(params, c2ws, Ks, sizes)
@@ -1611,7 +1626,7 @@ def main(req):
          reference_psnr_db=round(ref_psnr, 2), splats=count, mesh=mesh_info, loss_history=hist[-20:],
          candidate_selection=selection,
          pose_refinement=pose_refined, subject_mode=bool(masks), view_alignment=view_alignment,
-         assembly="ff" if ff_init is not None else "train",
+         assembly=("ff-raw" if raw_final else "ff") if ff_init is not None else "train",
          colour_correction=[None if a is None else {"gain": [round(a[0][c][c], 3) for c in range(3)],
                                                     "offset": [round(x, 3) for x in a[1]]} for a in app_out],
          provenance={"observed": int((counts_np == 0).sum()), "inferred": int((counts_np == 1).sum()),
