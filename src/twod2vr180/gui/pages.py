@@ -24,6 +24,22 @@ MODE_HELP = {
     "quality": "Largest models and highest resolution. Slower.",
     "fast": "Small models, quick preview-quality results.",
 }
+# "What do you want to make?" — each preset sets the advanced reconstruction controls.
+PRESETS = {
+    "real3d": ("Real 3D from one photo (recommended)",
+               "AI makes 3 more views (45° left, 45° right, from above), then the multi-view engine reconstructs "
+               "real volume and scale from all four. Needs the Qwen-Image-Edit and Multi-view components."),
+    "quick": ("Quick 3D",
+              "Depth from the photo alone (MoGe-2 / SHARP). Seconds; sharp from the front, flat from the side."),
+    "around": ("360° around the subject (experimental)",
+               "AI invents the sides, back, top and bottom; assembled with sharp fusion."),
+    "custom": ("Custom", "Choose every setting yourself under Advanced options."),
+}
+PRESET_VALUES = {
+    "real3d": {"generative": "tri", "engine": "auto", "assembly": "train", "backend": None},
+    "quick": {"generative": "off", "engine": "auto", "assembly": "fusion", "backend": None},
+    "around": {"generative": "capture", "engine": "auto", "assembly": "fusion", "backend": None},
+}
 PROVENANCE_HELP = ("<b>Observed</b>: reconstructed from several views. <b>Inferred</b>: seen in the input but its "
                    "depth is predicted by a network. <b>Interpolated</b>: small gaps filled from neighbouring "
                    "background. <b>Unknown</b>: never seen — shown black, never invented.")
@@ -164,45 +180,71 @@ class CreatePage(QWidget):
         top.addLayout(left, 3)
 
         opts = QVBoxLayout()
-        qbox = QGroupBox("Quality")
-        ql = QVBoxLayout(qbox)
-        self.mode_group = QButtonGroup(self)
-        for m in ("auto", "quality", "fast"):
-            rb = QRadioButton(f"{m.capitalize()} — {MODE_HELP[m]}")
-            rb.setProperty("mode", m)
-            self.mode_group.addButton(rb)
-            ql.addWidget(rb)
-            if m == win.settings.mode:
+        # ---- the one choice most people need
+        pbox = QGroupBox("What do you want to make?")
+        pl = QVBoxLayout(pbox)
+        self.preset_group = QButtonGroup(self)
+        for key, (title, text) in PRESETS.items():
+            rb = QRadioButton(title)
+            rb.setProperty("preset", key)
+            rb.setToolTip(text)
+            self.preset_group.addButton(rb)
+            pl.addWidget(rb)
+            sub = note(text)
+            sub.setContentsMargins(22, 0, 0, 4)
+            pl.addWidget(sub)
+            if key == win.settings.preset:
                 rb.setChecked(True)
-        self.mode_group.buttonToggled.connect(self._save_opts)
-        opts.addWidget(qbox)
+        self.preset_group.buttonToggled.connect(self._preset_changed)
+        opts.addWidget(pbox)
 
-        obox = QGroupBox("Outputs")
-        of = QFormLayout(obox)
-        of.addRow(QLabel("Always: 3D Gaussian splat (.ply, .splat) and, when available, a textured mesh (.obj)."))
-        self.vr = QCheckBox("VR180 stereo")
+        qrow = QHBoxLayout()
+        qrow.addWidget(QLabel("Quality"))
+        self.quality = QComboBox()
+        for m in ("auto", "quality", "fast"):
+            self.quality.addItem(f"{m.capitalize()} — {MODE_HELP[m]}", m)
+        self.quality.setCurrentIndex(max(self.quality.findData(win.settings.mode), 0))
+        self.quality.currentIndexChanged.connect(self._save_opts)
+        qrow.addWidget(self.quality, 1)
+        self.vr = QCheckBox("Also make VR180")
         self.vr.setChecked(win.settings.vr180)
+        self.vr.toggled.connect(self._save_opts)
+        qrow.addWidget(self.vr)
+        opts.addLayout(qrow)
+
+        self.adv_btn = QPushButton("Advanced options ▸")
+        self.adv_btn.setCheckable(True)
+        self.adv_btn.setFlat(True)
+        self.adv_btn.toggled.connect(self._toggle_advanced)
+        opts.addWidget(self.adv_btn, 0, Qt.AlignLeft)
+
+        # ---- everything else
+        self.advanced = QWidget()
+        al = QVBoxLayout(self.advanced)
+        al.setContentsMargins(0, 0, 0, 0)
+        obox = QGroupBox("VR180 output")
+        of = QFormLayout(obox)
         self.sbs = QCheckBox("Side-by-side (LR)")
         self.sbs.setChecked(win.settings.layout_sbs)
         self.tb = QCheckBox("Top/bottom (TB)")
         self.tb.setChecked(win.settings.layout_tb)
         row = QHBoxLayout()
-        for w in (self.vr, self.sbs, self.tb):
+        for w in (self.sbs, self.tb):
             row.addWidget(w)
             w.toggled.connect(self._save_opts)
-        of.addRow(row)
+        of.addRow("Layouts", row)
         self.projection = QComboBox()
         self.projection.addItem("VR180 (180° half-equirectangular)", "equirect180")
         self.projection.addItem("Flat 3D (source field of view)", "flat")
         self.projection.setCurrentIndex(0 if win.settings.projection == "equirect180" else 1)
         self.projection.currentIndexChanged.connect(self._save_opts)
         of.addRow("Projection", self.projection)
-        self.backend = QComboBox()
-        of.addRow("Backend", self.backend)
-        opts.addWidget(obox)
+        al.addWidget(obox)
 
-        gbox = QGroupBox("3D reconstruction")
+        gbox = QGroupBox("Reconstruction (Custom)")
         gf = QFormLayout(gbox)
+        self.backend = QComboBox()
+        gf.addRow("Backend", self.backend)
         self.generative = QComboBox()
         for label, val in (("Off — only what the photo shows", "off"),
                            ("3 views (Qwen) — 45° left, 45° right, high angle → multi-view", "tri"),
@@ -214,20 +256,9 @@ class CreatePage(QWidget):
                            ("Spiral — small, faithful extension", "spiral")):
             self.generative.addItem(label, val)
         self.generative.setCurrentIndex(max(self.generative.findData(win.settings.generative), 0))
-        self.generative.setToolTip("Generative 3D (photos): a video model (Wan 2.2) films new camera moves around "
-                                   "the photo, then they are assembled into one 3D scene. Invented parts are "
-                                   "labelled 'generative'. Needs the Generative and Multi-view engines (12 GB+ GPU).")
+        self.generative.setToolTip("Generative 3D (photos): an AI model makes the photo's other views, then they "
+                                   "are assembled into one 3D scene. Invented parts are labelled 'generative'.")
         gf.addRow("Photo: generative 3D", self.generative)
-        self.assembly = QComboBox()
-        for label, val in (("Sharp fusion — MoGe-2 geometry per view, as sharp as a single photo", "fusion"),
-                           ("Trained splat — one optimised model (smoother, softer)", "train")):
-            self.assembly.addItem(label, val)
-        self.assembly.setCurrentIndex(max(self.assembly.findData(win.settings.gen_assembly), 0))
-        self.assembly.setToolTip("How the generated views become 3D. Sharp fusion keeps the photo exactly as it is "
-                                 "and adds only what the other views show (sides, top, underside). Trained splat "
-                                 "fits one model to every view: smoother transitions, but generated views' small "
-                                 "differences blur it.")
-        gf.addRow("Generative 3D assembly", self.assembly)
         self.engine = QComboBox()
         for label, val in (("Automatic — Qwen if installed, then Wan 2.2", "auto"),
                            ("Qwen-Image-Edit — sharp ~1 MP images per angle", "qwen"),
@@ -235,9 +266,13 @@ class CreatePage(QWidget):
                            ("Stable Virtual Camera — scenes/objects (not people)", "seva")):
             self.engine.addItem(label, val)
         self.engine.setCurrentIndex(max(self.engine.findData(win.settings.gen_engine), 0))
-        self.engine.setToolTip("Which model invents the other views. Qwen draws each angle as a sharp still "
-                               "image; Wan films the camera moving and the frames at those angles are used.")
         gf.addRow("Generative engine", self.engine)
+        self.assembly = QComboBox()
+        for label, val in (("Sharp fusion — MoGe-2 geometry per view, as sharp as a single photo", "fusion"),
+                           ("Trained splat — one optimised model (multi-view engine)", "train")):
+            self.assembly.addItem(label, val)
+        self.assembly.setCurrentIndex(max(self.assembly.findData(win.settings.gen_assembly), 0))
+        gf.addRow("Generative 3D assembly", self.assembly)
         self.video_mode = QComboBox()
         for label, val in (("Automatic (analyse the video)", "auto"),
                            ("Whole video → one 3D scene (camera moves)", "multiview"),
@@ -255,10 +290,15 @@ class CreatePage(QWidget):
         self.sequence.setChecked(win.settings.export_sequence)
         self.sequence.toggled.connect(self._save_opts)
         gf.addRow("", self.sequence)
-        for w in (self.generative, self.assembly, self.engine, self.video_mode):
-            w.currentIndexChanged.connect(self._save_opts)
+        for w in (self.generative, self.assembly, self.engine, self.backend):
+            w.currentIndexChanged.connect(self._custom_changed)
+        self.video_mode.currentIndexChanged.connect(self._save_opts)
         self.combine.toggled.connect(self._save_opts)
-        opts.addWidget(gbox)
+        al.addWidget(gbox)
+        self.advanced.setVisible(False)
+        opts.addWidget(self.advanced)
+        opts.addStretch(1)
+        self._applying = False
         top.addLayout(opts, 2)
         v.addLayout(top)
 
@@ -294,6 +334,8 @@ class CreatePage(QWidget):
         v.addWidget(split, 1)
         self.bars: dict[str, QProgressBar] = {}
         self.refresh_backends()
+        if self.preset() in PRESET_VALUES:    # the preset decides the reconstruction controls
+            self._preset_changed(self.preset_group.checkedButton(), True)
 
     # -------------------------------------------------------------- state
     def refresh_backends(self):
@@ -325,17 +367,67 @@ class CreatePage(QWidget):
         elif not any(self.win.ctx.models.is_installed(m) for m in
                      ("moge-2-vitl-normal", "moge-2-vits-normal", "depth-anything-v2-small", "sharp")):
             msgs.append("No reconstruction model is installed yet.")
+        if getattr(self, "preset_group", None) is not None and self.preset() in ("real3d", "around"):
+            from ..backends.generative import installed
+
+            ctx = self.win.ctx
+            need = []
+            if not (installed(ctx, "qwen") or (self.preset() == "around" and installed(ctx, "wan"))):
+                need.append("Qwen-Image-Edit-2511 + Multiple-Angles" if self.preset() == "real3d"
+                            else "Qwen-Image-Edit or Wan 2.2")
+            if not all(m in ctx.models.entries and ctx.models.is_installed(m) for m in ("vggt-1b", "moge-2-vitl-normal")):
+                need.append("the multi-view models (VGGT, MoGe-2 Large)")
+            if need:
+                msgs.append(f"'{PRESETS[self.preset()][0]}' needs {' and '.join(need)} — until they are installed, "
+                            "Quick 3D is used.")
         self.banner.setText(" ".join(msgs))
         self.banner.setVisible(bool(msgs))
         self.banner_btn.setVisible(bool(msgs))
 
     def mode(self) -> str:
-        b = self.mode_group.checkedButton()
-        return b.property("mode") if b else "auto"
+        return self.quality.currentData() or "auto"
+
+    def preset(self) -> str:
+        b = self.preset_group.checkedButton()
+        return b.property("preset") if b else "real3d"
+
+    def _toggle_advanced(self, on: bool):
+        self.advanced.setVisible(on)
+        self.adv_btn.setText("Advanced options ▾" if on else "Advanced options ▸")
+
+    def _preset_changed(self, button, checked):
+        if not checked:
+            return
+        key = button.property("preset")
+        values = PRESET_VALUES.get(key)
+        if values:   # write the preset into the advanced controls
+            self._applying = True
+            for combo, val in ((self.generative, values["generative"]), (self.engine, values["engine"]),
+                               (self.assembly, values["assembly"]), (self.backend, values["backend"])):
+                combo.setCurrentIndex(max(combo.findData(val), 0))
+            self._applying = False
+        else:
+            self.adv_btn.setChecked(True)
+        self._save_opts()
+        self.update_banner()
+
+    def _custom_changed(self, *a):
+        if self._applying:
+            return
+        cur = {"generative": self.generative.currentData(), "engine": self.engine.currentData(),
+               "assembly": self.assembly.currentData(), "backend": self.backend.currentData()}
+        match = next((k for k, v in PRESET_VALUES.items() if v == cur), "custom")
+        for b in self.preset_group.buttons():
+            if b.property("preset") == match and not b.isChecked():
+                self.preset_group.blockSignals(True)
+                b.setChecked(True)
+                self.preset_group.blockSignals(False)
+        self._save_opts()
 
     def _save_opts(self, *a):
         s = self.win.settings
         s.mode = self.mode()
+        s.preset = self.preset()
         s.vr180 = self.vr.isChecked()
         s.layout_sbs = self.sbs.isChecked()
         s.layout_tb = self.tb.isChecked()

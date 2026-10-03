@@ -1,3 +1,22 @@
+# 2D2VR180 1.0.0-rc18 — simpler Create page
+
+## What's new in rc18
+
+- **A simpler Create page.** One question, *What do you want to make?*:
+  - **Real 3D from one photo (recommended).** AI makes 3 views (45° left, 45° right, from above). The
+    multi-view engine then reconstructs real volume and scale from all four, as a trained splat. In Auto and
+    Quality the most consistent candidate per angle is chosen automatically.
+  - **Quick 3D.** Depth from the photo alone; takes seconds.
+  - **360° around the subject (experimental).** The sides, back, top and bottom are invented and
+    assembled with sharp fusion.
+  - **Custom.** Every setting under *Advanced options*.
+- **Quality and VR180 are on one line.** Layouts, projection, backend, generative mode, engine, assembly,
+  video mode, combining photos and 4D sequence are all folded into **Advanced options**.
+- **A clear warning before you start.** If the chosen option needs a component that is not installed yet (for
+  example Qwen-Image-Edit or the multi-view models), the yellow banner says so.
+- Radio buttons are easier to see in the dark theme.
+- New research and roadmap document: `docs/research/single-image-splat.md`.
+
 # 2D2VR180 1.0.0-rc17 — 3 views (Qwen) → multi-view, most consistent view chosen automatically
 
 ## What's new in rc17
@@ -263,8 +282,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc17-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc17-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc18-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc18-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 
