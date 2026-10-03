@@ -16,3 +16,12 @@ scikit-learn
 open3d==0.18.0
 trimesh
 viser
+# Depth Anything 3 inference (package copied from its commit archive; exporters/pose alignment stubbed)
+addict
+omegaconf
+# FlashWorld (single image -> 3D Gaussians): vendored in workers/flashworld
+diffusers==0.36.0  # 0.37 needs torch >= 2.5 (custom_op schema); 0.36.0 verified with torch 2.4.1
+transformers
+accelerate
+sentencepiece
+ftfy

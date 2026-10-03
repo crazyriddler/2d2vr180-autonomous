@@ -30,7 +30,8 @@ class Settings:
     setup_completed: bool = False
     vr_help_seen: bool = False
     check_updates: bool = False                  # no network access unless the user enables it
-    generative: str = "off"                      # off | arc | orbit | explore | spiral
+    preset: str = "real3d"                       # real3d | quick | around | custom (Create page choice)
+    generative: str = "off"                      # off | tri | capture | arc | orbit | explore | spiral
     gen_assembly: str = "fusion"                 # fusion | train
     gen_engine: str = "auto"                     # auto | qwen | wan | seva
     video_mode: str = "auto"                     # auto | multiview | per_frame | best_frame
@@ -57,10 +58,12 @@ class Settings:
             self.mode = "auto"
         if self.renderer not in ("auto", "gpu", "cpu"):
             self.renderer = "auto"
-        if self.generative not in ("off", "stereo", "capture", "arc", "orbit", "explore", "spiral"):
+        if self.generative not in ("off", "tri", "capture", "arc", "orbit", "explore", "spiral"):
             self.generative = "off"
         if self.gen_assembly not in ("fusion", "train"):
             self.gen_assembly = "fusion"
+        if self.preset not in ("real3d", "quick", "around", "custom"):
+            self.preset = "real3d"
         if self.gen_engine not in ("auto", "qwen", "wan", "seva"):
             self.gen_engine = "auto"
         if self.video_mode not in ("auto", "multiview", "per_frame", "best_frame"):

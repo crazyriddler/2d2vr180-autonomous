@@ -58,6 +58,7 @@ class JobOptions:
     generative: str = "off"              # off | capture | arc | orbit | explore | spiral: invent unseen views
     gen_assembly: str = "fusion"         # fusion (sharp: MoGe-2 per view, merged) | train (one optimised splat)
     gen_engine: str = "auto"             # auto | qwen | wan | seva: model that invents the other views
+    generated_inputs: list = field(default_factory=list)   # inputs that are AI views (rebuild with own picks)
     ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
 
 
@@ -278,7 +279,16 @@ class JobRunner:
 
             # ---------------------------------------------------- select
             sel = None
-            if (opts.generative != "off" and not opts.backend
+            assembly = opts.gen_assembly
+            wants_mv = opts.backend == "multiview" and kind == "photo"
+            if wants_mv and opts.generative == "off":
+                raise BackendError("Multi-view needs several photos of the same scene. For a single photo, choose "
+                                   "a generative mode (for example '3 views') to create the other views first.",
+                                   code="bad_input")
+            if wants_mv:
+                assembly = "train"   # generated views + photo → the multi-view engine's trained splat
+                log("multi-view backend on one photo: generating the views first, then a trained multi-view splat")
+            if (opts.generative != "off" and (not opts.backend or wants_mv)
                     and (kind == "photo" or inp.video_kind == "static_scene")):
                 sel = select(inp, hw, self.ctx, opts.mode, "generative_scene")
                 if sel.backend is None:
@@ -324,7 +334,8 @@ class JobRunner:
             ref_index = report.get("processing", {}).get("reference_frame_index", 0)
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index,
                      "trajectory": opts.generative if opts.generative != "off" else None,
-                     "assembly": opts.gen_assembly, "engine": opts.gen_engine,
+                     "assembly": assembly, "engine": opts.gen_engine,
+                     "generated_flags": [str(p) in {str(g) for g in opts.generated_inputs} for p in job.inputs],
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
             if bopts["hfov_deg"]:
                 log(f"EXIF field of view: {bopts['hfov_deg']:.1f}°")

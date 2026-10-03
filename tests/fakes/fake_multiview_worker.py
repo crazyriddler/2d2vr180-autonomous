@@ -20,6 +20,17 @@ def main(req):
 
     emit("env", torch=None, cuda="12.4", cuda_available=True, device="fake")
     views = req["images"]
+    if req.get("score_only"):
+        # the first generated angle looks inconsistent; the others are fine
+        sel = []
+        for k, v in enumerate([v for v in views if v.get("generated")]):
+            sc = 0.9 if k == 0 else 0.2
+            sel.append({"view": v.get("label"), "chosen": os.path.basename(v["candidates"][0]),
+                        "scores": {os.path.basename(c): sc for c in v["candidates"]}})
+        with open(os.path.join(os.path.dirname(req["output_dir"]), "score_request.json"), "w") as f:
+            json.dump(req, f)
+        emit("result", score_only=True, camera_engine="vggt", candidate_selection=sel)
+        return
     frames = [os.path.basename(v["path"]) for v in views]
     h, w, f = 90, 120, 100.0
     ys, xs = np.mgrid[0:h, 0:w]
@@ -39,9 +50,21 @@ def main(req):
              "file": fr, "generated": bool(views[i].get("generated"))} for i, fr in enumerate(frames)]
     with open(os.path.join(out, "cameras.json"), "w") as fh:
         json.dump(cams, fh)
+    tt = os.path.join(out, "turntable")
+    os.makedirs(tt, exist_ok=True)
+    from PIL import Image
+    for i in range(6):
+        Image.fromarray(np.roll(img, i * 10, axis=1)).resize((128, 96)).save(os.path.join(tt, f"frame_{i:03d}.jpg"))
+    outputs = {"ply": str(ply), "cameras": os.path.join(out, "cameras.json"), "turntable_frames": tt}
+    if req.get("assembly") == "ff":       # the real worker's feed-forward comparison outputs
+        import shutil
+
+        outputs["ply_feedforward"] = shutil.copy(ply, os.path.join(out, "scene_feedforward.ply"))
+        outputs["turntable_feedforward_frames"] = shutil.copytree(tt, os.path.join(out, "turntable_feedforward"))
     progress(1.0, "fake multiview done")
     n = len(sc)
-    emit("result", outputs={"ply": str(ply), "cameras": os.path.join(out, "cameras.json")}, vram_peak_mib=None,
+    emit("result", outputs=outputs, assembly=req.get("assembly", "train"),
+         vram_peak_mib=None,
          metric=True, views=len(views), real_views=sum(not v.get("generated") for v in views),
          provenance={"observed": n - (n // 3 if gen else 0), "inferred": 0, "generative": n // 3 if gen else 0})
 

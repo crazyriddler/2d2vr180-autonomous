@@ -19,8 +19,8 @@ from .base import (NOVEL_VIEW_COMPLETION, SCENE_STATIC, SINGLE_VIEW, Availabilit
 from .multiview import MultiViewBackend
 
 TRAJECTORIES = {
-    "stereo": "stereo pair: the photo seen from slightly to the left and slightly to the right, nothing else "
-              "changed (2 views, trained splat)",
+    "tri": "3 views: 45° to the left, 45° to the right and a high-angle shot from above, reconstructed with the "
+           "photo by the multi-view engine (trained splat)",
     "capture": "360° photo capture: 45°, 90°, 135°, 180° and 270°, overhead and from below (Quality adds 225°, "
                "315° and raised diagonals)",
     "arc": "around the subject: 45° to each side, from above and from below",
@@ -40,18 +40,26 @@ SEVA_MODELS = ("seva-1.1", "sd21-vae", "clip-vit-h-14")
 WAN_MODELS = ("wan2.2-fun-5b-camera",)
 QWEN_MODELS = ("qwen-image-edit-2511-q5", "qwen-image-edit-2511-base", "qwen-edit-2511-angles-lora",
                "qwen-edit-2511-lightning")
-ENGINE_MODELS = {"qwen": QWEN_MODELS, "wan": WAN_MODELS, "seva": SEVA_MODELS}
-ENGINE_NAMES = {"qwen": "Qwen-Image-Edit-2511 + Multiple-Angles LoRA", "wan": "Wan 2.2 Fun 5B Control-Camera",
+QWEN_LIGHTNING_8 = "qwen-edit-2511-lightning-8"   # optional: Quality mode samples 8 steps with it
+FLASHWORLD_MODELS = ("flashworld", "wan2.2-ti2v-5b-base")
+ENGINE_MODELS = {"qwen": QWEN_MODELS, "wan": WAN_MODELS, "seva": SEVA_MODELS, "flashworld": FLASHWORLD_MODELS}
+ENGINE_NAMES = {"flashworld": "FlashWorld (3D Gaussians generated directly, Wan2.2-TI2V-5B)",
+                "qwen": "Qwen-Image-Edit-2511 + Multiple-Angles LoRA", "wan": "Wan 2.2 Fun 5B Control-Camera",
                 "seva": "Stable Virtual Camera"}
-ENGINE_TRAJECTORIES = {"qwen": ("stereo", "capture", "arc", "orbit"), "wan": tuple(TRAJECTORIES),
+ENGINE_TRAJECTORIES = {"qwen": ("tri", "capture", "arc", "orbit"), "wan": tuple(TRAJECTORIES),
                        "seva": ("arc", "orbit", "explore", "spiral", "capture")}
-ENGINE_TRAJECTORIES["wan"] = tuple(t for t in TRAJECTORIES if t != "stereo")
+ENGINE_TRAJECTORIES["wan"] = tuple(t for t in TRAJECTORIES if t != "tri")
+# FlashWorld generates the whole 3D at once (no separate views): it serves "Real 3D from one photo"
+ENGINE_TRAJECTORIES["flashworld"] = ("tri",)
+# FlashWorld per quality mode: (swing either side in degrees, max splats)
+FLASHWORLD_SETTINGS = {"fast": (25, 1_500_000), "auto": (30, 3_000_000), "quality": (35, 4_000_000)}
 
 # Qwen views: (label, azimuth°, elevation°). Azimuth clockwise seen from above (90 = right side,
 # 180 = back); elevation + = camera above. The LoRA knows 8 azimuths and -30/0/30/60° elevations.
 _CAPTURE = [("45°", 45, 0), ("90°", 90, 0), ("135°", 135, 0), ("180°", 180, 0), ("270°", 270, 0),
             ("overhead", 0, 60), ("from below", 0, -30)]
 QWEN_VIEWS = {
+    "tri": [("45° left", 315, 0), ("45° right", 45, 0), ("high angle", 0, 30)],
     "capture": _CAPTURE,
     "capture_full": _CAPTURE + [("225°", 225, 0), ("315°", 315, 0), ("45° raised", 45, 30), ("135° raised", 135, 30),
                                 ("225° raised", 225, 30), ("315° raised", 315, 30)],
@@ -61,19 +69,13 @@ QWEN_VIEWS = {
                                                                                 ("from below", 0, -30)],
 }
 QWEN_MEGAPIXELS = {"fast": 0.75, "auto": 1.0, "quality": 1.0}
+TRI_SIDE = {"fast": 960, "auto": 1280, "quality": 1600}      # training resolution for photo + 3 views
 
-_KEEP = ("Keep everything else exactly the same: the same person, the same pose, the same facial expression and "
-         "gaze, the same hair, clothing and hands, the same lighting, colours and background. Only the viewpoint "
-         "changes.")
-# Stereo: two plain instructions (no angle LoRA, whose smallest step is 45 degrees).
-STEREO_VIEWS = [
-    {"label": "left", "azimuth": -8, "elevation": 0,
-     "prompt": "Move the camera slightly to the left, a small sideways step of about 8 degrees, still looking at "
-               "the same point. " + _KEEP},
-    {"label": "right", "azimuth": 8, "elevation": 0,
-     "prompt": "Move the camera slightly to the right, a small sideways step of about 8 degrees, still looking at "
-               "the same point. " + _KEEP},
-]
+# Candidates generated per view (the most rigid one - a pure camera move of the photo - is kept).
+QWEN_CANDIDATES = {"fast": 1, "auto": 2, "quality": 3}
+# A '3 views' angle whose best candidate scores above this gets RETRY_EXTRA more candidates (once).
+RETRY_THRESHOLD = 0.45
+RETRY_EXTRA = 2
 
 
 def installed(ctx, engine: str) -> bool:
@@ -82,8 +84,8 @@ def installed(ctx, engine: str) -> bool:
 
 def generation_engine(ctx, preferred: str | None = None, trajectory: str | None = None) -> str | None:
     """The engine to use: the preferred one if installed (and able to do the trajectory), else the
-    first installed of Qwen, Wan, Stable Virtual Camera."""
-    order = ["qwen", "wan", "seva"]
+    first installed of FlashWorld (only for "tri"), Qwen, Wan, Stable Virtual Camera."""
+    order = ["flashworld", "qwen", "wan", "seva"]
     if preferred in order:
         order.remove(preferred)
         order.insert(0, preferred)
@@ -93,6 +95,62 @@ def generation_engine(ctx, preferred: str | None = None, trajectory: str | None 
         if installed(ctx, e):
             return e
     return None
+
+
+def contact_sheet(photo, views: list[dict], selection: list[dict], out_path, thumb: int = 300):
+    """One image to judge the generated views: the photo, then one row per angle with every candidate,
+    its consistency score (lower = more like a pure camera move) and which one was used or dropped."""
+    from pathlib import Path
+
+    from PIL import Image, ImageDraw, ImageOps
+
+    sel = {s.get("view"): s for s in selection or []}
+    gen = [v for v in views if v.get("generated")]
+    if not gen:
+        return None
+    ncol = max(len(v.get("candidates") or [v["path"]]) for v in gen)
+    label_h, pad = 34, 8
+    W = pad + ncol * (thumb + pad)
+    H = pad + (1 + len(gen)) * (thumb + label_h + pad)
+    sheet = Image.new("RGB", (max(W, thumb + 2 * pad), H), (24, 26, 31))
+    d = ImageDraw.Draw(sheet)
+
+    def put(path, x, y, caption, colour=(230, 232, 238), border=None):
+        try:
+            with Image.open(path) as im:
+                im = ImageOps.contain(ImageOps.exif_transpose(im).convert("RGB"), (thumb, thumb))
+        except OSError:
+            return
+        sheet.paste(im, (x, y + label_h))
+        if border:
+            d.rectangle([x - 3, y + label_h - 3, x + im.width + 2, y + label_h + im.height + 2], outline=border,
+                        width=4)
+        d.text((x, y + 8), caption, fill=colour)
+
+    put(photo, pad, pad, "your photo (reference)")
+    for r, v in enumerate(gen, start=1):
+        s = sel.get(v.get("label"), {})
+        y = pad + r * (thumb + label_h + pad)
+        for c, path in enumerate(v.get("candidates") or [v["path"]]):
+            name = Path(path).name
+            score = (s.get("scores") or {}).get(name)
+            chosen = s.get("chosen") == name or (not s and c == 0)
+            dropped = chosen and s.get("dropped")
+            tag = "DROPPED" if dropped else ("USED" if chosen else "")
+            cap = f"{v.get('label', '')} · {name}" + (f" · score {score:.3f}" if score is not None else "") + \
+                (f" · {tag}" if tag else "")
+            put(path, pad + c * (thumb + pad), y, cap,
+                border=(220, 70, 70) if dropped else ((70, 200, 110) if chosen else None))
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out_path, quality=90)
+    return out_path
+
+
+def target_angle(view: dict) -> float:
+    """Camera change asked for a generated view, in degrees (for checking that it really moved)."""
+    az = float(view.get("azimuth", 0)) % 360
+    return max(min(az, 360 - az), abs(float(view.get("elevation", 0))))
 
 
 def detailed(traj: str, mode: str) -> str:
@@ -172,12 +230,14 @@ class GenerativeSceneBackend(Backend):
         if traj not in ENGINE_TRAJECTORIES[engine]:
             raise BackendError(f"{ENGINE_NAMES[engine]} cannot do the '{traj}' path; choose 360° capture, Around "
                                "the subject or Wide orbit, or install Wan 2.2.", code="unsupported")
+        if engine == "flashworld":
+            return self._run_flashworld(inp, ctx, options, progress, cancel)
         mode = options.get("mode", "auto")
         assembly = options.get("assembly") or "fusion"
         if assembly not in ("fusion", "train"):
             assembly = "fusion"
-        if traj == "stereo":
-            assembly = "train"   # three nearly identical views: one optimised splat, nothing to fuse
+        if traj == "tri":
+            assembly = "train"   # photo + 3 views → the multi-view engine's trained splat
         ref = inp.frames[min(int(options.get("reference_frame_index", 0)), len(inp.frames) - 1)]
         log = options.get("log") or (lambda m: None)
         out_dir = str(inp.work_dir / "generated_views")
@@ -193,15 +253,21 @@ class GenerativeSceneBackend(Backend):
                    "gguf": str(next(iter(paths["qwen-image-edit-2511-q5"].values()))),
                    "lora_angles": str(next(iter(paths["qwen-edit-2511-angles-lora"].values()))),
                    "lora_lightning": str(next(iter(paths["qwen-edit-2511-lightning"].values()))),
-                   "views": STEREO_VIEWS if traj == "stereo" else
-                   [{"label": lb, "azimuth": az, "elevation": el} for lb, az, el in QWEN_VIEWS[plan]],
-                   "angles_strength": 0.0 if traj == "stereo" else 0.9,
+                   "views": [{"label": lb, "azimuth": az, "elevation": el} for lb, az, el in QWEN_VIEWS[plan]],
+                   "angles_strength": 0.9, "candidates": QWEN_CANDIDATES.get(mode, 1) if traj == "tri" else 1,
                    "distance": options.get("qwen_distance", "medium shot"),
                    "megapixels": QWEN_MEGAPIXELS.get(mode, 1.0), "steps": 4, "seed": int(options.get("seed", 42))}
+            if mode == "quality" and QWEN_LIGHTNING_8 in ctx.models.entries and \
+                    ctx.models.is_installed(QWEN_LIGHTNING_8):
+                req.update(lora_lightning=str(next(iter(ctx.models.paths(QWEN_LIGHTNING_8).values()))), steps=8)
+                models = tuple(m for m in models if m != "qwen-edit-2511-lightning") + (QWEN_LIGHTNING_8,)
+                log("Quality: 8-step Lightning LoRA")
             self._run_attempts(ctx, self.qwen_script, {**req, "stage": "encode"}, inp, progress, cancel, log,
                                (0.0, 0.1))
             out = self._run_attempts(ctx, self.qwen_script, {**req, "stage": "generate"}, inp, progress,
-                                     cancel, log, (0.1, 0.5))
+                                     cancel, log, (0.1, 0.4))
+            if traj == "tri" and mode != "fast" and options.get("retry", True):
+                out = self._retry_weak_views(req, out, inp, ctx, options, progress, cancel, log)
         elif engine == "wan":
             frames, steps = WAN_SETTINGS["capture" if traj == "capture" else assembly].get(mode, (33, 30))
             req = {"image": str(ref), "output_dir": out_dir, "trajectory": plan, "frames": frames,
@@ -223,22 +289,146 @@ class GenerativeSceneBackend(Backend):
             log(f"sharp fusion of the photo and {len(views) - 1} key views")
         # The real photo is sampled more often than any single generated view during training.
         w_in = max(4.0, len(views) / 10)
-        mv_views = [{"path": v["path"], "generated": bool(v["generated"]), "weight": 1.0 if v["generated"] else w_in}
+        mv_views = [{"path": v["path"], "generated": bool(v["generated"]), "weight": 1.0 if v["generated"] else w_in,
+                     **({"candidates": v["candidates"], "label": v.get("label", ""),
+                         "target_deg": target_angle(v)} if len(v.get("candidates") or []) > 1 else {})}
                     for v in views]
         gen_models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
                       for m in models]
+        mv_opts = {**options, "max_side": 1024, "assembly": assembly}
+        if traj == "tri":
+            # photo + 3 views: train at the photo's detail, and with view-independent-ish colour (SH 1) -
+            # with so few views higher SH degrees overfit into colour flicker when the head moves
+            mv_opts.update(max_side=TRI_SIDE.get(mode, 1280), sh_degree=1)
         res = self.mv.reconstruct(
-            mv_views, inp, ctx, {**options, "max_side": 1024, "assembly": assembly}, progress, cancel,
+            mv_views, inp, ctx, mv_opts, progress, cancel,
             progress_range=(0.5, 0.97), extra_models=gen_models,
             extra_warnings=[f"Generative completion: {len(views) - 1} views were invented by {name} "
                             f"('{traj}'). Splats taken from those views are labelled GENERATIVE; they are "
                             "plausible, not measured."])
         res.backend = self.id
-        res.extra.update({"trajectory": traj, "engine": engine, "assembly": assembly,
+        try:
+            sheet = contact_sheet(ref, views, res.extra.get("candidate_selection") or [],
+                                  inp.work_dir / "export" / "generated_views_sheet.jpg")
+            if sheet:
+                res.extra["contact_sheet"] = str(sheet)
+                log(f"generated views overview: {sheet}")
+        except Exception as e:  # noqa: BLE001 - only an overview image
+            log(f"could not draw the generated-views overview: {e}")
+        res.extra.update({"trajectory": traj, "engine": engine, "assembly": res.extra.get("assembly") or assembly,
                           "generated_views": len(views) - 1,
                           "generation_vram_peak_mib": out["result"].get("vram_peak_mib")})
         res.worker_env = {"generation": out["env"], "reconstruction": res.worker_env}
         return res
+
+    flashworld_script = "flashworld_worker.py"
+
+    def _run_flashworld(self, inp, ctx, options, progress, cancel) -> BackendResult:
+        """One photo -> 3D Gaussians generated directly by FlashWorld (runs in the reconstruction runtime,
+        which has gsplat): no separate views to reconcile, so no ghosting between them."""
+        import hashlib
+        import json
+        from pathlib import Path
+
+        import numpy as np
+
+        from ..scene import GENERATIVE, INFERRED, Camera, read_gaussian_ply, write_gaussian_ply, write_splat
+        from .multiview import encode_turntable
+
+        log = options.get("log") or (lambda m: None)
+        mode = options.get("mode", "auto")
+        swing, cap = FLASHWORLD_SETTINGS.get(mode, FLASHWORLD_SETTINGS["auto"])
+        ref = inp.frames[min(int(options.get("reference_frame_index", 0)), len(inp.frames) - 1)]
+        for m in FLASHWORLD_MODELS:
+            ctx.models.paths(m)  # clear error when missing
+        base = ctx.models.model_dir("wan2.2-ti2v-5b-base")
+        ckpt = next(iter(ctx.models.paths("flashworld").values()))
+        rt = self.mv.runtime_id
+        py, env = ctx.runtimes.python(rt), ctx.runtimes.worker_env(rt)
+        prompt = str(options.get("prompt", ""))
+        cache = ctx.models.model_dir("flashworld") / "text-cache"
+        embeds = cache / f"umt5_{hashlib.sha1(prompt.encode()).hexdigest()[:12]}.pt"
+        if not embeds.exists():
+            log("encoding the text prompt once (UMT5-XXL); it is cached for later runs")
+            run_worker(py, self.flashworld_script, {"stage": "encode", "base_dir": str(base), "prompt": prompt,
+                                                    "embeds_path": str(embeds)},
+                       inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.0, 0.1),
+                       timeout_s=3600)
+        out_dir = inp.work_dir / "flashworld_out"
+        req = {"stage": "generate", "image": str(ref), "output_dir": str(out_dir), "base_dir": str(base),
+               "ckpt": str(ckpt), "embeds_path": str(embeds), "frames": 24, "swing_deg": swing,
+               "rise_deg": 6, "max_gaussians": cap, "min_opacity": 0.01,
+               "moge_path": str(ctx.models.paths("moge-2-vitl-normal")["model.pt"])
+               if "moge-2-vitl-normal" in ctx.models.entries and ctx.models.is_installed("moge-2-vitl-normal")
+               else None}
+        log(f"generating the 3D scene directly with {ENGINE_NAMES['flashworld']}")
+        out = run_worker(py, self.flashworld_script, req, inp.work_dir / "worker", progress, cancel, env=env,
+                         log=log, progress_range=(0.1, 0.97), timeout_s=4 * 3600)
+        res, files = out["result"], out["result"]["outputs"]
+        scene = read_gaussian_ply(Path(files["ply"]))
+        cams = json.loads(Path(files["cameras"]).read_text()) if Path(files["cameras"]).exists() else []
+        scene.cameras = [Camera.from_dict(c) for c in cams]
+        scene.metric_scale = bool(res.get("metric"))
+        # splats the photo shows are INFERRED (its colours, generated depth); the rest is GENERATIVE
+        prov = np.full(len(scene), GENERATIVE, np.uint8)
+        if cams:
+            c = cams[0]
+            w2c = np.linalg.inv(np.asarray(c["c2w"], float))
+            pc = scene.means @ w2c[:3, :3].T + w2c[:3, 3]
+            z = pc[:, 2]
+            with np.errstate(divide="ignore", invalid="ignore"):
+                u = c["fx"] * pc[:, 0] / z + c["cx"]
+                v = c["fy"] * pc[:, 1] / z + c["cy"]
+            prov[(z > 0) & (u >= 0) & (u < c["width"]) & (v >= 0) & (v < c["height"])] = INFERRED
+        scene.provenance = prov
+        exp = inp.work_dir / "export"
+        ply = write_gaussian_ply(scene, exp / "scene.ply")
+        splat = write_splat(scene, exp / "scene.splat")
+        warnings = ["Generative 3D: FlashWorld generated the scene from your photo. Splats your photo shows are "
+                    "INFERRED (its colours, generated depth); everything else is GENERATIVE - plausible, "
+                    "not measured."]
+        turntable = None
+        if files.get("turntable_frames"):
+            turntable, err = encode_turntable(Path(files["turntable_frames"]), exp / "turntable.mp4")
+            if err:
+                warnings.append(f"Turntable preview not encoded: {err}")
+        models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
+                  for m in FLASHWORLD_MODELS]
+        n_inf = int((prov == INFERRED).sum())
+        return BackendResult(
+            backend=self.id, scene_ply=ply, splat=splat, obj=None, cameras=cams, metric_scale=scene.metric_scale,
+            provenance_note=(f"FlashWorld generated {len(scene):,} splats directly in 3D: {n_inf:,} seen in your "
+                             f"photo (INFERRED), {len(scene) - n_inf:,} invented (GENERATIVE)."),
+            vram_peak_mib=res.get("vram_peak_mib"), worker_env={"reconstruction": out["env"]},
+            models_used=models, warnings=warnings,
+            extra={"engine": "flashworld", "trajectory": "tri", "assembly": "generated", "gaussians": len(scene),
+                   "subject_distance_m": res.get("subject_distance_m"), "hfov_deg": res.get("hfov_deg"),
+                   "views": res.get("views"), "size": res.get("size"),
+                   "turntable": str(turntable) if turntable else None})
+
+    def _retry_weak_views(self, req, out, inp, ctx, options, progress, cancel, log):
+        """Score the candidates now; for every angle whose best candidate still does not look like a pure
+        camera move of the photo, generate RETRY_EXTRA more and keep the result (the final selection runs
+        again inside the reconstruction)."""
+        views = out["result"]["views"]
+        mv_views = [{"path": v["path"], "generated": bool(v["generated"]),
+                     **({"candidates": v["candidates"], "label": v.get("label", ""), "target_deg": target_angle(v)}
+                        if v.get("generated") else {})} for v in views]
+        try:
+            sel = self.mv.score(mv_views, inp, ctx, {**options, "max_side": 1024}, progress, cancel, (0.4, 0.45))
+        except BackendError as e:
+            log(f"could not score the generated views ({e}); keeping them as they are")
+            return out
+        best = {s["view"]: min((s.get("scores") or {"": 9.0}).values()) for s in sel}
+        weak = [lb for lb, sc in best.items() if sc > float(options.get("retry_threshold", RETRY_THRESHOLD))]
+        log("view consistency: " + ", ".join(f"{lb} {sc:.3f}" for lb, sc in best.items()))
+        if not weak:
+            return out
+        log(f"generating {RETRY_EXTRA} more candidates for: {', '.join(weak)}")
+        n = int(req.get("candidates", 1))
+        req2 = {**req, "stage": "generate",
+                "views": [dict(v, candidates=n + RETRY_EXTRA) if v["label"] in weak else v for v in req["views"]]}
+        return self._run_attempts(ctx, self.qwen_script, req2, inp, progress, cancel, log, (0.45, 0.5))
 
     @staticmethod
     def fusion_views(views: list[dict]) -> list[dict]:

@@ -24,6 +24,23 @@ MODE_HELP = {
     "quality": "Largest models and highest resolution. Slower.",
     "fast": "Small models, quick preview-quality results.",
 }
+# "What do you want to make?" — each preset sets the advanced reconstruction controls.
+PRESETS = {
+    "real3d": ("Real 3D from one photo (recommended)",
+               "With FlashWorld installed, the whole 3D scene is generated directly from your photo (every angle "
+               "from the same 3D). Without it, AI makes 3 more views and the multi-view engine reconstructs "
+               "them."),
+    "quick": ("Quick 3D",
+              "Depth from the photo alone (MoGe-2 / SHARP). Seconds; sharp from the front, flat from the side."),
+    "around": ("360° around the subject (experimental)",
+               "AI invents the sides, back, top and bottom; assembled with sharp fusion."),
+    "custom": ("Custom", "Choose every setting yourself under Advanced options."),
+}
+PRESET_VALUES = {
+    "real3d": {"generative": "tri", "engine": "auto", "assembly": "train", "backend": None},
+    "quick": {"generative": "off", "engine": "auto", "assembly": "fusion", "backend": None},
+    "around": {"generative": "capture", "engine": "auto", "assembly": "fusion", "backend": None},
+}
 PROVENANCE_HELP = ("<b>Observed</b>: reconstructed from several views. <b>Inferred</b>: seen in the input but its "
                    "depth is predicted by a network. <b>Interpolated</b>: small gaps filled from neighbouring "
                    "background. <b>Unknown</b>: never seen — shown black, never invented.")
@@ -164,48 +181,74 @@ class CreatePage(QWidget):
         top.addLayout(left, 3)
 
         opts = QVBoxLayout()
-        qbox = QGroupBox("Quality")
-        ql = QVBoxLayout(qbox)
-        self.mode_group = QButtonGroup(self)
-        for m in ("auto", "quality", "fast"):
-            rb = QRadioButton(f"{m.capitalize()} — {MODE_HELP[m]}")
-            rb.setProperty("mode", m)
-            self.mode_group.addButton(rb)
-            ql.addWidget(rb)
-            if m == win.settings.mode:
+        # ---- the one choice most people need
+        pbox = QGroupBox("What do you want to make?")
+        pl = QVBoxLayout(pbox)
+        self.preset_group = QButtonGroup(self)
+        for key, (title, text) in PRESETS.items():
+            rb = QRadioButton(title)
+            rb.setProperty("preset", key)
+            rb.setToolTip(text)
+            self.preset_group.addButton(rb)
+            pl.addWidget(rb)
+            sub = note(text)
+            sub.setContentsMargins(22, 0, 0, 4)
+            pl.addWidget(sub)
+            if key == win.settings.preset:
                 rb.setChecked(True)
-        self.mode_group.buttonToggled.connect(self._save_opts)
-        opts.addWidget(qbox)
+        self.preset_group.buttonToggled.connect(self._preset_changed)
+        opts.addWidget(pbox)
 
-        obox = QGroupBox("Outputs")
-        of = QFormLayout(obox)
-        of.addRow(QLabel("Always: 3D Gaussian splat (.ply, .splat) and, when available, a textured mesh (.obj)."))
-        self.vr = QCheckBox("VR180 stereo")
+        qrow = QHBoxLayout()
+        qrow.addWidget(QLabel("Quality"))
+        self.quality = QComboBox()
+        for m in ("auto", "quality", "fast"):
+            self.quality.addItem(f"{m.capitalize()} — {MODE_HELP[m]}", m)
+        self.quality.setCurrentIndex(max(self.quality.findData(win.settings.mode), 0))
+        self.quality.currentIndexChanged.connect(self._save_opts)
+        qrow.addWidget(self.quality, 1)
+        self.vr = QCheckBox("Also make VR180")
         self.vr.setChecked(win.settings.vr180)
+        self.vr.toggled.connect(self._save_opts)
+        qrow.addWidget(self.vr)
+        opts.addLayout(qrow)
+
+        self.adv_btn = QPushButton("Advanced options ▸")
+        self.adv_btn.setCheckable(True)
+        self.adv_btn.setFlat(True)
+        self.adv_btn.toggled.connect(self._toggle_advanced)
+        opts.addWidget(self.adv_btn, 0, Qt.AlignLeft)
+
+        # ---- everything else
+        self.advanced = QWidget()
+        al = QVBoxLayout(self.advanced)
+        al.setContentsMargins(0, 0, 0, 0)
+        obox = QGroupBox("VR180 output")
+        of = QFormLayout(obox)
         self.sbs = QCheckBox("Side-by-side (LR)")
         self.sbs.setChecked(win.settings.layout_sbs)
         self.tb = QCheckBox("Top/bottom (TB)")
         self.tb.setChecked(win.settings.layout_tb)
         row = QHBoxLayout()
-        for w in (self.vr, self.sbs, self.tb):
+        for w in (self.sbs, self.tb):
             row.addWidget(w)
             w.toggled.connect(self._save_opts)
-        of.addRow(row)
+        of.addRow("Layouts", row)
         self.projection = QComboBox()
         self.projection.addItem("VR180 (180° half-equirectangular)", "equirect180")
         self.projection.addItem("Flat 3D (source field of view)", "flat")
         self.projection.setCurrentIndex(0 if win.settings.projection == "equirect180" else 1)
         self.projection.currentIndexChanged.connect(self._save_opts)
         of.addRow("Projection", self.projection)
-        self.backend = QComboBox()
-        of.addRow("Backend", self.backend)
-        opts.addWidget(obox)
+        al.addWidget(obox)
 
-        gbox = QGroupBox("3D reconstruction")
+        gbox = QGroupBox("Reconstruction (Custom)")
         gf = QFormLayout(gbox)
+        self.backend = QComboBox()
+        gf.addRow("Backend", self.backend)
         self.generative = QComboBox()
         for label, val in (("Off — only what the photo shows", "off"),
-                           ("Stereo pair (Qwen) — slightly left + slightly right, nothing else changes", "stereo"),
+                           ("3 views (Qwen) — 45° left, 45° right, high angle → multi-view", "tri"),
                            ("360° photo capture — 45°, 90°, 135°, 180°, 270°, above, below (Quality: more)",
                             "capture"),
                            ("Around the subject — sides, above and below (best for people)", "arc"),
@@ -214,20 +257,9 @@ class CreatePage(QWidget):
                            ("Spiral — small, faithful extension", "spiral")):
             self.generative.addItem(label, val)
         self.generative.setCurrentIndex(max(self.generative.findData(win.settings.generative), 0))
-        self.generative.setToolTip("Generative 3D (photos): a video model (Wan 2.2) films new camera moves around "
-                                   "the photo, then they are assembled into one 3D scene. Invented parts are "
-                                   "labelled 'generative'. Needs the Generative and Multi-view engines (12 GB+ GPU).")
+        self.generative.setToolTip("Generative 3D (photos): an AI model makes the photo's other views, then they "
+                                   "are assembled into one 3D scene. Invented parts are labelled 'generative'.")
         gf.addRow("Photo: generative 3D", self.generative)
-        self.assembly = QComboBox()
-        for label, val in (("Sharp fusion — MoGe-2 geometry per view, as sharp as a single photo", "fusion"),
-                           ("Trained splat — one optimised model (smoother, softer)", "train")):
-            self.assembly.addItem(label, val)
-        self.assembly.setCurrentIndex(max(self.assembly.findData(win.settings.gen_assembly), 0))
-        self.assembly.setToolTip("How the generated views become 3D. Sharp fusion keeps the photo exactly as it is "
-                                 "and adds only what the other views show (sides, top, underside). Trained splat "
-                                 "fits one model to every view: smoother transitions, but generated views' small "
-                                 "differences blur it.")
-        gf.addRow("Generative 3D assembly", self.assembly)
         self.engine = QComboBox()
         for label, val in (("Automatic — Qwen if installed, then Wan 2.2", "auto"),
                            ("Qwen-Image-Edit — sharp ~1 MP images per angle", "qwen"),
@@ -235,9 +267,13 @@ class CreatePage(QWidget):
                            ("Stable Virtual Camera — scenes/objects (not people)", "seva")):
             self.engine.addItem(label, val)
         self.engine.setCurrentIndex(max(self.engine.findData(win.settings.gen_engine), 0))
-        self.engine.setToolTip("Which model invents the other views. Qwen draws each angle as a sharp still "
-                               "image; Wan films the camera moving and the frames at those angles are used.")
         gf.addRow("Generative engine", self.engine)
+        self.assembly = QComboBox()
+        for label, val in (("Sharp fusion — MoGe-2 geometry per view, as sharp as a single photo", "fusion"),
+                           ("Trained splat — one optimised model (multi-view engine)", "train")):
+            self.assembly.addItem(label, val)
+        self.assembly.setCurrentIndex(max(self.assembly.findData(win.settings.gen_assembly), 0))
+        gf.addRow("Generative 3D assembly", self.assembly)
         self.video_mode = QComboBox()
         for label, val in (("Automatic (analyse the video)", "auto"),
                            ("Whole video → one 3D scene (camera moves)", "multiview"),
@@ -255,10 +291,15 @@ class CreatePage(QWidget):
         self.sequence.setChecked(win.settings.export_sequence)
         self.sequence.toggled.connect(self._save_opts)
         gf.addRow("", self.sequence)
-        for w in (self.generative, self.assembly, self.engine, self.video_mode):
-            w.currentIndexChanged.connect(self._save_opts)
+        for w in (self.generative, self.assembly, self.engine, self.backend):
+            w.currentIndexChanged.connect(self._custom_changed)
+        self.video_mode.currentIndexChanged.connect(self._save_opts)
         self.combine.toggled.connect(self._save_opts)
-        opts.addWidget(gbox)
+        al.addWidget(gbox)
+        self.advanced.setVisible(False)
+        opts.addWidget(self.advanced)
+        opts.addStretch(1)
+        self._applying = False
         top.addLayout(opts, 2)
         v.addLayout(top)
 
@@ -294,6 +335,8 @@ class CreatePage(QWidget):
         v.addWidget(split, 1)
         self.bars: dict[str, QProgressBar] = {}
         self.refresh_backends()
+        if self.preset() in PRESET_VALUES:    # the preset decides the reconstruction controls
+            self._preset_changed(self.preset_group.checkedButton(), True)
 
     # -------------------------------------------------------------- state
     def refresh_backends(self):
@@ -325,17 +368,71 @@ class CreatePage(QWidget):
         elif not any(self.win.ctx.models.is_installed(m) for m in
                      ("moge-2-vitl-normal", "moge-2-vits-normal", "depth-anything-v2-small", "sharp")):
             msgs.append("No reconstruction model is installed yet.")
+        if getattr(self, "preset_group", None) is not None and self.preset() in ("real3d", "around"):
+            from ..backends.generative import installed
+
+            ctx = self.win.ctx
+            need = []
+            flashworld = self.preset() == "real3d" and installed(ctx, "flashworld")
+            if self.preset() == "real3d" and not flashworld:
+                msgs.append("Tip: install 'FlashWorld' in Components - it generates the 3D directly from your "
+                            "photo, without the double contours of separately drawn AI views.")
+            if not flashworld and not (installed(ctx, "qwen") or (self.preset() == "around" and installed(ctx, "wan"))):
+                need.append("Qwen-Image-Edit-2511 + Multiple-Angles" if self.preset() == "real3d"
+                            else "Qwen-Image-Edit or Wan 2.2")
+            if not all(m in ctx.models.entries and ctx.models.is_installed(m) for m in ("vggt-1b", "moge-2-vitl-normal")):
+                need.append("the multi-view models (VGGT, MoGe-2 Large)")
+            if need:
+                msgs.append(f"'{PRESETS[self.preset()][0]}' needs {' and '.join(need)} — until they are installed, "
+                            "Quick 3D is used.")
         self.banner.setText(" ".join(msgs))
         self.banner.setVisible(bool(msgs))
         self.banner_btn.setVisible(bool(msgs))
 
     def mode(self) -> str:
-        b = self.mode_group.checkedButton()
-        return b.property("mode") if b else "auto"
+        return self.quality.currentData() or "auto"
+
+    def preset(self) -> str:
+        b = self.preset_group.checkedButton()
+        return b.property("preset") if b else "real3d"
+
+    def _toggle_advanced(self, on: bool):
+        self.advanced.setVisible(on)
+        self.adv_btn.setText("Advanced options ▾" if on else "Advanced options ▸")
+
+    def _preset_changed(self, button, checked):
+        if not checked:
+            return
+        key = button.property("preset")
+        values = PRESET_VALUES.get(key)
+        if values:   # write the preset into the advanced controls
+            self._applying = True
+            for combo, val in ((self.generative, values["generative"]), (self.engine, values["engine"]),
+                               (self.assembly, values["assembly"]), (self.backend, values["backend"])):
+                combo.setCurrentIndex(max(combo.findData(val), 0))
+            self._applying = False
+        else:
+            self.adv_btn.setChecked(True)
+        self._save_opts()
+        self.update_banner()
+
+    def _custom_changed(self, *a):
+        if self._applying:
+            return
+        cur = {"generative": self.generative.currentData(), "engine": self.engine.currentData(),
+               "assembly": self.assembly.currentData(), "backend": self.backend.currentData()}
+        match = next((k for k, v in PRESET_VALUES.items() if v == cur), "custom")
+        for b in self.preset_group.buttons():
+            if b.property("preset") == match and not b.isChecked():
+                self.preset_group.blockSignals(True)
+                b.setChecked(True)
+                self.preset_group.blockSignals(False)
+        self._save_opts()
 
     def _save_opts(self, *a):
         s = self.win.settings
         s.mode = self.mode()
+        s.preset = self.preset()
         s.vr180 = self.vr.isChecked()
         s.layout_sbs = self.sbs.isChecked()
         s.layout_tb = self.tb.isChecked()
@@ -461,6 +558,9 @@ class ResultsPage(QWidget):
         self.btn = {}
         for i, (key, label) in enumerate([("explore", "Explore in 3D"), ("vr", "View in VR (6DoF)"),
                                           ("vrimg", "Open VR180 image"), ("vrvid", "Play VR180 video"),
+                                          ("spin", "Play turntable"), ("spin_ff", "Turntable: raw DA3 splat"),
+                                          ("views", "AI views overview"),
+                                          ("rebuild", "Rebuild with my picks…"),
                                           ("folder", "Open folder"), ("export", "Copy results to…"),
                                           ("delete", "Delete")]):
             b = QPushButton(label)
@@ -519,6 +619,100 @@ class ResultsPage(QWidget):
         frames = sorted((d / "frames").glob("*.png"))
         return str(frames[0]) if frames else None
 
+    @staticmethod
+    def _turntable(d: Path, rep: dict, key: str = "turntable") -> str | None:
+        p = ((rep.get("backend") or {}).get("extra") or {}).get(key)
+        if p and Path(p).exists():
+            return p
+        cand = d / "export" / f"{key}.mp4"
+        return str(cand) if cand.exists() else None
+
+    @staticmethod
+    def _sheet(d: Path, rep: dict) -> str | None:
+        p = ((rep.get("backend") or {}).get("extra") or {}).get("contact_sheet")
+        if p and Path(p).exists():
+            return p
+        cand = d / "export" / "generated_views_sheet.jpg"
+        return str(cand) if cand.exists() else None
+
+    @staticmethod
+    def _candidate_groups(d: Path, rep: dict) -> list[tuple[str, list[str], str | None]]:
+        """(label, candidate files, chosen file) per generated angle of a job (Qwen views)."""
+        import re
+
+        gen = d / "generated_views"
+        if not gen.exists():
+            return []
+        groups: dict[int, list[str]] = {}
+        for f in sorted(gen.glob("view*.png")):
+            m = re.match(r"view(\d+)(?:_c\d+)?\.png$", f.name)
+            if m:
+                groups.setdefault(int(m.group(1)), []).append(str(f))
+        sel = ((rep.get("backend") or {}).get("extra") or {}).get("candidate_selection") or []
+        out = []
+        for k, i in enumerate(sorted(groups)):
+            s = sel[k] if k < len(sel) else {}
+            chosen = next((c for c in groups[i] if Path(c).name == s.get("chosen")), None)
+            out.append((s.get("view") or f"view {i + 1}", groups[i], None if s.get("dropped") else chosen))
+        return out
+
+    def rebuild_with_picks(self, d: Path, rep: dict):
+        """Choose the candidate for every AI angle yourself and rebuild the 3D (no new generation)."""
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+
+        groups = self._candidate_groups(d, rep)
+        photo = Path((rep.get("input") or {}).get("path", ""))
+        if not photo.exists():
+            photo = d / "frames" / "frame_00000.png"
+        if not groups or not photo.exists():
+            QMessageBox.information(self, APP_NAME, "This result has no AI views to choose from.")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Rebuild with my picks")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(note("Pick the view to use for every angle (the automatic choice is preselected), or untick an "
+                           "angle to leave it out. The 3D is rebuilt from your photo and these views by the "
+                           "multi-view engine; nothing is generated again."))
+        grid = QGridLayout()
+        rows = []
+        for r, (label, files, chosen) in enumerate(groups):
+            use = QCheckBox(label)
+            use.setChecked(chosen is not None)
+            combo = QComboBox()
+            for f in files:
+                combo.addItem(Path(f).name, f)
+            combo.setCurrentIndex(max(combo.findData(chosen), 0) if chosen else 0)
+            thumb = QLabel()
+            thumb.setFixedSize(220, 150)
+            thumb.setAlignment(Qt.AlignCenter)
+
+            def show(_=None, c=combo, t=thumb):
+                pm = QPixmap(c.currentData())
+                t.setPixmap(pm.scaled(220, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+            combo.currentIndexChanged.connect(show)
+            show()
+            grid.addWidget(use, r, 0)
+            grid.addWidget(combo, r, 1)
+            grid.addWidget(thumb, r, 2)
+            rows.append((use, combo))
+        lay.addLayout(grid)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        picks = [c.currentData() for use, c in rows if use.isChecked()]
+        if not picks:
+            QMessageBox.information(self, APP_NAME, "Pick at least one view.")
+            return
+        opts = self.win.settings.job_options(backend="multiview", generative="off", gen_assembly="train",
+                                             generated_inputs=[str(p) for p in picks])
+        self.win.queue.add([photo] + [Path(p) for p in picks], opts)
+        QMessageBox.information(self, APP_NAME, f"Rebuilding from your photo and {len(picks)} chosen view(s) — "
+                                                "follow it on the Create page.")
+
     def _current(self) -> tuple[Path | None, dict]:
         it = self.list.currentItem()
         if not it:
@@ -543,12 +737,42 @@ class ResultsPage(QWidget):
         self.btn["vr"].setEnabled(bool(out.get("scene_ply")))
         self.btn["vrimg"].setEnabled(bool(vr.get("stills")))
         self.btn["vrvid"].setEnabled(bool(vr.get("videos")))
+        sheet = self._sheet(d, rep)
+        self.btn["views"].setEnabled(sheet is not None)
+        self.btn["spin"].setEnabled(self._turntable(d, rep) is not None)
+        self.btn["spin_ff"].setEnabled(self._turntable(d, rep, "turntable_feedforward") is not None)
+        self.btn["rebuild"].setEnabled(bool(self._candidate_groups(d, rep)))
+        extra = (rep.get("backend") or {}).get("extra") or {}
         html = [f"<h3>{Path((rep.get('input') or {}).get('path', '')).name}</h3>",
                 f"<p>Status: <b>{rep.get('status')}</b> · backend: {(rep.get('backend') or {}).get('name', '—')}"
                 f" · time: {rep.get('runtime_s', '?')} s</p>"]
         if rep.get("error"):
             html.append(f"<p style='color:#e66'><b>Error</b> [{rep['error'].get('code')}]: "
                         f"{rep['error'].get('message')}</p>")
+        if extra.get("engine") or extra.get("camera_engine"):
+            bits = []
+            if extra.get("engine"):
+                bits.append(f"AI views: {extra['engine']} ({extra.get('generated_views', '?')} views, "
+                            f"{extra.get('trajectory', '')})")
+            if extra.get("camera_engine"):
+                bits.append(f"camera engine: {extra['camera_engine']}")
+            if extra.get("subject_mode"):
+                bits.append("subject mode (background from your photo)")
+            if extra.get("assembly"):
+                bits.append(f"assembly: {extra['assembly']}")
+            html.append("<p>" + " · ".join(bits) + "</p>")
+        for s in extra.get("candidate_selection") or []:
+            state = "dropped" if s.get("dropped") else f"used {s.get('chosen')}"
+            scores = ", ".join(f"{k} {v:.3f}" for k, v in (s.get("scores") or {}).items())
+            html.append(f"<p><small>{s.get('view')}: {state} — scores {scores}</small></p>")
+        pr = extra.get("pose_refinement") or []
+        if pr:
+            html.append("<p><small>Cameras of the AI views refined during training: " +
+                        ", ".join(f"{p['view']} {p['rotation_deg']:.1f}°" for p in pr) + "</small></p>")
+        cc = [c for c in extra.get("colour_correction") or [] if c]
+        if cc:
+            gains = ", ".join("/".join(f"{g:.2f}" for g in c["gain"]) for c in cc)
+            html.append(f"<p><small>Colour drift of the AI views corrected (R/G/B gain per view: {gains})</small></p>")
         cov = (rep.get("coverage") or {}).get("by_splat")
         if cov:
             html.append("<p><b>Geometry provenance</b>: " + ", ".join(f"{k} {v:.0%}" for k, v in cov.items() if v)
@@ -583,6 +807,14 @@ class ResultsPage(QWidget):
             open_path(vr["stills"][0]["image"])
         elif key == "vrvid" and vr.get("videos"):
             open_path(vr["videos"][0]["path"])
+        elif key == "rebuild":
+            self.rebuild_with_picks(d, rep)
+        elif key == "spin" and self._turntable(d, rep):
+            open_path(self._turntable(d, rep))
+        elif key == "spin_ff" and self._turntable(d, rep, "turntable_feedforward"):
+            open_path(self._turntable(d, rep, "turntable_feedforward"))
+        elif key == "views" and self._sheet(d, rep):
+            open_path(self._sheet(d, rep))
         elif key == "folder":
             open_path(d / "export" if (d / "export").exists() else d)
         elif key == "export":

@@ -1,3 +1,280 @@
+# 2D2VR180 1.0.0-rc34 — Real 3D generated directly: FlashWorld
+
+## What's new in rc34
+
+- **A different strategy for "Real 3D from one photo".** Until rc33, an AI drew 3 more views of your photo
+  one by one, and the app tried to rebuild a 3D from them. Each view was drawn on its own: a slightly
+  different pose, hair and lantern. No reconstruction method can make one rigid 3D from that, so the
+  result showed double faces and layers.
+- **FlashWorld** (ICLR 2026) generates **the 3D itself**.
+  - It is a Wan 2.2 video model with a 3D Gaussian decoder. At each of its 4 steps it builds the Gaussians,
+    renders them and feeds them back into the model.
+  - Every angle comes from the same 3D, so it cannot ghost between views.
+  - The camera swings ±30° around your subject (±25° Fast, ±35° Quality) with a slight rise. Your photo is
+    the starting point.
+  - The result is placed in your photo's camera frame, at the subject's real distance (measured by MoGe-2).
+- **Install it from Settings → Components → "FlashWorld — Real 3D generated directly from one photo".**
+  - About 35 GB: the FlashWorld checkpoint is 20.9 GB, plus the Wan 2.2 VAE and text encoder (14 GB).
+  - It runs in the multi-view engine. No new Python environment is needed, but the multi-view engine updates
+    itself once (it adds diffusers and transformers).
+  - FlashWorld's weights are CC BY-NC-SA 4.0 (non-commercial). The code is Apache-2.0.
+  - Without it, "Real 3D" keeps using the previous flow.
+- **Memory.** The 21 GB checkpoint is read straight from disk and quantised to FP8 layer by layer, so it
+  never fills your RAM. The text encoder runs only once: its result is cached. On a 16 GB card the model
+  leaves the GPU while the 3D decoder works. If memory still runs out, it retries automatically with the
+  decoder on the CPU (slower).
+- **Not tested on a GPU before release.** It was checked on the CPU with the real VAE architecture and a
+  tiny transformer with random weights. Camera conventions were checked against FlashWorld's own code.
+  The first run on your RTX 4080 is the real test: please send the log and the turntable.
+
+## What's new in rc33
+
+- **"Real 3D from one photo" no longer trains the splat from scratch.** Training a splat from only 4 views
+  that do not match exactly (the AI changes small things in every view) produced double faces and torn
+  hair. No amount of selecting, weighting or camera correcting removed that.
+  - The splat now comes straight from **Depth Anything 3**. The Nested Giant-Large model you already have
+    includes a head that predicts the 3D Gaussians from all views at once. It was trained to fuse views
+    into one coherent 3D, and it does not invent ghosts where the views disagree.
+  - In subject mode the person comes from that splat (all views), and the background from your photo.
+  - A short, gentle polish follows to recover your photo's sharpness. Splats move 10× slower than in
+    training from scratch, and there are 3000 steps in Auto (1500 Fast, 5000 Quality).
+- **Compare both.** Results has a new button, **Turntable: raw DA3 splat**, which plays
+  `turntable_feedforward.mp4`: the splat exactly as Depth Anything 3 gave it, before polishing. Its PLY is
+  `export/scene_feedforward.ply`. "Play turntable" shows the polished final result.
+- Without Depth Anything 3 (VGGT only), the old training is used.
+- Colours of the feed-forward splat are view-independent: the extra Python package DA3 needs to rotate its
+  view-dependent colours is not bundled. The polish adds view-dependence where your photo supports it.
+
+## Fixed in rc32
+
+- **Subject mode was only half applied.** In the rc31 test the subject was found in the photo but in none of
+  the AI views. Depth Anything 3 then compared a subject-only photo with whole AI images, and its cameras
+  went wrong (a "high angle" view measured at 79° instead of ~30°). The result was double faces and smeared
+  hair. Now:
+  - Once the photo shows a subject in front of a background, the AI views (the same scene) look for their
+    near layer with looser criteria. A real depth jump is still required.
+  - AI candidates without a subject are left out. They never sit next to subject-only views again. The log
+    lists the result for every candidate.
+- **Wrong angles count much more against a candidate.** A view measured far from the angle asked for (79°
+  for a 30° view, or 6° for a 45° one) is not a clean camera move, so it rarely wins any more.
+
+## Fixed in rc31
+
+- **Subject mode.** With a studio portrait, Qwen turns the person ~45° but leaves the plain backdrop as
+  it was. Depth Anything 3 then measured only 5–8° of camera movement, and training was torn between
+  "the camera moved 45°" (the person) and "the camera barely moved" (the wall). The splat came out
+  shredded. Now:
+  - The person is separated from the background by depth. Subject mode switches on only when the photo
+    clearly has two layers (a subject in front of a background), not for landscapes or rooms.
+  - The cameras are found from the person alone.
+  - AI views teach only the person. The background comes from your photo.
+  - Results shows "subject mode" when it was used.
+- **Joint multi-view depth instead of per-view MoGe-2 depth.** The sharper per-view MoGe-2 depth (since
+  rc19) made the 3D worse than the earlier, smoother option. Each AI view got its own depth that disagreed
+  with the others'. Training is back on the camera engine's depth (Depth Anything 3 / VGGT), which is
+  estimated for all views together and is consistent.
+- **The turntable swings around the subject, not around the wall behind it**, and only as far as the views
+  reach. Before, it always swung 30°, which showed areas nobody had seen.
+
+## Fixed in rc30
+
+- **"Real 3D from one photo" failed** with `ImportError: cannot import name 'batch_align_poses_umeyama'
+  from 'depth_anything_3.utils.pose_align'`.
+  - Cause: the Giant / Nested Depth Anything 3 models build a Gaussian head that imports a pose-alignment
+    helper from a module 2D2VR180 replaces, because that module's dependencies are not bundled. The
+    replacement now serves every helper the model files import. Inference never calls them.
+  - Checked by building the Nested Giant-Large model from its configuration (1.69 B parameters) and
+    running a full inference on a portrait image.
+- **If Depth Anything 3 cannot be loaded, the job continues with VGGT** and the log says why, instead of
+  failing. This applies to both choosing the AI views and reconstructing.
+
+## What's new in rc29
+
+- **Finer texture in the 3D.** Training adds splats where detail is missing.
+  - Before, that check summed the image error signals, and in fine texture (hair, fabric, foliage)
+    opposite signals cancelled out, so those areas stayed blurry.
+  - It now uses their absolute size (AbsGS, as in gsplat's reference trainer), so fine texture gets the
+    splats it needs.
+  - The splat limit per quality mode is unchanged. If the GPU runs out of memory, training retries smaller
+    as before.
+
+## What's new in rc28
+
+- **Quality mode draws every AI view in 8 steps instead of 4.** It uses lightx2v's 8-step Lightning LoRA for
+  Qwen-Image-Edit-2511 (Apache-2.0, 850 MB).
+  - It installs with the Qwen component. If you already have Qwen, install *Qwen-Image-Edit Lightning LoRA
+    (8 steps, Quality)* from Settings → Components.
+  - Without it, Quality keeps using 4 steps.
+  - Generating the views takes about twice as long in Quality. Fast and Auto are unchanged.
+- **Camera refinement also covers your own photos.** When you give several real photos (up to 32), training
+  now also corrects their cameras slightly. The first photo stays fixed as the reference. Long videos are
+  unchanged, because their many overlapping frames already pin the cameras down.
+
+## What's new in rc27
+
+- **The cameras of the AI views are refined while training.** Depth Anything 3 / VGGT estimate where each
+  AI view was "taken" from, always with a small error. In a 3D built from only 4 views, that error shows
+  up as ghosting and blur.
+  - Training now also corrects each AI view's camera slightly, until the view lines up with the 3D. Your
+    photo's camera stays fixed as the reference.
+  - In the test scene this gave +3 dB sharpness on the photo's view and a lower reprojection error.
+  - Results lists how much each camera was corrected. Large corrections (several degrees) point to an AI
+    view that is not a clean camera move.
+
+## What's new in rc26
+
+- **Colour drift of the AI views is corrected.** AI-generated views often come out slightly darker,
+  brighter or warmer than your photo. Before, the 3D averaged that drift into its colours.
+  - Training now learns a small colour correction for each AI view. Your photo is never corrected and
+    stays the colour reference.
+  - The splat keeps your photo's colours. Results lists the correction found for each view.
+- **The OBJ mesh has the same volume as the splat.** The mesh used to be built only from the photo's depth
+  map, which gave a relief. It is now fused from the trained splat's depth and colour seen from every view,
+  including the AI angles. The old method is kept as a fallback.
+
+## What's new in rc25
+
+- **Turntable preview of every multi-view 3D result.** Right after training, the trained splat is rendered
+  from a camera that swings 30° left and right of your photo, with a slight rise and fall. It is saved as
+  `export/turntable.mp4` (3 s, 24 fps).
+  - This lets you judge the real volume (and spot flat or broken areas) without putting on the headset.
+  - Open it with **Results → Play turntable**.
+  - It is a preview only: if rendering fails, the result is unaffected and a warning explains why.
+
+## What's new in rc24
+
+- **Results → Rebuild with my picks…** For a "Real 3D from one photo" result:
+  - For every AI angle you pick which candidate to use, or untick the angle to leave it out. The automatic
+    choice is preselected, with a thumbnail.
+  - The 3D is then rebuilt from your photo and those views by the multi-view engine. Nothing is generated
+    again, so it takes minutes, not the full run.
+  - Your picks are still labelled as AI views: they weigh less than your photo and are marked *generative*.
+- The multi-view engine has a dry-run mode, so the whole new flow (candidate selection, Depth Anything 3,
+  MoGe-2 priors, confidence maps) can be checked end to end without a GPU.
+
+# 2D2VR180 1.0.0-rc23 — weak AI views are retried automatically
+
+## What's new in rc23
+
+- **Weak AI views are retried automatically ("Real 3D from one photo", Auto and Quality).**
+  1. Right after Qwen makes the candidates, the multi-view engine scores each one against your photo.
+  2. If even the best candidate of an angle does not behave like a camera move, 2 more candidates are made for
+     that angle only, and the best one is chosen again.
+  - `job.log` lists each angle's consistency score (lower is better).
+- **Fairer scoring.** A different overall brightness or white balance in an AI view no longer counts as a
+  change; only real differences in shape, pose or expression do.
+- **The user guide** describes the new Create page and the "Real 3D from one photo" flow.
+- *Qwen-Image-Edit + Multiple-Angles* is now part of the recommended components, because the default option
+  needs it.
+
+# 2D2VR180 1.0.0-rc22 — cleaner splats in VR, AI views overview
+
+## What's new in rc22
+
+- **Cleaner splats when you move your head in VR.** After training, the multi-view engine removes splats that
+  only show up as junk from new angles:
+  - splats no training view ever saw;
+  - nearly transparent ones;
+  - oversized blobs;
+  - isolated floaters.
+  `job.log` says how many were removed.
+- **AI views overview.** Every generative job writes `export/generated_views_sheet.jpg`: your photo, then each
+  angle with all its candidates, their consistency score (lower = closer to a pure camera move) and which one
+  was used (green) or dropped (red). Open it from **Results → AI views overview**. The result details also
+  show the engines used and the scores.
+
+# 2D2VR180 1.0.0-rc21 — tuned for "Real 3D from one photo"
+
+## What's new in rc21
+
+- **The photo's full detail.** With photo + 3 AI views the splat is trained at up to 1280 px (Auto) or 1600 px
+  (Quality) instead of 1024, so the front view keeps more of the photo's detail.
+- **Steadier colours when you move your head.** Colour is learnt with spherical harmonics of degree 1 instead
+  of 3. With only four views, higher degrees overfit into colour flicker and tinted patches between the
+  views.
+- **Inconsistent AI views are dropped.** If even the best candidate of an angle does not behave like a camera
+  move of the photo, that view is left out instead of teaching the 3D a different pose or face. At least one
+  AI view is always kept, and `job.log` says which view was dropped and why.
+- Fix: with Depth Anything 3, views could end up with too few initial points (different confidence scale
+  than VGGT).
+
+# 2D2VR180 1.0.0-rc20 — Depth Anything 3 camera engine
+
+## What's new in rc20
+
+- **Depth Anything 3 (Nested Giant-Large 1.1) as the multi-view camera engine.** Most of "Real 3D from one
+  photo" depends on where each view was taken and how deep each pixel is, and DA3 estimates both better than
+  VGGT: on its authors' benchmark, poses are 35.7% more accurate and geometry 23.6% better. It also gives
+  real-world scale directly.
+  - It is used automatically when installed: Components → *Depth Anything 3* (~6.8 GB; non-commercial
+    licence, like VGGT).
+  - It handles up to 32 views of the same shape. Long videos and mixed portrait/landscape photos keep using
+    VGGT.
+  - It also chooses the most consistent generated candidates.
+  - `run_report.json` and `job.log` show which camera engine was used.
+- **The Multi-view engine must be installed again** (Depth Anything 3's code was added). The app shows it as
+  needing an update.
+
+# 2D2VR180 1.0.0-rc19 — sharper, more solid multi-view training from few views
+
+## What's new in rc19
+
+This release is for "Real 3D from one photo", and for any multi-view job with up to 24 photos.
+
+- **Confidence maps for generated views.**
+  - The photo is reprojected in 3D into each AI view and compared pixel by pixel, after removing the overall
+    brightness and colour difference.
+  - Regions that contradict the photo get almost no weight in training: a slightly turned head, a moved
+    hand or a different expression.
+  - What only the AI view shows (the sides, the top) keeps full weight.
+  - `job.log` says how much of each view was down-weighted.
+- **Sharp depth priors.** MoGe-2 depth of every view, scaled onto the multi-view geometry, guides the
+  rendered depth during the first 60% of training. With only 4 views this avoids floaters and flat or doubled
+  surfaces between views.
+- **Denser, sharper start.** The initial point cloud comes from those aligned MoGe-2 depths at full training
+  resolution, instead of VGGT's coarser 518-pixel depth.
+- When training runs out of GPU memory, the failed attempt's memory is now really freed before retrying.
+- Research behind these changes: VidSplat, ReconX and confidence fusion for generated views; FSGS, D²GS and
+  HBSplat for depth priors (see `docs/research/single-image-splat.md`).
+
+# 2D2VR180 1.0.0-rc18 — simpler Create page
+
+## What's new in rc18
+
+- **A simpler Create page.** One question, *What do you want to make?*:
+  - **Real 3D from one photo (recommended).** AI makes 3 views (45° left, 45° right, from above). The
+    multi-view engine then reconstructs real volume and scale from all four, as a trained splat. In Auto and
+    Quality the most consistent candidate per angle is chosen automatically.
+  - **Quick 3D.** Depth from the photo alone; takes seconds.
+  - **360° around the subject (experimental).** The sides, back, top and bottom are invented and
+    assembled with sharp fusion.
+  - **Custom.** Every setting under *Advanced options*.
+- **Quality and VR180 are on one line.** Layouts, projection, backend, generative mode, engine, assembly,
+  video mode, combining photos and 4D sequence are all folded into **Advanced options**.
+- **A clear warning before you start.** If the chosen option needs a component that is not installed yet (for
+  example Qwen-Image-Edit or the multi-view models), the yellow banner says so.
+- Radio buttons are easier to see in the dark theme.
+- New research and roadmap document: `docs/research/single-image-splat.md`.
+
+# 2D2VR180 1.0.0-rc17 — 3 views (Qwen) → multi-view, most consistent view chosen automatically
+
+## What's new in rc17
+
+- **New mode "3 views (Qwen)"** (replaces Stereo pair). Qwen-Image-Edit with the Multiple-Angles LoRA makes three
+  views of your photo: **45° to the left, 45° to the right, and a high-angle shot** from 30° above, looking
+  down. The photo and those three views go to the multi-view engine as a **trained splat**.
+- **Automatic consistency check.** Qwen redraws the image, so a view can come out with a slightly turned head
+  or a different expression. In Auto, 2 candidates are made per angle; in Quality, 3; in Fast, 1. Then:
+  1. The multi-view engine (VGGT) places the photo and each candidate in 3D.
+  2. It reprojects the photo into the candidate's view and measures how much does not match a pure camera
+     move.
+  3. It keeps the most consistent candidate.
+  - The choice and its scores are written to `job.log` and `run_report.json`.
+- **The Multi-view backend can be chosen for a single photo** when a generative mode is on. The views are
+  generated first, then reconstructed together with the photo as a trained multi-view splat. With generative
+  3D off, it explains that it needs more photos.
+- **Stereo pair removed.**
+
 # 2D2VR180 1.0.0-rc16 — stereo pair from one photo (Qwen)
 
 ## What's new in rc16
@@ -244,8 +521,8 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc16-setup.exe` | Installer — per user, no administrator rights |
-| `2D2VR180-1.0.0-rc16-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
+| `2D2VR180-1.0.0-rc34-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |
 

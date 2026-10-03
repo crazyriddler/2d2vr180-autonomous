@@ -43,6 +43,19 @@ COMPONENTS: list[Component] = [
               "Gaussian splat (VGGT + gsplat). Also used by Generative 3D. Needs an NVIDIA GPU with 10 GB+.", True),
     Component("model-vggt", "VGGT-1B — camera poses and depth from many views (non-commercial)", "model", "vggt-1b",
               "Finds where each photo/frame was taken and its depth.", True, ("engine-video",)),
+    Component("model-da3", "Depth Anything 3 (Nested Giant-Large) — better multi-view poses and depth "
+              "(non-commercial)", "model", "da3-nested-giant-large",
+              "Finds where each view was taken and its depth more accurately than VGGT, with real-world scale. "
+              "Used automatically by the multi-view engine when installed. ~6.8 GB.", True, ("engine-video",)),
+    Component("model-flashworld", "FlashWorld — Real 3D generated directly from one photo (non-commercial)",
+              "model", "flashworld",
+              "Generates the whole 3D scene from your photo in one go (a Wan 2.2 video model with a 3D Gaussian "
+              "decoder): every angle comes from the same 3D, so no ghosting between separately drawn views. "
+              "Used automatically by 'Real 3D from one photo' when installed. ~35 GB with its Wan 2.2 parts; "
+              "needs ~12 GB VRAM.", True, ("engine-video", "model-flashworld-base", "model-moge-l")),
+    Component("model-flashworld-base", "Wan2.2-TI2V-5B VAE and text encoder (for FlashWorld)", "model",
+              "wan2.2-ti2v-5b-base", "Image encoder/decoder and UMT5-XXL text encoder used by FlashWorld.", False,
+              ("engine-video",)),
     # ---------------------------------------------------------------- generative
     Component("engine-gen", "Generative engine (Qwen-Image-Edit, Wan 2.2, Stable Virtual Camera, LaMa)", "runtime", "gen-cu128",
               "Invents the parts of a scene a photo does not show (other sides of a subject, the surroundings "
@@ -57,9 +70,9 @@ COMPONENTS: list[Component] = [
     Component("model-qwen", "Qwen-Image-Edit-2511 + Multiple-Angles — sharp generative views (Apache-2.0)", "model",
               "qwen-image-edit-2511-q5", "Image model that redraws your photo from other camera angles (45°, 90°, "
               "the back, above, below) at about 1 megapixel — sharper than video frames. ~33 GB with its text "
-              "encoder and LoRAs; needs ~32 GB of RAM.", False,
-              ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning", "engine-video",
-               "model-vggt", "model-moge-l")),
+              "encoder and LoRAs; needs ~32 GB of RAM. Needed for 'Real 3D from one photo'.", True,
+              ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning",
+               "model-qwen-lightning8", "engine-video", "model-vggt", "model-moge-l")),
     Component("model-qwen-base", "Qwen-Image-Edit-2511 text encoder and VAE (for Qwen views)", "model",
               "qwen-image-edit-2511-base", "Qwen2.5-VL-7B text/image encoder, VAE and configuration.", False,
               ("engine-gen",)),
@@ -67,6 +80,9 @@ COMPONENTS: list[Component] = [
               "Camera-angle control: 8 directions × 4 heights × 3 distances.", False, ("engine-gen",)),
     Component("model-qwen-lightning", "Qwen-Image-Edit Lightning LoRA (4 steps)", "model", "qwen-edit-2511-lightning",
               "Makes each Qwen view take 4 sampling steps instead of 40.", False, ("engine-gen",)),
+    Component("model-qwen-lightning8", "Qwen-Image-Edit Lightning LoRA (8 steps, Quality)", "model",
+              "qwen-edit-2511-lightning-8", "Used in Quality mode: 8 sampling steps per view for finer detail.",
+              False, ("engine-gen",)),
     Component("model-seva", "Stable Virtual Camera 1.1 — alternative generative engine (non-commercial, gated)",
               "model", "seva-1.1", "Multi-view diffusion for scenes and objects without people (used only when Wan "
               "2.2 is not installed). Distorts people.", False,

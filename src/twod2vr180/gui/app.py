@@ -38,6 +38,10 @@ QGroupBox { border: 1px solid #343a46; border-radius: 8px; margin-top: 12px; pad
 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
 QProgressBar { border: 1px solid #434a58; border-radius: 5px; text-align: center; height: 16px; }
 QProgressBar::chunk { background: #2f6fed; border-radius: 4px; }
+QRadioButton { font-weight: 600; }
+QRadioButton::indicator { width: 14px; height: 14px; border-radius: 8px; border: 2px solid #7d8496; background: #181a1f; }
+QRadioButton::indicator:checked { border-color: #2f6fed; background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
+    fx:0.5, fy:0.5, stop:0 #ffffff, stop:0.35 #ffffff, stop:0.45 #2f6fed, stop:1 #2f6fed); }
 """
 
 

@@ -550,6 +550,189 @@
      "size_bytes": 849608296
     }
    ]
+  },
+  {
+   "id": "qwen-edit-2511-lightning-8",
+   "display_name": "Qwen-Image-Edit-2511 Lightning LoRA, 8 steps (lightx2v) — Quality mode",
+   "source": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
+   "revision": "d74eba145674fd7e31b949324e148e21e7118abd",
+   "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
+   "license_url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 0,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
+     "url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/d74eba145674fd7e31b949324e148e21e7118abd/Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
+     "sha256": "a9e81a58a78f260f67b337a6f615e8fa4cd3bc79847c77b7d61a581b789b1ba8",
+     "size_bytes": 849608296
+    }
+   ]
+  },
+  {
+   "id": "da3-nested-giant-large",
+   "display_name": "Depth Anything 3 Nested Giant-Large 1.1 — multi-view poses, depth and metric scale",
+   "source": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+   "revision": "b2359bdf726fb44ef62acca04d629dcf158053e7",
+   "license": "CC BY-NC 4.0 (Hugging Face model card: license: cc-by-nc-4.0) — non-commercial use only",
+   "license_url": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+   "commercial_use": false,
+   "redistributable": false,
+   "required_vram_gb": 8,
+   "backends": [
+    "multiview",
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "config.json",
+     "url": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1/resolve/b2359bdf726fb44ef62acca04d629dcf158053e7/config.json",
+     "sha256": null,
+     "size_bytes": 3113
+    },
+    {
+     "path": "model.safetensors",
+     "url": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1/resolve/b2359bdf726fb44ef62acca04d629dcf158053e7/model.safetensors",
+     "sha256": "8ebe871a022ed58d2fc8fdfb2ebdb31d57b60fe39611c849095851a7b7c6020c",
+     "size_bytes": 6759558100
+    }
+   ]
+  },
+  {
+   "id": "wan2.2-ti2v-5b-base",
+   "display_name": "Wan2.2-TI2V-5B — VAE, UMT5-XXL text encoder and configs (for FlashWorld)",
+   "source": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+   "revision": "b8fff7315c768468a5333511427288870b2e9635",
+   "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
+   "license_url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 12,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "model_index.json",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/model_index.json",
+     "sha256": null,
+     "size_bytes": 499
+    },
+    {
+     "path": "scheduler/scheduler_config.json",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/scheduler/scheduler_config.json",
+     "sha256": null,
+     "size_bytes": 820
+    },
+    {
+     "path": "transformer/config.json",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/transformer/config.json",
+     "sha256": null,
+     "size_bytes": 495
+    },
+    {
+     "path": "vae/config.json",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/vae/config.json",
+     "sha256": null,
+     "size_bytes": 1701
+    },
+    {
+     "path": "vae/diffusion_pytorch_model.safetensors",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/vae/diffusion_pytorch_model.safetensors",
+     "sha256": "62cd18f19438e35b32ac63020e2852f566e9b02f46b6cdbd87972a356e3c6f4b",
+     "size_bytes": 2818777808
+    },
+    {
+     "path": "text_encoder/config.json",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/text_encoder/config.json",
+     "sha256": null,
+     "size_bytes": 855
+    },
+    {
+     "path": "text_encoder/model.safetensors.index.json",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/text_encoder/model.safetensors.index.json",
+     "sha256": null,
+     "size_bytes": 22476
+    },
+    {
+     "path": "text_encoder/model-00001-of-00003.safetensors",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/text_encoder/model-00001-of-00003.safetensors",
+     "sha256": "a8e861969c7433e707cc5a74065d795d36cca07ec96eb6763eb4083df7248f58",
+     "size_bytes": 4935812536
+    },
+    {
+     "path": "text_encoder/model-00002-of-00003.safetensors",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/text_encoder/model-00002-of-00003.safetensors",
+     "sha256": "d57d948ece4837d850b7a859a4415121d57cacf8b9ee1d4db200c67f592902d7",
+     "size_bytes": 4983103192
+    },
+    {
+     "path": "text_encoder/model-00003-of-00003.safetensors",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/text_encoder/model-00003-of-00003.safetensors",
+     "sha256": "0da9ee284e21d1406df708788db1d502d95d75f69faa25cd26151bf8829b7c5f",
+     "size_bytes": 1442935480
+    },
+    {
+     "path": "tokenizer/special_tokens_map.json",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/tokenizer/special_tokens_map.json",
+     "sha256": null,
+     "size_bytes": 7079
+    },
+    {
+     "path": "tokenizer/spiece.model",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/tokenizer/spiece.model",
+     "sha256": "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458",
+     "size_bytes": 4548313
+    },
+    {
+     "path": "tokenizer/tokenizer.json",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/tokenizer/tokenizer.json",
+     "sha256": "20a46ac256746594ed7e1e3ef733b83fbc5a6f0922aa7480eda961743de080ef",
+     "size_bytes": 16837459
+    },
+    {
+     "path": "tokenizer/tokenizer_config.json",
+     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/tokenizer/tokenizer_config.json",
+     "sha256": null,
+     "size_bytes": 61758
+    }
+   ],
+   "notes": "The 5B transformer is not downloaded from this repository: FlashWorld's checkpoint contains its own fine-tuned copy of it."
+  },
+  {
+   "id": "flashworld",
+   "display_name": "FlashWorld — single image to 3D Gaussians (ICLR 2026)",
+   "source": "https://huggingface.co/imlixinyang/FlashWorld",
+   "revision": "6a8e88c6f88678ac098e4c82675f0aee555d6e5d",
+   "license": "CC BY-NC-SA 4.0 (Hugging Face model card: license: cc-by-nc-sa-4.0) — non-commercial use only; code Apache-2.0",
+   "license_url": "https://huggingface.co/imlixinyang/FlashWorld",
+   "commercial_use": false,
+   "redistributable": false,
+   "required_vram_gb": 12,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "model.ckpt",
+     "url": "https://huggingface.co/imlixinyang/FlashWorld/resolve/6a8e88c6f88678ac098e4c82675f0aee555d6e5d/model.ckpt",
+     "sha256": "610a09a11917ae112ea71f2f42291d5c8f11f54ae501ec14a8740f22da2540bd",
+     "size_bytes": 20936494840
+    }
+   ],
+   "notes": "Fine-tuned Wan2.2-TI2V-5B transformer and 3D Gaussian decoder (fp32 PyTorch checkpoint, loaded memory-mapped and quantised to FP8 at run time)."
   }
  ]
 }

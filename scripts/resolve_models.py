@@ -14,17 +14,20 @@ import urllib.parse
 import urllib.request
 
 HF_REPOS = [
-    "Qwen/Qwen-Image-Edit-2511", "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
-    "lightx2v/Qwen-Image-Edit-2511-Lightning", "unsloth/Qwen-Image-Edit-2511-GGUF",
-    "QuantStack/Qwen-Image-Edit-2511-GGUF",
+    "imlixinyang/FlashWorld",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
 ]
-HF_SEARCH = ["Qwen-Image-Edit-2511 gguf", "Qwen-Image-Edit-2511-Multiple-Angles"]
-GGUF_HEADERS = [  # tensor names of GGUF files (read from the first MiBs, not downloaded)
-    "unsloth/Qwen-Image-Edit-2511-GGUF/qwen-image-edit-2511-Q5_K_M.gguf",
-]
+HF_SEARCH: list[str] = []
+GGUF_HEADERS: list[str] = []
 HF_TEXT = [  # small files whose content is needed (configs, model cards)
-    "Qwen/Qwen-Image-Edit-2511/transformer/config.json", "Qwen/Qwen-Image-Edit-2511/model_index.json",
-    "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA/README.md",
+    "imlixinyang/FlashWorld/README.md",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/transformer/config.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/text_encoder/config.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/model_index.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/vae/config.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/scheduler/scheduler_config.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/tokenizer/tokenizer_config.json",
+    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/tokenizer/special_tokens_map.json",
 ]
 URLS: list[str] = []  # non-HF downloads: hashed by streaming
 

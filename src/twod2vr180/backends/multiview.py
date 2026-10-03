@@ -21,6 +21,9 @@ QUALITY = {  # mode → (training steps, longest image side, splat cap)
     "auto": (9000, 960, 2_000_000),
     "quality": (15000, 1280, 3_000_000),
 }
+DA3_MODEL = "da3-nested-giant-large"   # preferred camera engine when installed (VGGT otherwise)
+DA3_RES = {"fast": 392, "auto": 504, "quality": 616}
+FF_REFINE = {"fast": 1500, "auto": 3000, "quality": 5000}   # polish steps after the feed-forward splat   # processing size (multiples of 14)
 FUSION = {  # sharp fusion: mode → (photo side, generated-view side, splat cap)
     "fast": (1024, 768, 2_000_000),
     "auto": (1536, 1024, 3_000_000),
@@ -57,10 +60,35 @@ class MultiViewBackend(Backend):
     # ------------------------------------------------------------------ run
     def run(self, inp: JobInput, ctx: BackendContext, options: dict, progress, cancel) -> BackendResult:
         frames = list(inp.frames)
+        flags = list(options.get("generated_flags") or [])
+        flags = (flags + [False] * len(frames))[:len(frames)]
         ref = min(int(options.get("reference_frame_index", 0)), len(frames) - 1)
         frames.insert(0, frames.pop(ref))  # the reference view defines the scene frame
-        views = [{"path": str(p), "generated": False, "weight": 1.0} for p in frames]
+        flags.insert(0, flags.pop(ref))
+        views = [{"path": str(p), "generated": bool(g), "weight": 1.0} for p, g in zip(frames, flags)]
+        if any(flags) and not flags[0]:
+            # a photo plus AI views (e.g. rebuilt with the user's own picks): same settings as Real 3D
+            w_in = max(4.0, len(views) / 10)
+            views[0]["weight"] = w_in
+            mode = options.get("mode", "auto")
+            options = {**options, "max_side": {"fast": 960, "auto": 1280, "quality": 1600}.get(mode, 1280),
+                       "sh_degree": 1}
         return self.reconstruct(views, inp, ctx, options, progress, cancel)
+
+    def score(self, views: list[dict], inp: JobInput, ctx: BackendContext, options: dict, progress, cancel,
+              progress_range: tuple[float, float] = (0.0, 1.0)) -> list[dict]:
+        """Consistency score of every generated candidate against the photo (no reconstruction)."""
+        mode = options.get("mode", "auto")
+        req = {"images": views, "output_dir": str(inp.work_dir / "multiview_score"), "score_only": True,
+               "vggt_dir": str(ctx.models.model_dir("vggt-1b")), "max_side": int(options.get("max_side", 1024))}
+        if DA3_MODEL in ctx.models.entries and ctx.models.is_installed(DA3_MODEL) and \
+                options.get("camera_engine", "auto") != "vggt":
+            req.update(pose_engine="da3", da3_dir=str(ctx.models.model_dir(DA3_MODEL)),
+                       da3_res=DA3_RES.get(mode, 504))
+        out = run_worker(ctx.runtimes.python(self.runtime_id), self.worker_script, req, inp.work_dir / "worker",
+                         progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id), log=options.get("log"),
+                         progress_range=progress_range, timeout_s=3600)
+        return out["result"].get("candidate_selection") or []
 
     def reconstruct(self, views: list[dict], inp: JobInput, ctx: BackendContext, options: dict, progress, cancel,
                     progress_range: tuple[float, float] = (0.0, 0.95), extra_models: list[dict] | None = None,
@@ -74,6 +102,18 @@ class MultiViewBackend(Backend):
                "moge_path": str(ctx.models.paths("moge-2-vitl-normal")["model.pt"]),
                "max_side": int(options.get("max_side", side)), "steps": int(options.get("train_steps", steps)),
                "max_gaussians": cap, "mesh": bool(options.get("mesh", True)), "assembly": assembly}
+        if options.get("sh_degree") is not None:
+            req["sh_degree"] = int(options["sh_degree"])
+        da3 = DA3_MODEL in ctx.models.entries and ctx.models.is_installed(DA3_MODEL) and \
+            options.get("camera_engine", "auto") != "vggt"
+        if da3:
+            req.update(pose_engine="da3", da3_dir=str(ctx.models.model_dir(DA3_MODEL)),
+                       da3_res=DA3_RES.get(mode, 504))
+            if assembly == "train" and any(v.get("generated") for v in views) and options.get("feedforward", True):
+                # photo + generated views: Depth Anything 3's feed-forward splat fuses them coherently;
+                # training from scratch on 4 slightly inconsistent views ghosts (owner tests, rc30-rc32)
+                req["assembly"] = "ff"
+                req["ff_refine_steps"] = int(options.get("ff_refine_steps", FF_REFINE.get(mode, 3000)))
         if assembly == "fusion":
             ref_side, gen_side, req["max_gaussians"] = FUSION.get(mode, FUSION["auto"])
             req.update(fuse_ref_side=ref_side, fuse_side=gen_side)
@@ -101,16 +141,30 @@ class MultiViewBackend(Backend):
                     f"(observed colours, network-predicted depth; {p.get('inferred', 0):,}); surfaces added from "
                     f"generated views are GENERATIVE ({p.get('generative', 0):,}).")
         else:
-            note = (f"Trained on {res.get('views')} views ({res.get('real_views')} real). Splats seen by two or more "
+            note = ("Depth Anything 3 feed-forward splat, polished: " if res.get("assembly") == "ff" else "")
+            note += (f"Trained on {res.get('views')} views ({res.get('real_views')} real). Splats seen by two or more "
                     f"real views are OBSERVED ({p.get('observed', 0):,}), by one real view INFERRED "
                     f"({p.get('inferred', 0):,})")
             note += (f", only by generated views GENERATIVE ({p.get('generative', 0):,})." if p.get("generative")
                      else ".")
         warnings = list(extra_warnings or [])
+        ff_ply = ff_tt = None
+        if files.get("ply_feedforward") and Path(files["ply_feedforward"]).exists():
+            ff_ply = exp / "scene_feedforward.ply"
+            shutil.copy2(files["ply_feedforward"], ff_ply)
+            if files.get("turntable_feedforward_frames"):
+                ff_tt, _ = encode_turntable(Path(files["turntable_feedforward_frames"]),
+                                            exp / "turntable_feedforward.mp4")
+        turntable = None
+        if files.get("turntable_frames"):
+            turntable, err = encode_turntable(Path(files["turntable_frames"]), exp / "turntable.mp4")
+            if err:
+                warnings.append(f"Turntable preview not encoded: {err}")
         if not res.get("metric"):
             warnings.append("Metric scale could not be estimated; stereo depth may need the eye-separation setting.")
+        used = list(self.model_ids(options)) + ([DA3_MODEL] if res.get("camera_engine") == "da3" else [])
         models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
-                  for m in self.model_ids(options)]
+                  for m in used]
         return BackendResult(
             backend=self.id, scene_ply=ply, splat=splat, obj=obj,
             cameras=[c for c in cams if not c.get("generated")],
@@ -118,5 +172,37 @@ class MultiViewBackend(Backend):
             worker_env=out["env"], models_used=models + list(extra_models or []), warnings=warnings,
             extra={"gaussians": len(scene), "views": res.get("views"), "real_views": res.get("real_views"),
                    "reference_psnr_db": res.get("reference_psnr_db"), "mesh": res.get("mesh"),
-                   "assembly": res.get("assembly", "train"),
-                   "metric_scale_factor": res.get("metric_scale_factor")})
+                   "assembly": res.get("assembly", "train"), "camera_engine": res.get("camera_engine", "vggt"),
+                   "candidate_selection": res.get("candidate_selection") or [],
+                   "metric_scale_factor": res.get("metric_scale_factor"),
+                   "turntable": str(turntable) if turntable else None,
+                   "colour_correction": res.get("colour_correction") or [],
+                   "pose_refinement": res.get("pose_refinement") or [],
+                   "subject_mode": bool(res.get("subject_mode")),
+                   "feedforward_ply": str(ff_ply) if ff_ply else None,
+                   "turntable_feedforward": str(ff_tt) if ff_tt else None})
+
+
+def encode_turntable(frames: Path, dest: Path, fps: int = 24) -> tuple[Path | None, str | None]:
+    """JPEG frames rendered by the worker -> H.264 MP4 with the bundled FFmpeg."""
+    import subprocess
+
+    from ..media import find_ffmpeg
+
+    if not any(frames.glob("frame_*.jpg")):
+        return None, "no frames"
+    ff = find_ffmpeg()
+    if not ff:
+        return None, "FFmpeg not found"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [ff, "-y", "-loglevel", "error", "-framerate", str(fps), "-i", str(frames / "frame_%03d.jpg"),
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-movflags", "+faststart", str(dest)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                           creationflags=0x08000000 if __import__("sys").platform == "win32" else 0)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, str(e)
+    if r.returncode != 0 or not dest.exists():
+        return None, (r.stderr or "ffmpeg failed").strip().splitlines()[-1][:200]
+    shutil.rmtree(frames, ignore_errors=True)
+    return dest, None

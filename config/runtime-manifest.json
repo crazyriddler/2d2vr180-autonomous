@@ -65,9 +65,15 @@
         {
           "name": "pipeline",
           "url": "https://github.com/EasternJournalist/pipeline/archive/1c511390d90226c00c101f34b84df26a0f8789b4.zip"
+        },
+        {
+          "name": "depth-anything-3",
+          "url": "https://github.com/ByteDance-Seed/Depth-Anything-3/archive/3d835ec1a5802d64a8b8b15f817a1ab54809bfe4.zip",
+          "copy_package": "depth_anything_3",
+          "package_root": "src"
         }
       ],
-      "smoke_test": "import torch, gsplat, gsplat.strategy, vggt.models.vggt, moge.model.v2, open3d, sklearn, plyfile; print('cuda', torch.cuda.is_available())",
+      "smoke_test": "import torch, gsplat, gsplat.strategy, vggt.models.vggt, moge.model.v2, open3d, sklearn, plyfile, addict, omegaconf, diffusers, transformers, sentencepiece; import importlib.util as u; assert u.find_spec('depth_anything_3'); print('cuda', torch.cuda.is_available())",
       "network_at_inference": false,
       "lock": "locks/recon3d-cu124.txt",
       "local_versions": {

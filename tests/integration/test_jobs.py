@@ -219,6 +219,8 @@ def test_several_photos_become_one_multiview_scene(ctx, rtx4080, tmp_path, monke
     req = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     assert [Path(v["path"]).name for v in req["images"]][0] == "frame_00000.png"
     assert rep["outputs"]["vr180"]["stills"]
+    tt = rep["backend"]["extra"]["turntable"]
+    assert tt and Path(tt).name == "turntable.mp4" and Path(tt).stat().st_size > 0
 
 
 def test_folder_of_photos_is_expanded(tmp_path):
@@ -418,33 +420,153 @@ def test_qwen_cannot_explore_falls_back_to_wan(ctx, rtx4080, photo, monkeypatch)
     assert rep["backend"]["extra"]["engine"] == "wan"
 
 
-def test_qwen_stereo_pair_goes_to_trained_multiview(ctx, rtx4080, photo, monkeypatch):
+@pytest.mark.parametrize("mode,n_cand", [("fast", 1), ("auto", 2), ("quality", 3)])
+def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypatch, mode, n_cand):
     from conftest import install_fake_model
 
     _fake_generative(monkeypatch)
     for mid in QWEN_IDS:
         install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="stereo", layouts=["sbs"], renderer="cpu")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode=mode, generative="tri", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     gen = job.dir / "generated_views"
     enc = json.loads((gen / "stage_encode.json").read_text())
-    assert [v["label"] for v in enc["views"]] == ["left", "right"] and enc["angles_strength"] == 0.0
-    assert all("Keep everything else exactly the same" in v["prompt"] for v in enc["views"])
-    assert len(list(gen.glob("view*.png"))) == 2                 # only two generated images
+    assert [(v["azimuth"], v["elevation"]) for v in enc["views"]] == [(315, 0), (45, 0), (0, 30)]
+    assert enc["angles_strength"] > 0 and enc["candidates"] == n_cand
+    retry = 2 if n_cand > 1 else 0          # the fake scorer finds the first angle weak (Auto/Quality retry)
+    assert len(list(gen.glob("view*.png"))) == 3 * n_cand + retry
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "train" and len(mv["images"]) == 3
-    assert not mv["images"][0]["generated"] and all(v["generated"] for v in mv["images"][1:])
+    assert mv["assembly"] == "train" and len(mv["images"]) == 4      # the photo + exactly 3 views
+    assert not mv["images"][0]["generated"]
+    if n_cand > 1:
+        assert [len(v["candidates"]) for v in mv["images"][1:]] == [n_cand + retry, n_cand, n_cand]
+        assert all(v["target_deg"] in (45, 30) for v in mv["images"][1:])
     assert rep["backend"]["extra"]["assembly"] == "train"
+    sheet = job.dir / "export" / "generated_views_sheet.jpg"
+    assert sheet.exists() and rep["backend"]["extra"]["contact_sheet"].endswith("generated_views_sheet.jpg")
 
 
-def test_stereo_view_prompt_is_used_verbatim():
-    import sys
+@pytest.mark.parametrize("with_8", [False, True])
+def test_quality_uses_the_8_step_lightning_lora_when_installed(ctx, rtx4080, photo, monkeypatch, with_8):
+    from conftest import install_fake_model
 
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS + (("qwen-edit-2511-lightning-8",) if with_8 else ()):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    enc = json.loads((job.dir / "generated_views" / "stage_encode.json").read_text())
+    assert enc["steps"] == (8 if with_8 else 4)
+    assert ("8steps" in enc["lora_lightning"]) == with_8
+    ids = {m["id"] for m in rep["models"]}
+    assert ("qwen-edit-2511-lightning-8" in ids) == with_8
+
+
+def test_real3d_uses_the_feedforward_splat_when_depth_anything_3_is_installed(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS + ("da3-nested-giant-large",):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["assembly"] == "ff" and mv["ff_refine_steps"] == 3000 and mv["pose_engine"] == "da3"
+    extra = rep["backend"]["extra"]
+    assert extra["assembly"] == "ff"
+    assert Path(extra["feedforward_ply"]).name == "scene_feedforward.ply" and Path(extra["feedforward_ply"]).exists()
+    assert Path(extra["turntable_feedforward"]).name == "turntable_feedforward.mp4"
+    assert "feed-forward" in rep["coverage"]["note"]
+
+
+def test_real3d_generates_the_3d_directly_with_flashworld_when_installed(ctx, rtx4080, photo, monkeypatch):
+    from conftest import REPO, install_fake_model
+    from twod2vr180.backends.generative import GenerativeSceneBackend
+
+    _fake_generative(monkeypatch)
+    monkeypatch.setattr(GenerativeSceneBackend, "flashworld_script",
+                        str(REPO / "tests" / "fakes" / "fake_flashworld_worker.py"))
+    for mid in QWEN_IDS + ("flashworld", "wan2.2-ti2v-5b-base"):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    extra = rep["backend"]["extra"]
+    assert extra["engine"] == "flashworld" and extra["assembly"] == "generated"
+    gen = json.loads((job.dir / "fake_flashworld_generate.json").read_text())
+    assert gen["frames"] == 24 and gen["swing_deg"] == 30 and gen["ckpt"].endswith("model.ckpt")
+    assert gen["base_dir"].endswith("wan2.2-ti2v-5b-base") and Path(gen["embeds_path"]).exists()
+    assert not (job.dir / "generated_views").exists()            # no separate AI views any more
+    cov = rep["coverage"]["by_splat"]
+    assert cov["inferred"] > 0 and cov["generative"] > 0           # the photo's part vs the invented part
+    assert Path(extra["turntable"]).name == "turntable.mp4"
+    assert {m["id"] for m in rep["models"]} >= {"flashworld", "wan2.2-ti2v-5b-base"}
+    # the text embedding is computed once and reused
+    job2, rep2, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep2["status"] == "succeeded"
+    assert Path(gen["embeds_path"] + ".calls").read_text().count("1") == 1
+
+
+def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", backend="multiview", generative="capture",
+                          gen_assembly="fusion", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["selection"]["backend"] == "generative_scene"
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["assembly"] == "train"
+
+
+def test_multiview_backend_on_one_photo_without_generation_explains(ctx, rtx4080, photo):
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", backend="multiview", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "failed" and "generative mode" in rep["error"]["message"]
+
+
+def test_real3d_trains_at_photo_detail_with_low_sh(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["max_side"] == 1600 and mv["sh_degree"] == 1
+
+
+
+def test_weak_angle_gets_more_candidates(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, log = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    gen = job.dir / "generated_views"
+    req = json.loads((gen / "stage_generate.json").read_text())         # the last generate call (the retry)
+    counts = {v["label"]: v.get("candidates") for v in req["views"]}
+    assert counts["45° left"] == 4 and counts["45° right"] is None and counts["high angle"] is None
+    assert len(list(gen.glob("view00*.png"))) == 4 and len(list(gen.glob("view01*.png"))) == 2
+
+
+def test_rebuild_with_own_picks_marks_ai_views(ctx, rtx4080, photo, tmp_path, monkeypatch):
     from conftest import REPO
+    from twod2vr180.backends.multiview import MultiViewBackend
 
-    sys.path.insert(0, str(REPO / "workers"))
-    import qwen_views_worker as q
-    from twod2vr180.backends.generative import STEREO_VIEWS
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_multiview_worker.py"))
+    import shutil
 
-    assert q.view_prompt(STEREO_VIEWS[0]) == STEREO_VIEWS[0]["prompt"]
-    assert q.view_prompt({"azimuth": 90, "elevation": 0}).startswith("<sks> right side view")
+    picks = []
+    for name in ("view00_c1.png", "view01.png"):
+        shutil.copy(photo, tmp_path / name)
+        picks.append(tmp_path / name)
+    job, rep, _ = run_job(ctx, rtx4080, [photo] + picks, mode="quality", backend="multiview",
+                          generated_inputs=[str(p) for p in picks], layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert [v["generated"] for v in mv["images"]] == [False, True, True]
+    assert mv["images"][0]["weight"] >= 4 and mv["max_side"] == 1600 and mv["sh_degree"] == 1

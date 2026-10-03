@@ -11,7 +11,10 @@ Improvements over a minimal trainer:
   * D-SSIM + L1 photometric loss, coarse-to-fine resolution schedule,
   * scale regularisation (no needle splats that shimmer in VR) and opacity decay,
   * densification (gsplat DefaultStrategy) with a hard cap on the splat count,
-  * per-splat provenance: how many *real* (non-generated) views see each splat.
+  * per-splat provenance: how many *real* (non-generated) views see each splat,
+  * optional per-pixel confidence maps (generated views: pixels that contradict the photo count less),
+  * optional monocular depth priors (sparse views: rendered depth is pulled towards each view's
+    scale-aligned MoGe-2 depth early in training - fewer floaters, real surfaces between views).
 """
 
 from __future__ import annotations
@@ -44,6 +47,15 @@ class TrainConfig:
     lr_shN: float = 2.5e-3 / 20
     seed: int = 0
     log_every: int = 250
+    depth_weight: float = 0.1      # monocular depth prior (relative L1), decays linearly to 0 ...
+    depth_until: float = 0.6       # ... at this fraction of the steps
+    lr_appearance: float = 1e-3    # per-view colour correction (generated views only)
+    appearance_reg: float = 0.05   # keeps that correction close to identity
+    lr_pose: float = 1e-4          # camera refinement of generated views (rad / scene-scale units)
+    pose_reg: float = 1e-3
+    pose_from: float = 0.1         # start refining poses after this fraction of the steps
+    absgrad: bool = True           # AbsGS densification: grows splats in fine texture (hair, fabric)
+    grow_grad2d: float = 0.0008    # gsplat's threshold for absgrad (0.0002 without)
 
 
 def knn_scales(points, k: int = 4):
@@ -98,6 +110,29 @@ def init_params(points: np.ndarray, colors: np.ndarray, cfg: TrainConfig, device
     })
 
 
+def params_from_gaussians(g: dict, cfg: TrainConfig, device):
+    """Trainable parameters from ready-made Gaussians (e.g. a feed-forward model's):
+    means (N,3), scales (N,3, standard deviations), quats (N,4, w x y z), dc (N,3, SH DC band),
+    opacity (N, in 0..1)."""
+    import torch
+
+    def t(a):
+        return torch.as_tensor(np.asarray(a), dtype=torch.float32, device=device)
+
+    n = len(g["means"])
+    sh = torch.zeros(n, (cfg.sh_degree + 1) ** 2, 3, device=device)
+    sh[:, 0] = t(g["dc"])
+    quats = torch.nn.functional.normalize(t(g["quats"]), dim=1)
+    return torch.nn.ParameterDict({
+        "means": torch.nn.Parameter(t(g["means"])),
+        "scales": torch.nn.Parameter(torch.log(t(g["scales"]).clamp_min(1e-7))),
+        "quats": torch.nn.Parameter(quats),
+        "opacities": torch.nn.Parameter(torch.logit(t(g["opacity"]).clamp(1e-4, 1 - 1e-4))),
+        "sh0": torch.nn.Parameter(sh[:, :1].contiguous()),
+        "shN": torch.nn.Parameter(sh[:, 1:].contiguous()),
+    })
+
+
 def ssim(a, b):
     """Mean SSIM of two (1,3,H,W) images in [0,1] (11x11 Gaussian window)."""
     import torch
@@ -117,7 +152,7 @@ def ssim(a, b):
     return m.mean()
 
 
-def gsplat_render(params, viewmat, K, width, height, sh_degree, mode="RGB"):
+def gsplat_render(params, viewmat, K, width, height, sh_degree, mode="RGB", absgrad=False):
     import torch
     from gsplat import rasterization
 
@@ -126,7 +161,7 @@ def gsplat_render(params, viewmat, K, width, height, sh_degree, mode="RGB"):
         means=params["means"], quats=params["quats"], scales=params["scales"].exp(),
         opacities=params["opacities"].sigmoid(), colors=colors, viewmats=viewmat, Ks=K,
         width=width, height=height, sh_degree=sh_degree, near_plane=0.01, far_plane=1e10, packed=False,
-        render_mode=mode)
+        render_mode=mode, absgrad=absgrad)
     return out[0], alpha[0], info
 
 
@@ -138,15 +173,33 @@ def scene_scale(c2ws: np.ndarray, points: np.ndarray) -> float:
 
 
 def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.ndarray, colors: np.ndarray,
-          cfg: TrainConfig | None = None, device="cuda", render_fn=None, progress=None, cancel=None):
-    """Optimise Gaussians. ``images``: list of (H,W,3) uint8 arrays (sizes may differ)."""
+          cfg: TrainConfig | None = None, device="cuda", render_fn=None, progress=None, cancel=None,
+          pixel_weights: list | None = None, depth_priors: list | None = None,
+          appearance: list | None = None, appearance_out: list | None = None,
+          pose_opt: list | None = None, pose_out: list | None = None, init: dict | None = None):
+    """Optimise Gaussians. ``images``: list of (H,W,3) uint8 arrays (sizes may differ).
+    ``pixel_weights``: per view None or an (H,W) float map in [0,1] (photometric confidence).
+    ``depth_priors``: per view None or an (H,W) depth map in scene units (0 = unknown).
+    ``appearance``: per view True to learn a colour correction (3x3 matrix + offset) applied to the
+    render before the loss. Used for generated views, whose exposure / white balance drifts from the
+    photo: the splats keep the photo's colours instead of averaging in the drift. ``appearance_out``
+    receives the learned corrections ([A, b] per view, None when not learned).
+    ``pose_opt``: per view True to refine its camera (a small SE(3) correction, the first real view
+    stays fixed as the reference). ``pose_out`` receives the refined camera-to-world matrices.
+    ``init``: start from these Gaussians (see params_from_gaussians) instead of points / colours."""
     import torch
     import torch.nn.functional as F
 
     cfg = cfg or TrainConfig()
-    render_fn = render_fn or gsplat_render
+    if render_fn is None:
+        def render_fn(*a, **k):
+            return gsplat_render(*a, absgrad=cfg.densify and cfg.absgrad, **k)
     torch.manual_seed(cfg.seed)
-    params = init_params(points, colors, cfg, device)
+    if init is not None:
+        params = params_from_gaussians(init, cfg, device)
+        points = np.asarray(init["means"])
+    else:
+        params = init_params(points, colors, cfg, device)
     scale = scene_scale(c2ws, points)
     opt = {
         "means": torch.optim.Adam([params["means"]], lr=cfg.lr_means * scale, eps=1e-15),
@@ -162,13 +215,26 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         from gsplat.strategy import DefaultStrategy
 
         strategy = DefaultStrategy(verbose=False, refine_stop_iter=int(cfg.steps * 0.75),
-                                   reset_every=max(3000, cfg.steps // 4))
+                                   reset_every=max(3000, cfg.steps // 4), absgrad=cfg.absgrad,
+                                   grow_grad2d=cfg.grow_grad2d if cfg.absgrad else 0.0002)
         strategy.check_sanity(params, opt)
         state = strategy.initialize_state(scene_scale=scale)
     gts = [torch.from_numpy(np.ascontiguousarray(im)).to(device) for im in images]
+    pw = [None if m is None else torch.as_tensor(np.asarray(m, np.float32), device=device)
+          for m in (pixel_weights or [None] * len(images))]
+    dp = [None if m is None else torch.as_tensor(np.asarray(m, np.float32), device=device)
+          for m in (depth_priors or [None] * len(images))]
     viewmats = torch.linalg.inv(torch.as_tensor(np.asarray(c2ws), dtype=torch.float32)).to(device)
     Kt = torch.as_tensor(np.asarray(Ks), dtype=torch.float32).to(device)
     w = torch.as_tensor(np.asarray(weights, np.float64) / np.sum(weights), dtype=torch.float32)
+    app = [bool(a) for a in (appearance or [False] * len(images))]
+    app_A = torch.eye(3, device=device).repeat(len(images), 1, 1).requires_grad_(any(app))
+    app_b = torch.zeros(len(images), 3, device=device).requires_grad_(any(app))
+    app_opt = torch.optim.Adam([app_A, app_b], lr=cfg.lr_appearance) if any(app) else None
+    popt = [bool(p) for p in (pose_opt or [False] * len(images))]
+    c2w_t = torch.as_tensor(np.asarray(c2ws), dtype=torch.float32).to(device)
+    pose_d = torch.zeros(len(images), 6, device=device, requires_grad=any(popt))
+    pose_optim = torch.optim.Adam([pose_d], lr=cfg.lr_pose) if any(popt) else None
     g = torch.Generator().manual_seed(cfg.seed)
     history = []
     for step in range(cfg.steps):
@@ -178,27 +244,61 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         gt = gts[i].float() / 255.0
         K = Kt[i].clone()
         h, wd = gt.shape[:2]
+        wm, dm = pw[i], dp[i]
         if step < cfg.coarse_until * cfg.steps and min(h, wd) >= 64:
             h2, w2 = h // 2, wd // 2
             gt = F.interpolate(gt.permute(2, 0, 1)[None], size=(h2, w2), mode="area")[0].permute(1, 2, 0)
+            if wm is not None:
+                wm = F.interpolate(wm[None, None], size=(h2, w2), mode="area")[0, 0]
+            if dm is not None:
+                dm = F.interpolate(dm[None, None], size=(h2, w2), mode="nearest")[0, 0]
             K[:2] *= torch.tensor([[w2 / wd], [h2 / h]], device=K.device)
             h, wd = h2, w2
+        vm_i = viewmats[i:i + 1]
+        pose_loss = None
+        if popt[i] and step >= cfg.pose_from * cfg.steps:
+            vm_i = torch.linalg.inv(c2w_t[i] @ se3_exp(pose_d[i], scale))[None]
+            pose_loss = pose_d[i].square().sum()
         sh_deg = min(step // 1000, cfg.sh_degree)
-        rgb, alpha, info = render_fn(params, viewmats[i:i + 1], K[None], wd, h, sh_deg)
+        lam_d = cfg.depth_weight * max(0.0, 1.0 - step / max(1.0, cfg.depth_until * cfg.steps))
+        use_depth = dm is not None and lam_d > 0
+        if use_depth:
+            out, alpha, info = render_fn(params, vm_i, K[None], wd, h, sh_deg, mode="RGB+ED")
+            rgb, depth = out[..., :3], out[..., 3]
+        else:
+            rgb, alpha, info = render_fn(params, vm_i, K[None], wd, h, sh_deg)
+            rgb = rgb[..., :3]
         if strategy is not None:
             strategy.step_pre_backward(params, opt, state, step, info)
-        rgb = rgb[..., :3]
-        l1 = (rgb - gt).abs().mean()
+        app_loss = None
+        if app[i]:
+            rgb = rgb @ app_A[i].T + app_b[i]
+            app_loss = (app_A[i] - torch.eye(3, device=device)).square().sum() + app_b[i].square().sum()
+        if wm is None:
+            l1 = (rgb - gt).abs().mean()
+            gt_s = gt
+        else:
+            l1 = ((rgb - gt).abs().mean(-1) * wm).sum() / wm.sum().clamp_min(1.0)
+            # pixels with low confidence follow the current render in SSIM (no gradient towards them)
+            gt_s = gt * wm[..., None] + rgb.detach() * (1 - wm[..., None])
         loss = l1
         if cfg.ssim_weight > 0:
             loss = (1 - cfg.ssim_weight) * l1 + cfg.ssim_weight * (
-                1 - ssim(rgb.permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None]))
+                1 - ssim(rgb.permute(2, 0, 1)[None], gt_s.permute(2, 0, 1)[None]))
+        if use_depth:
+            valid = (dm > 0) & (alpha[..., 0] > 0.5)
+            if bool(valid.any()):
+                loss = loss + lam_d * ((depth[valid] - dm[valid]).abs() / dm[valid]).mean()
         s = params["scales"].exp()
         if cfg.scale_reg > 0:
             ratio = s.max(1).values / s.min(1).values.clamp_min(1e-12)
             loss = loss + cfg.scale_reg * (ratio - cfg.max_aniso).clamp_min(0).mean()
         if cfg.opacity_reg > 0:
             loss = loss + cfg.opacity_reg * params["opacities"].sigmoid().mean()
+        if app_loss is not None:
+            loss = loss + cfg.appearance_reg * app_loss
+        if pose_loss is not None:
+            loss = loss + cfg.pose_reg * pose_loss
         loss.backward()
         if strategy is not None:
             if len(params["means"]) >= cfg.max_gaussians and strategy.refine_stop_iter > step:
@@ -207,13 +307,38 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         for o in opt.values():
             o.step()
             o.zero_grad(set_to_none=True)
+        if app_opt is not None:
+            app_opt.step()
+            app_opt.zero_grad(set_to_none=True)
+        if pose_optim is not None:
+            pose_optim.step()
+            pose_optim.zero_grad(set_to_none=True)
         means_sched.step()
         if step % cfg.log_every == 0 or step == cfg.steps - 1:
             history.append((step, float(loss.detach())))
             if progress:
                 progress((step + 1) / cfg.steps, f"training splats {step + 1}/{cfg.steps} · "
                                                  f"{len(params['means']):,} splats · loss {float(loss.detach()):.4f}")
+    if pose_out is not None:
+        with torch.no_grad():
+            pose_out.extend((c2w_t[k] @ se3_exp(pose_d[k], scale)).cpu().numpy().astype(np.float64) if popt[k]
+                            else np.asarray(c2ws[k], np.float64) for k in range(len(images)))
+    if appearance_out is not None:
+        appearance_out.extend([app_A[k].detach().cpu().tolist(), app_b[k].detach().cpu().tolist()] if app[k]
+                              else None for k in range(len(images)))
     return params, history
+
+
+def se3_exp(xi, scale: float = 1.0):
+    """4x4 rigid transform from a twist (rx, ry, rz, tx, ty, tz); translation in units of ``scale``."""
+    import torch
+
+    z = torch.zeros((), dtype=xi.dtype, device=xi.device)
+    rx, ry, rz = xi[0], xi[1], xi[2]
+    t = xi[3:] * scale
+    T = torch.stack([torch.stack([z, -rz, ry, t[0]]), torch.stack([rz, z, -rx, t[1]]),
+                     torch.stack([-ry, rx, z, t[2]]), torch.stack([z, z, z, z])])
+    return torch.linalg.matrix_exp(T)
 
 
 def visibility_counts(params, c2ws, Ks, sizes, view_ids, render_depth=None, tol: float = 0.05):
@@ -292,3 +417,31 @@ def write_ply(params, path: str, provenance=None) -> int:
 def psnr(a, b) -> float:
     mse = float(((a.float() - b.float()) ** 2).mean())
     return 10 * math.log10(1.0 / max(mse, 1e-12))
+
+
+def cleanup_mask(params, c2ws, Ks, sizes, min_opacity: float = 0.03, max_scale_ratio: float = 25.0,
+                 isolation: float = 4.0, k: int = 8):
+    """Splats worth keeping after training (bool tensor). Removes what only shows up as junk in VR:
+    splats outside every training view (never corrected by any image), nearly transparent ones,
+    oversized blobs (largest axis > max_scale_ratio x the median), and isolated floaters whose
+    mean distance to their k nearest neighbours is > isolation x the 99th percentile."""
+    import torch
+
+    means = params["means"].detach()
+    n = len(means)
+    keep = visibility_counts(params, c2ws, Ks, sizes, list(range(len(c2ws)))) > 0
+    keep &= params["opacities"].detach().sigmoid() > min_opacity
+    smax = params["scales"].detach().exp().max(1).values
+    keep &= smax < max_scale_ratio * smax.median().clamp_min(1e-12)
+    if n > k + 1:
+        d = knn_scales_fast(means, k)
+        thr = torch.quantile(d[keep] if keep.any() else d, 0.99) * isolation
+        keep &= d <= thr
+    return keep
+
+
+def subset(params, mask):
+    """A ParameterDict restricted to `mask` (for writing; optimiser state is not carried over)."""
+    import torch
+
+    return torch.nn.ParameterDict({k: torch.nn.Parameter(v.detach()[mask]) for k, v in params.items()})

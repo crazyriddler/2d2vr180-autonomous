@@ -144,3 +144,18 @@ def test_gpu_view_renders_with_real_opengl(qapp, tmp_path):
     drawn = sum(abs(c.red() - bg[0]) + abs(c.green() - bg[1]) + abs(c.blue() - bg[2]) > 30 for c in px)
     assert drawn > 0.3 * len(px)  # the scene fills a large part of the view
     v.close()
+
+
+def test_rebuild_groups_candidates_per_angle(tmp_path):
+    from twod2vr180.gui.pages import ResultsPage
+
+    gen = tmp_path / "generated_views"
+    gen.mkdir()
+    for n in ("view00.png", "view00_c1.png", "view01.png", "view01_c1.png", "view01_c2.png", "qwen_prompts.pt"):
+        (gen / n).write_bytes(b"x")
+    rep = {"backend": {"extra": {"candidate_selection": [
+        {"view": "45° left", "chosen": "view00_c1.png"}, {"view": "45° right", "chosen": "view01.png", "dropped": True}]}}}
+    groups = ResultsPage._candidate_groups(tmp_path, rep)
+    assert [g[0] for g in groups] == ["45° left", "45° right"]
+    assert [len(g[1]) for g in groups] == [2, 3]
+    assert groups[0][2].endswith("view00_c1.png") and groups[1][2] is None     # dropped → unticked
