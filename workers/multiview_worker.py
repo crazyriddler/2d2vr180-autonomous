@@ -574,11 +574,12 @@ def drop_inconsistent(items, train_imgs, vin, threshold):
     gen = [i for i, it in enumerate(items) if it.get("generated")]
     if bad and len(bad) >= len(gen):
         bad = sorted(bad, key=lambda i: items[i]["rigidity"])[1:]    # keep the least bad one
+    labels = [items[i].get("label", str(i)) for i in bad]
     for i in sorted(bad, reverse=True):
         log(f"view {i} ({items[i].get('label', '')}): dropped - even its best candidate does not match the photo "
             f"(score {items[i]['rigidity']:.3f} > {threshold})")
         del items[i], train_imgs[i], vin[i]
-    return [i for i in bad]
+    return labels
 
 
 def vggt_stage(req, items, train_imgs, vin, device, torch, max_side, env):
@@ -601,7 +602,9 @@ def vggt_stage(req, items, train_imgs, vin, device, torch, max_side, env):
     if any(len(it.get("candidates") or []) > 1 for it in items):
         progress(0.04, "choosing the most consistent generated views")
         selection = select_candidates(items, train_imgs, vin, model, dtype, torch, max_side)
-        drop_inconsistent(items, train_imgs, vin, float(req.get("drop_threshold", 0.8)))
+        dropped = drop_inconsistent(items, train_imgs, vin, float(req.get("drop_threshold", 0.8)))
+        for sel in selection:
+            sel["dropped"] = sel["view"] in dropped
     c2w_v, K_v, depth, conf = estimate_cameras(vin, model, dtype, torch, chunk, int(req.get("overlap", 8)))
     del model
     free(torch)
@@ -649,7 +652,9 @@ def main(req):
             selection = select_candidates(items, train_imgs, vin, model, None, torch, max_side,
                                           prep=lambda im: da3_input(im, size),
                                           predict=lambda arrays: da3_predict(model, arrays, torch))
-        drop_inconsistent(items, train_imgs, vin, float(req.get("drop_threshold", 0.8)))
+        dropped = drop_inconsistent(items, train_imgs, vin, float(req.get("drop_threshold", 0.8)))
+        for sel in selection:
+            sel["dropped"] = sel["view"] in dropped
         c2w_v, K_v, depth, conf = da3_cameras(model, vin, torch)
         del model
         free(torch)

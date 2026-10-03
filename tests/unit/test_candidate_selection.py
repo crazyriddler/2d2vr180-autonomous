@@ -88,7 +88,7 @@ def test_hopeless_generated_views_are_dropped_but_one_is_kept():
              {"generated": True, "label": "b", "rigidity": 0.95}, {"generated": True, "label": "c", "rigidity": 0.9}]
     imgs, vin = list("PABC"), list("pabc")
     dropped = mv.drop_inconsistent(items, imgs, vin, 0.8)
-    assert sorted(dropped) == [2, 3] and [it.get("label") for it in items] == [None, "a"] and imgs == ["P", "A"]
+    assert sorted(dropped) == ["b", "c"] and [it.get("label") for it in items] == [None, "a"] and imgs == ["P", "A"]
     items = [{"path": "photo"}, {"generated": True, "label": "a", "rigidity": 0.9},
              {"generated": True, "label": "b", "rigidity": 0.85}]
     imgs, vin = list("PAB"), list("pab")

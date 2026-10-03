@@ -87,6 +87,56 @@ def generation_engine(ctx, preferred: str | None = None, trajectory: str | None 
     return None
 
 
+def contact_sheet(photo, views: list[dict], selection: list[dict], out_path, thumb: int = 300):
+    """One image to judge the generated views: the photo, then one row per angle with every candidate,
+    its consistency score (lower = more like a pure camera move) and which one was used or dropped."""
+    from pathlib import Path
+
+    from PIL import Image, ImageDraw, ImageOps
+
+    sel = {s.get("view"): s for s in selection or []}
+    gen = [v for v in views if v.get("generated")]
+    if not gen:
+        return None
+    ncol = max(len(v.get("candidates") or [v["path"]]) for v in gen)
+    label_h, pad = 34, 8
+    W = pad + ncol * (thumb + pad)
+    H = pad + (1 + len(gen)) * (thumb + label_h + pad)
+    sheet = Image.new("RGB", (max(W, thumb + 2 * pad), H), (24, 26, 31))
+    d = ImageDraw.Draw(sheet)
+
+    def put(path, x, y, caption, colour=(230, 232, 238), border=None):
+        try:
+            with Image.open(path) as im:
+                im = ImageOps.contain(ImageOps.exif_transpose(im).convert("RGB"), (thumb, thumb))
+        except OSError:
+            return
+        sheet.paste(im, (x, y + label_h))
+        if border:
+            d.rectangle([x - 3, y + label_h - 3, x + im.width + 2, y + label_h + im.height + 2], outline=border,
+                        width=4)
+        d.text((x, y + 8), caption, fill=colour)
+
+    put(photo, pad, pad, "your photo (reference)")
+    for r, v in enumerate(gen, start=1):
+        s = sel.get(v.get("label"), {})
+        y = pad + r * (thumb + label_h + pad)
+        for c, path in enumerate(v.get("candidates") or [v["path"]]):
+            name = Path(path).name
+            score = (s.get("scores") or {}).get(name)
+            chosen = s.get("chosen") == name or (not s and c == 0)
+            dropped = chosen and s.get("dropped")
+            tag = "DROPPED" if dropped else ("USED" if chosen else "")
+            cap = f"{v.get('label', '')} · {name}" + (f" · score {score:.3f}" if score is not None else "") + \
+                (f" · {tag}" if tag else "")
+            put(path, pad + c * (thumb + pad), y, cap,
+                border=(220, 70, 70) if dropped else ((70, 200, 110) if chosen else None))
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out_path, quality=90)
+    return out_path
+
+
 def target_angle(view: dict) -> float:
     """Camera change asked for a generated view, in degrees (for checking that it really moved)."""
     az = float(view.get("azimuth", 0)) % 360
@@ -238,6 +288,14 @@ class GenerativeSceneBackend(Backend):
                             f"('{traj}'). Splats taken from those views are labelled GENERATIVE; they are "
                             "plausible, not measured."])
         res.backend = self.id
+        try:
+            sheet = contact_sheet(ref, views, res.extra.get("candidate_selection") or [],
+                                  inp.work_dir / "export" / "generated_views_sheet.jpg")
+            if sheet:
+                res.extra["contact_sheet"] = str(sheet)
+                log(f"generated views overview: {sheet}")
+        except Exception as e:  # noqa: BLE001 - only an overview image
+            log(f"could not draw the generated-views overview: {e}")
         res.extra.update({"trajectory": traj, "engine": engine, "assembly": assembly,
                           "generated_views": len(views) - 1,
                           "generation_vram_peak_mib": out["result"].get("vram_peak_mib")})
