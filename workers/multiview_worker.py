@@ -886,7 +886,11 @@ def main(req):
     # generated views may drift in exposure / white balance: learn a colour correction for each
     appearance = [bool(it.get("generated")) for it in items] if req.get("appearance", True) else None
     # ... and their estimated cameras are slightly off: refine them while training (the photo stays fixed)
-    pose_opt = [bool(it.get("generated")) for it in items] if req.get("pose_refine", True) else None
+    # (real photos too, except the first one, which anchors the scene; not for long videos, where the
+    # engine's poses from many overlapping frames are already well constrained)
+    pose_opt = None
+    if req.get("pose_refine", True):
+        pose_opt = [k > 0 and (bool(it.get("generated")) or n <= 32) for k, it in enumerate(items)]
     for attempt in range(3):
         oom = False
         app_out, pose_out = [], []
@@ -927,7 +931,7 @@ def main(req):
     pose_refined = []
     if pose_out:
         for i, m in enumerate(pose_out):
-            if pose_opt and pose_opt[i]:
+            if pose_opt and pose_opt[i] and items[i].get("generated"):
                 c0, c1 = c2ws[i][:3, :3], m[:3, :3]
                 ang = float(np.degrees(np.arccos(np.clip((np.trace(c0.T @ c1) - 1) / 2, -1, 1))))
                 pose_refined.append({"view": items[i].get("label") or os.path.basename(items[i]["path"]),
