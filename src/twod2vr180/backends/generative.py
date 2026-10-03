@@ -19,6 +19,8 @@ from .base import (NOVEL_VIEW_COMPLETION, SCENE_STATIC, SINGLE_VIEW, Availabilit
 from .multiview import MultiViewBackend
 
 TRAJECTORIES = {
+    "stereo": "stereo pair: the photo seen from slightly to the left and slightly to the right, nothing else "
+              "changed (2 views, trained splat)",
     "capture": "360° photo capture: 45°, 90°, 135°, 180° and 270°, overhead and from below (Quality adds 225°, "
                "315° and raised diagonals)",
     "arc": "around the subject: 45° to each side, from above and from below",
@@ -41,8 +43,9 @@ QWEN_MODELS = ("qwen-image-edit-2511-q5", "qwen-image-edit-2511-base", "qwen-edi
 ENGINE_MODELS = {"qwen": QWEN_MODELS, "wan": WAN_MODELS, "seva": SEVA_MODELS}
 ENGINE_NAMES = {"qwen": "Qwen-Image-Edit-2511 + Multiple-Angles LoRA", "wan": "Wan 2.2 Fun 5B Control-Camera",
                 "seva": "Stable Virtual Camera"}
-ENGINE_TRAJECTORIES = {"qwen": ("capture", "arc", "orbit"), "wan": tuple(TRAJECTORIES),
+ENGINE_TRAJECTORIES = {"qwen": ("stereo", "capture", "arc", "orbit"), "wan": tuple(TRAJECTORIES),
                        "seva": ("arc", "orbit", "explore", "spiral", "capture")}
+ENGINE_TRAJECTORIES["wan"] = tuple(t for t in TRAJECTORIES if t != "stereo")
 
 # Qwen views: (label, azimuth°, elevation°). Azimuth clockwise seen from above (90 = right side,
 # 180 = back); elevation + = camera above. The LoRA knows 8 azimuths and -30/0/30/60° elevations.
@@ -58,6 +61,19 @@ QWEN_VIEWS = {
                                                                                 ("from below", 0, -30)],
 }
 QWEN_MEGAPIXELS = {"fast": 0.75, "auto": 1.0, "quality": 1.0}
+
+_KEEP = ("Keep everything else exactly the same: the same person, the same pose, the same facial expression and "
+         "gaze, the same hair, clothing and hands, the same lighting, colours and background. Only the viewpoint "
+         "changes.")
+# Stereo: two plain instructions (no angle LoRA, whose smallest step is 45 degrees).
+STEREO_VIEWS = [
+    {"label": "left", "azimuth": -8, "elevation": 0,
+     "prompt": "Move the camera slightly to the left, a small sideways step of about 8 degrees, still looking at "
+               "the same point. " + _KEEP},
+    {"label": "right", "azimuth": 8, "elevation": 0,
+     "prompt": "Move the camera slightly to the right, a small sideways step of about 8 degrees, still looking at "
+               "the same point. " + _KEEP},
+]
 
 
 def installed(ctx, engine: str) -> bool:
@@ -160,6 +176,8 @@ class GenerativeSceneBackend(Backend):
         assembly = options.get("assembly") or "fusion"
         if assembly not in ("fusion", "train"):
             assembly = "fusion"
+        if traj == "stereo":
+            assembly = "train"   # three nearly identical views: one optimised splat, nothing to fuse
         ref = inp.frames[min(int(options.get("reference_frame_index", 0)), len(inp.frames) - 1)]
         log = options.get("log") or (lambda m: None)
         out_dir = str(inp.work_dir / "generated_views")
@@ -175,7 +193,9 @@ class GenerativeSceneBackend(Backend):
                    "gguf": str(next(iter(paths["qwen-image-edit-2511-q5"].values()))),
                    "lora_angles": str(next(iter(paths["qwen-edit-2511-angles-lora"].values()))),
                    "lora_lightning": str(next(iter(paths["qwen-edit-2511-lightning"].values()))),
-                   "views": [{"label": lb, "azimuth": az, "elevation": el} for lb, az, el in QWEN_VIEWS[plan]],
+                   "views": STEREO_VIEWS if traj == "stereo" else
+                   [{"label": lb, "azimuth": az, "elevation": el} for lb, az, el in QWEN_VIEWS[plan]],
+                   "angles_strength": 0.0 if traj == "stereo" else 0.9,
                    "distance": options.get("qwen_distance", "medium shot"),
                    "megapixels": QWEN_MEGAPIXELS.get(mode, 1.0), "steps": 4, "seed": int(options.get("seed", 42))}
             self._run_attempts(ctx, self.qwen_script, {**req, "stage": "encode"}, inp, progress, cancel, log,
@@ -187,7 +207,7 @@ class GenerativeSceneBackend(Backend):
             req = {"image": str(ref), "output_dir": out_dir, "trajectory": plan, "frames": frames,
                    "steps": steps, "short_side": 704, "hfov_deg": options.get("hfov_deg"),
                    "seed": int(options.get("seed", 42)), "model_dir": str(ctx.models.model_dir(WAN_MODELS[0])),
-                   "every": 2}
+                   "every": 0 if assembly == "fusion" else 2}
             out = self._run_attempts(ctx, self.wan_script, req, inp, progress, cancel, log, (0.0, 0.5))
         else:
             n = FRAMES.get(mode, 80)

@@ -47,7 +47,10 @@ def nearest(table, value):
 
 def view_prompt(view, distance="medium shot"):
     """'<sks> right side view eye-level shot medium shot' for a view {azimuth, elevation} (degrees;
-    azimuth clockwise seen from above, 90 = the subject's right-hand side of the picture)."""
+    azimuth clockwise seen from above, 90 = the subject's right-hand side of the picture). A view
+    may carry its own instruction instead ("prompt"), used without the Multiple-Angles LoRA."""
+    if view.get("prompt"):
+        return view["prompt"]
     az = int(round(view.get("azimuth", 0))) % 360
     return f"<sks> {nearest(AZIMUTHS, az)} {nearest(ELEVATIONS, view.get('elevation', 0))} {distance}"
 
@@ -173,9 +176,14 @@ def load_pipeline(req, torch, placement):
 
     # LoRAs are passed as loaded state dicts: with a file path diffusers consults the Hub to guess the
     # weight name, which fails offline (inference never touches the network).
-    pipe.load_lora_weights(load_file(req["lora_angles"]), adapter_name="angles")
+    strength = float(req.get("angles_strength", 0.9))
+    if strength > 0:
+        pipe.load_lora_weights(load_file(req["lora_angles"]), adapter_name="angles")
     pipe.load_lora_weights(load_file(req["lora_lightning"]), adapter_name="lightning")
-    pipe.set_adapters(["angles", "lightning"], adapter_weights=[float(req.get("angles_strength", 0.9)), 1.0])
+    if strength > 0:
+        pipe.set_adapters(["angles", "lightning"], adapter_weights=[strength, 1.0])
+    else:   # plain instructions (small viewpoint changes): no camera-angle LoRA
+        pipe.set_adapters(["lightning"], adapter_weights=[1.0])
     dev = torch.device("cuda")
     if placement == "gpu":
         pipe.to(dev)
