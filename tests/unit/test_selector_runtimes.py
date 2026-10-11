@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from conftest import install_fake_model
@@ -34,7 +35,9 @@ def test_runtime_manager_state(tmp_path):
         assert len(lines) > 20 and all("==" in p for p in lines), "runtimes must install an exact lock"
         torch_line = next(p for p in lines if p.startswith("torch=="))
         assert "+cu" in torch_line
-        assert all("/archive/" in a["url"] and len(a["url"].rsplit("/", 1)[1]) == 44 for a in s.archives_no_deps)
+        for a in s.archives_no_deps:   # commit archives, or prebuilt wheels pinned to a commit
+            assert ("/archive/" in a["url"] and len(a["url"].rsplit("/", 1)[1]) == 44) or \
+                (re.search(r"/raw/[0-9a-f]{40}/", a["url"]) and a["url"].endswith(".whl")), a["url"]
     rm = RuntimeManager(tmp_path, specs)
     assert not rm.is_installed("photo-cu128")
     py = rm.python("photo-cu128")

@@ -86,6 +86,8 @@ class MultiViewBackend(Backend):
                "max_gaussians": cap, "mesh": bool(options.get("mesh", True)), "assembly": assembly}
         if options.get("sh_degree") is not None:
             req["sh_degree"] = int(options["sh_degree"])
+        if options.get("subject_mesh"):          # TRELLIS.2 complete subject (shape prior for the AI views)
+            req.update(subject_mesh=str(options["subject_mesh"]), subject_mask=str(options["subject_mask"]))
         if assembly == "fusion":
             ref_side, gen_side, req["max_gaussians"] = FUSION.get(mode, FUSION["auto"])
             req.update(fuse_ref_side=ref_side, fuse_side=gen_side)

@@ -259,6 +259,22 @@
    "gpu_smoke_test": "not run",
    "integration": "workers/qwen_views_worker.py: '<sks> [azimuth] [elevation] [distance]' prompts, one ~1 MP view per camera position from the photo, 4 Lightning steps; views assembled by sharp fusion.",
    "findings": "Owner asked for fewer, more widely spaced views (45/90/135/180/270, overhead, below) and an image model with higher per-view resolution than Wan video frames."
+  },
+  {
+   "name": "trellis2",
+   "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz",
+   "upstream_of": "https://github.com/microsoft/TRELLIS.2",
+   "role": "complete_subject_shape_prior",
+   "commit": "d5d38f1e033a881e2c00e3137822ef8aa4e193de",
+   "commit_date": "2026-04-29",
+   "code_license": "MIT (fork of microsoft/TRELLIS.2, MIT; nvdiffrast/nvdiffrec under NVIDIA's own licences)",
+   "model_license": "TRELLIS.2-4B and TRELLIS-image-large: MIT; DINOv3: Meta DINOv3 License; RMBG-2.0: CC BY-NC 4.0",
+   "category": "local-user-only",
+   "windows": "the fork ships prebuilt cp311 win_amd64 wheels (cumesh, flex_gemm, o_voxel, nvdiffrast, nvdiffrec_render) for torch 2.8 / CUDA 12.8; attention via xformers (no flash-attn wheel)",
+   "vram": "fork reports 1024³ shape generation within 8 GB with low-VRAM offloading (to be measured on the RTX 4080)",
+   "entry_point": "trellis2.pipelines.Trellis2ImageTo3DPipeline.from_pretrained(dir) -> sample_sparse_structure / sample_shape_slat_cascade / decode_shape_slat (shape only)",
+   "gpu_smoke_test": "not run",
+   "integration": "workers/trellis_subject_worker.py in runtime 'subject3d-cu128'; mesh aligned to the photo by workers/subject_align.py and used as the AI views' depth prior in Real 3D (rc45)"
   }
  ],
  "auxiliary_archives": [

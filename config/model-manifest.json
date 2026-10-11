@@ -550,6 +550,140 @@
      "size_bytes": 849608296
     }
    ]
+  },
+  {
+   "id": "trellis2-4b-shape",
+   "display_name": "TRELLIS.2-4B (shape stages) — the whole subject in 3D from one photo",
+   "source": "https://huggingface.co/microsoft/TRELLIS.2-4B",
+   "revision": "af44b45f2e35a493886929c6d786e563ec68364d",
+   "license": "MIT (Hugging Face model card: license: mit)",
+   "license_url": "https://huggingface.co/microsoft/TRELLIS.2-4B",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 12,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "pipeline.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/pipeline.json",
+     "sha256": null,
+     "size_bytes": 4186
+    },
+    {
+     "path": "ckpts/ss_flow_img_dit_1_3B_64_bf16.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/ss_flow_img_dit_1_3B_64_bf16.json",
+     "sha256": null,
+     "size_bytes": 467
+    },
+    {
+     "path": "ckpts/ss_flow_img_dit_1_3B_64_bf16.safetensors",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/ss_flow_img_dit_1_3B_64_bf16.safetensors",
+     "sha256": "ca01377c485bec418076d38ee80166d32dc776d744f2553b835cba1e97a7abf6",
+     "size_bytes": 2584426920
+    },
+    {
+     "path": "ckpts/shape_dec_next_dc_f16c32_fp16.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/shape_dec_next_dc_f16c32_fp16.json",
+     "sha256": null,
+     "size_bytes": 678
+    },
+    {
+     "path": "ckpts/shape_dec_next_dc_f16c32_fp16.safetensors",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/shape_dec_next_dc_f16c32_fp16.safetensors",
+     "sha256": "e3b718d3e43e4f8780e9a24ac6fff231811a67e3b058e336e10fe654c911d581",
+     "size_bytes": 948490494
+    },
+    {
+     "path": "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.json",
+     "sha256": null,
+     "size_bytes": 458
+    },
+    {
+     "path": "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.safetensors",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.safetensors",
+     "sha256": "ec5e0917ef9b7e25ad51dffc7d19687a42019871f94239f2fa7f86264c55b70f",
+     "size_bytes": 2584574424
+    },
+    {
+     "path": "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.json",
+     "sha256": null,
+     "size_bytes": 458
+    },
+    {
+     "path": "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors",
+     "sha256": "07cd0596f634c5adc1890023d16023afc5eed02fb84b22bb23aff5bf0030fbbd",
+     "size_bytes": 2584574424
+    }
+   ],
+   "notes": "Only the sparse-structure and shape models (no texture models): the mesh is a geometry prior for Real 3D."
+  },
+  {
+   "id": "trellis-image-large-ss-dec",
+   "display_name": "TRELLIS sparse-structure decoder (used by TRELLIS.2)",
+   "source": "https://huggingface.co/microsoft/TRELLIS-image-large",
+   "revision": "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+   "license": "MIT (Hugging Face model card: license: mit)",
+   "license_url": "https://huggingface.co/microsoft/TRELLIS-image-large",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 0,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "ckpts/ss_dec_conv3d_16l8_fp16.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS-image-large/resolve/25e0d31ffbebe4b5a97464dd851910efc3002d96/ckpts/ss_dec_conv3d_16l8_fp16.json",
+     "sha256": null,
+     "size_bytes": 245
+    },
+    {
+     "path": "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+     "url": "https://huggingface.co/microsoft/TRELLIS-image-large/resolve/25e0d31ffbebe4b5a97464dd851910efc3002d96/ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+     "sha256": "1c76d4a40519aa2d711cc263a8404105231ac26db31d946bed48b84fee79009a",
+     "size_bytes": 147591972
+    }
+   ]
+  },
+  {
+   "id": "trellis2-image-encoders",
+   "display_name": "DINOv3 ViT-L and RMBG-2.0 (image encoder and background removal for TRELLIS.2)",
+   "source": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/tag/extra-models",
+   "revision": "extra-models",
+   "license": "DINOv3: Meta DINOv3 License; RMBG-2.0: CC BY-NC 4.0 (BRIA AI) — non-commercial",
+   "license_url": "https://huggingface.co/briaai/RMBG-2.0",
+   "commercial_use": false,
+   "redistributable": false,
+   "required_vram_gb": 2,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "dinov3.zip",
+     "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/dinov3.zip",
+     "sha256": "1b6d24ef5f5e70435160eb7ac318426cf7a6ba20d3f159d17b0dd168fc7de672",
+     "size_bytes": 1126258307
+    },
+    {
+     "path": "RMBG-2.0.zip",
+     "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/RMBG-2.0.zip",
+     "sha256": "0d39c4e2b2e6a5ce3ef644ee7fed0df7c4c93da275903305ca8a88c63413a147",
+     "size_bytes": 822966337
+    }
+   ],
+   "notes": "Mirrors of the gated Hugging Face repos facebook/dinov3-vitl16-pretrain-lvd1689m and briaai/RMBG-2.0 published by the TRELLIS.2 Windows fork; SHA256 pinned. Extracted locally on first use."
   }
  ]
 }

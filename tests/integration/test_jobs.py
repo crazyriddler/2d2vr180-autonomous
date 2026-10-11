@@ -478,3 +478,25 @@ def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, phot
 def test_multiview_backend_on_one_photo_without_generation_explains(ctx, rtx4080, photo):
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", backend="multiview", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "failed" and "generative mode" in rep["error"]["message"]
+
+
+def test_real3d_uses_the_complete_subject_when_trellis2_is_installed(ctx, rtx4080, photo, monkeypatch):
+    from conftest import REPO, install_fake_model
+    from twod2vr180.backends.generative import SUBJECT_MODELS, GenerativeSceneBackend
+
+    _fake_generative(monkeypatch)
+    monkeypatch.setattr(GenerativeSceneBackend, "subject_script", str(REPO / "tests" / "fakes" / "fake_trellis_worker.py"))
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert rep["status"] == "succeeded" and "subject_mesh" not in mv          # not installed: plain Real 3D
+    for mid in SUBJECT_MODELS:
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    req = json.loads((job.dir / "complete_subject" / "request.json").read_text())
+    assert req["pipeline_type"] == "512" and req["dinov3_zip"].endswith("dinov3.zip")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["subject_mesh"].endswith("subject.npz") and mv["subject_mask"].endswith("subject_mask.png")
+    assert {m["id"] for m in rep["models"]} >= set(SUBJECT_MODELS)

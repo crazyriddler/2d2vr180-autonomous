@@ -1,4 +1,26 @@
-# 2D2VR180 1.0.0-rc44 — Each surface takes its colour from the view that sees it best
+# 2D2VR180 1.0.0-rc45 — Optional: the complete subject in 3D with TRELLIS.2
+
+## What's new in rc45
+
+- **Complete subject (optional component "TRELLIS.2").** With it installed, Real 3D first builds the whole
+  subject of your photo in 3D, back included, with Microsoft's TRELLIS.2. Only its shape is used:
+  1. The mesh is placed exactly where the subject is in your photo. Its orientation comes from the
+     silhouette, and its size and distance from MoGe-2's depth, refined by matching the two surfaces.
+  2. In the AI views (sides, back), the subject's depth now comes from this mesh. Before, each view had its
+     own monocular guess, and the guesses disagreed with each other. Something MoGe-2 sees clearly in front
+     of the subject is kept.
+  3. Its surface also joins the starting points of the splat, so the back has a shape from the start.
+
+  Colours still come from your photo and the AI views. If TRELLIS.2 fails or is not installed, Real 3D
+  works as in rc44.
+- Install it under Components: "Complete-subject engine (TRELLIS.2)" plus "TRELLIS.2" (about 11 GB: only the
+  shape models, not the texture ones). It runs in its own runtime, with the Windows builds of TRELLIS.2's
+  CUDA extensions from the TRELLIS.2-stableprojectorz project.
+- Fast uses TRELLIS.2's 512 pipeline; Auto and Quality use the 512 → 1024 cascade.
+- Note: not yet run on the RTX 4080. The placement step is tested on synthetic scenes (millimetre accuracy
+  for known orientations, about 4 cm on a 1.7 m subject tilted 10°).
+
+## rc44: Each surface takes its colour from the view that sees it best
 
 ## What's new in rc44
 

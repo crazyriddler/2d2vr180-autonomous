@@ -107,6 +107,15 @@ TRI_RINGS = [
     [("back", 180, 0, ("135° right", "135° left"))],
 ]
 TRI_RING_COUNT = {"fast": 2, "auto": 4, "quality": 4}
+# Optional complete subject (TRELLIS.2 shape, rc45): runtime + models; Fast uses the 512 pipeline
+SUBJECT_RUNTIME = "subject3d-cu128"
+SUBJECT_MODELS = ("trellis2-4b-shape", "trellis-image-large-ss-dec", "trellis2-image-encoders")
+SUBJECT_PIPELINE = {"fast": "512", "auto": "1024_cascade", "quality": "1024_cascade"}
+
+
+def subject_installed(ctx) -> bool:
+    return ctx.runtimes.is_installed(SUBJECT_RUNTIME) and all(
+        m in ctx.models.entries and ctx.models.is_installed(m) for m in SUBJECT_MODELS)
 
 
 def angle_between(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -144,6 +153,7 @@ class GenerativeSceneBackend(Backend):
     worker_script = "seva_worker.py"
     wan_script = "wan_worker.py"
     qwen_script = "qwen_views_worker.py"
+    subject_script = "trellis_subject_worker.py"
     description = ("Generates the unseen sides of a photo with a camera-controlled diffusion model and trains a "
                    "real 3D Gaussian splat from the generated views. Invented content is labelled GENERATIVE.")
 
@@ -218,9 +228,13 @@ class GenerativeSceneBackend(Backend):
         log(f"generating views with {name}: {TRAJECTORIES[traj]}")
         for m in models:
             ctx.models.paths(m)  # clear error when missing
+        subject = None
         if engine == "qwen" and traj == "tri":
             out = None
-            chain = self._qwen_rings(inp, ctx, options, progress, cancel, log, ref, out_dir, mode)
+            if options.get("complete_subject", True) and subject_installed(ctx):
+                subject = self._complete_subject(inp, ctx, options, progress, cancel, log, ref, mode)
+            chain = self._qwen_rings(inp, ctx, options, progress, cancel, log, ref, out_dir, mode,
+                                     start=0.08 if subject else 0.0)
         elif engine == "qwen":
             paths = {m: ctx.models.paths(m) for m in QWEN_MODELS}
             req = {"image": str(ref), "output_dir": out_dir,
@@ -268,6 +282,9 @@ class GenerativeSceneBackend(Backend):
             for v in mv_views:
                 v["max_side"] = TRI_VIEW_SIDE if v["generated"] else TRI_PHOTO_SIDE.get(mode, 1600)
             mv_opts.update(sh_degree=TRI_SH_DEGREE, train_steps=TRI_STEPS.get(mode, 12000))
+            if subject:
+                mv_opts.update(subject_mesh=subject["subject_mesh"], subject_mask=subject["subject_mask"])
+                gen_models += subject["models"]
         res = self.mv.reconstruct(
             mv_views, inp, ctx, mv_opts, progress, cancel,
             progress_range=(0.5, 0.97), extra_models=gen_models,
@@ -283,7 +300,30 @@ class GenerativeSceneBackend(Backend):
         res.worker_env = {"generation": (out if out is not None else chain)["env"], "reconstruction": res.worker_env}
         return res
 
-    def _qwen_rings(self, inp, ctx, options, progress, cancel, log, ref, out_dir, mode):
+    def _complete_subject(self, inp, ctx, options, progress, cancel, log, ref, mode):
+        """TRELLIS.2 shape of the whole subject (back included), or None if it fails (Real 3D goes on
+        without it). Its mesh guides the depth of the AI views in the multi-view worker."""
+        p = {m: ctx.models.paths(m) for m in SUBJECT_MODELS}
+        shape_dir = ctx.models.model_dir("trellis2-4b-shape")
+        req = {"image": str(ref), "output_dir": str(inp.work_dir / "complete_subject"),
+               "model_dir": str(shape_dir), "image_large_dir": str(ctx.models.model_dir("trellis-image-large-ss-dec")),
+               "dinov3_zip": str(p["trellis2-image-encoders"]["dinov3.zip"]),
+               "rmbg_zip": str(p["trellis2-image-encoders"]["RMBG-2.0.zip"]),
+               "pipeline_type": SUBJECT_PIPELINE.get(mode, "1024_cascade"), "seed": int(options.get("seed", 42))}
+        log(f"complete subject: TRELLIS.2 ({req['pipeline_type']})")
+        try:
+            out = run_worker(ctx.runtimes.python(SUBJECT_RUNTIME), self.subject_script, req, inp.work_dir / "worker",
+                             progress, cancel, env=ctx.runtimes.worker_env(SUBJECT_RUNTIME), log=log,
+                             progress_range=(0.0, 0.08), timeout_s=3600)
+        except BackendError as e:
+            log(f"complete subject unavailable ({e}); Real 3D continues without it")
+            return None
+        files = out["result"]["outputs"]
+        return {"subject_mesh": files["mesh"], "subject_mask": files["mask"],
+                "models": [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
+                           for m in SUBJECT_MODELS]}
+
+    def _qwen_rings(self, inp, ctx, options, progress, cancel, log, ref, out_dir, mode, start=0.0):
         """Real 3D views, ring by ring (TRI_RINGS): generate a ring (each view from the photo + its
         neighbouring accepted view), choose the most consistent candidate of each view (judged against
         that neighbour, VGGT score-only pass), then the next ring uses those choices as references."""
@@ -300,9 +340,9 @@ class GenerativeSceneBackend(Backend):
         rings = TRI_RINGS[:TRI_RING_COUNT.get(mode, 4)]
         chosen: dict[str, dict] = {}            # label -> accepted view (path, azimuth, elevation)
         selection, peak, index = [], None, 0
-        span = 0.5 / len(rings)
+        span = (0.5 - start) / len(rings)
         for r, ring in enumerate(rings):
-            lo = r * span
+            lo = start + r * span
             views = []
             for label, az, el, refs in ring:
                 views.append({"label": label, "azimuth": az, "elevation": el, "index": index,

@@ -25,7 +25,9 @@ runtime libraries under the NVIDIA EULA), torchvision, gsplat (Apache-2.0), MoGe
 (Stability AI Non-Commercial Research Community License), diffusers (Apache-2.0), open_clip (MIT),
 kornia (Apache-2.0), roma (BSD-3-Clause), VideoX-Fun (Apache-2.0), peft (Apache-2.0), gguf (MIT),
 bitsandbytes (MIT), transformers (Apache-2.0), omegaconf (BSD-3-Clause),
-librosa (ISC) and their dependencies.
+librosa (ISC), TRELLIS.2 code and its Windows wheels from the TRELLIS.2-stableprojectorz fork (MIT; cumesh,
+flex_gemm, o_voxel MIT; nvdiffrast and nvdiffrec under the NVIDIA Source Code License), xformers (BSD-3-Clause),
+triton-windows (MIT), timm (Apache-2.0), trimesh (MIT) and their dependencies.
 
 Models (config/model-manifest.json) — shown with their license before download:
 
@@ -38,6 +40,8 @@ Models (config/model-manifest.json) — shown with their license before download
 | Wan 2.2 Fun 5B Control-Camera (alibaba-pai) | Apache-2.0 | yes |
 | Qwen-Image-Edit-2511 (Qwen; text encoder Qwen2.5-VL-7B, VAE) | Apache-2.0 | yes |
 | Qwen-Image-Edit-2511 GGUF Q5_K_M (unsloth) | Apache-2.0 | yes |
+| TRELLIS.2-4B (shape models) and TRELLIS-image-large sparse-structure decoder (Microsoft) | MIT | yes |
+| DINOv3 ViT-L/16 (Meta) and RMBG-2.0 (BRIA AI), mirrored by the TRELLIS.2 Windows fork | Meta DINOv3 License; CC BY-NC 4.0 | **no** (RMBG-2.0) |
 | Qwen-Image-Edit-2511 Multiple-Angles LoRA (fal) | Apache-2.0 | yes |
 | Qwen-Image-Edit-2511 Lightning LoRA (lightx2v) | Apache-2.0 | yes |
 | Stable Virtual Camera 1.1 | Stability AI Non-Commercial Research Community License (gated; outputs non-commercial) | **no** |
