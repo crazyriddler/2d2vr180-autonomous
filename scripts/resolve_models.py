@@ -19,6 +19,8 @@ HF_REPOS = [
     "QuantStack/Qwen-Image-Edit-2511-GGUF",
     # rc45 research: complete subject (TRELLIS.2) and the newer Qwen image model
     "microsoft/TRELLIS.2-4B", "microsoft/TRELLIS-image-large", "Qwen/Qwen-Image-2.1",
+    # rc48: MoGe-3 (finer monocular geometry)
+    "Ruicheng/moge-3-vitl", "Ruicheng/moge-3-vitg",
 ]
 HF_SEARCH = ["Qwen-Image-Edit-2511 gguf", "Qwen-Image-Edit-2511-Multiple-Angles", "Qwen-Image-2.1",
              "Qwen-Image-2.1 Multiple-Angles", "TRELLIS.2"]
@@ -30,7 +32,7 @@ HF_TEXT = [  # small files whose content is needed (configs, model cards)
     "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA/README.md",
     "microsoft/TRELLIS.2-4B/pipeline.json", "microsoft/TRELLIS.2-4B/README.md",
     "microsoft/TRELLIS-image-large/pipeline.json", "Qwen/Qwen-Image-2.1/README.md",
-    "Qwen/Qwen-Image-2.1/model_index.json",
+    "Qwen/Qwen-Image-2.1/model_index.json", "Ruicheng/moge-3-vitl/README.md",
 ]
 URLS: list[str] = [  # non-HF downloads: hashed by streaming
     # TRELLIS.2 Windows fork (MIT): DINOv3 image encoder and RMBG-2.0 background removal it ships
