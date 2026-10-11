@@ -49,6 +49,8 @@ class TrainConfig:
     log_every: int = 250
     depth_weight: float = 0.1      # monocular depth prior (relative L1), decays linearly to 0 ...
     depth_until: float = 0.6       # ... at this fraction of the steps
+    depth_floor: float = 0.02      # but never below this for views in depth_keep (the real photos): late in
+                                   # training, colour alone lets textureless areas drift in depth
     colours_only: bool = False     # optimise only colours (positions, sizes, rotations, opacities fixed)
     lr_appearance: float = 1e-3    # per-view colour correction (generated views only)
     appearance_reg: float = 0.05   # keeps that correction close to identity
@@ -148,7 +150,8 @@ def scene_scale(c2ws: np.ndarray, points: np.ndarray) -> float:
 def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.ndarray, colors: np.ndarray,
           cfg: TrainConfig | None = None, device="cuda", render_fn=None, progress=None, cancel=None,
           pixel_weights: list | None = None, depth_priors: list | None = None,
-          appearance: list | None = None, appearance_out: list | None = None, params=None):
+          appearance: list | None = None, appearance_out: list | None = None, params=None,
+          depth_keep: list | None = None):
     """Optimise Gaussians. ``images``: list of (H,W,3) uint8 arrays (sizes may differ).
     ``pixel_weights``: per view None or an (H,W) float map in [0,1] (photometric confidence).
     ``depth_priors``: per view None or an (H,W) depth map in scene units (0 = unknown).
@@ -156,6 +159,7 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
     render before the loss. Used for generated views, whose exposure / white balance drifts from the
     photo: the splats keep the photo's colours instead of averaging in the drift. ``appearance_out``
     receives the learned corrections ([A, b] per view, None when not learned).
+    ``depth_keep``: per view True to keep its depth prior at ``cfg.depth_floor`` after it has decayed.
     ``params``: continue from these Gaussians (a ParameterDict from an earlier call) instead of
     initialising from points / colours."""
     import torch
@@ -221,7 +225,7 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
             K[:2] *= torch.tensor([[w2 / wd], [h2 / h]], device=K.device)
             h, wd = h2, w2
         sh_deg = min(step // 1000, cfg.sh_degree)
-        lam_d = cfg.depth_weight * max(0.0, 1.0 - step / max(1.0, cfg.depth_until * cfg.steps))
+        lam_d = depth_weight_at(cfg, step, bool(depth_keep and depth_keep[i]))
         use_depth = dm is not None and lam_d > 0
         if use_depth:
             out, alpha, info = render_fn(params, viewmats[i:i + 1], K[None], wd, h, sh_deg, mode="RGB+ED")
@@ -279,6 +283,13 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         appearance_out.extend([app_A[k].detach().cpu().tolist(), app_b[k].detach().cpu().tolist()] if app[k]
                               else None for k in range(len(images)))
     return params, history
+
+
+def depth_weight_at(cfg, step, keep=False):
+    """Weight of the depth prior at ``step``: cfg.depth_weight fading to 0 at cfg.depth_until of the steps;
+    views kept (``keep``) never go below cfg.depth_floor."""
+    w = cfg.depth_weight * max(0.0, 1.0 - step / max(1.0, cfg.depth_until * cfg.steps))
+    return max(w, cfg.depth_floor) if keep and cfg.depth_weight > 0 else w
 
 
 def best_view_weights(params, c2ws, Ks, sizes, render_fn=None, bonus=None, power=4.0, tol=0.03):

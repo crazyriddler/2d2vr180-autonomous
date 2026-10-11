@@ -49,10 +49,18 @@ def exif_fov_x(path):
     try:
         with Image.open(path) as im:
             exif = im.getexif()
-            f35 = exif.get_ifd(0x8769).get(0xA405) or exif.get(0xA405)      # FocalLengthIn35mmFilm
+            ifd = exif.get_ifd(0x8769)
+            f35 = ifd.get(0xA405) or exif.get(0xA405)      # FocalLengthIn35mmFilm
+            ew, eh = ifd.get(0xA002), ifd.get(0xA003)        # PixelXDimension / PixelYDimension
+            sw, sh = im.size                                 # as stored (before the EXIF rotation)
             w, h = ImageOps.exif_transpose(im).size
     except Exception:  # noqa: BLE001 - no EXIF: unknown
         return None
+    try:
+        if ew and eh and abs((float(ew) / float(eh)) / (sw / sh) - 1) > 0.01:
+            return None            # cropped after shooting: the focal length no longer matches the frame
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
     try:
         f35 = float(f35)
     except (TypeError, ValueError):
@@ -61,6 +69,28 @@ def exif_fov_x(path):
         return None
     width_mm = 43.2666 * w / math.hypot(w, h)          # 35 mm-equivalent frame with the photo's aspect
     return math.degrees(2 * math.atan(width_mm / (2 * f35)))
+
+
+def exif_intrinsics(Ks, fovs, sizes, max_disagreement=0.33):
+    """Use the lens's real focal length (EXIF) for the real photos instead of the camera engine's estimate,
+    so the cameras, MoGe-2's depth (which already uses it) and the unprojected points agree. Ignored, with
+    a log line, when the two disagree so much that the EXIF value is probably wrong for this image."""
+    import math
+
+    import numpy as np
+
+    Ks = np.array(Ks, np.float64)
+    for i, fov in (fovs or {}).items():
+        h, w = sizes[i]
+        fx = (w / 2) / math.tan(math.radians(fov) / 2)
+        rel = fx / Ks[i][0, 0]
+        if abs(rel - 1) > max_disagreement:
+            log(f"view {i}: EXIF focal length ignored (field of view {fov:.1f}° disagrees with the image content)")
+            continue
+        Ks[i][0, 0] = Ks[i][1, 1] = fx
+        Ks[i][0, 2], Ks[i][1, 2] = w / 2, h / 2
+        log(f"view {i}: focal length from EXIF ({fov:.1f}°; the camera engine's estimate was {(1 / rel - 1) * 100:+.1f}%)")
+    return Ks
 
 
 def vggt_input(img):
@@ -223,13 +253,17 @@ def estimate_cameras(vin, model, dtype, torch, chunk, overlap):
     return c2w, Ks, depth, conf
 
 
-def metric_scale(moge_path, vin, depth, conf, torch, max_views=4, device="cuda", fovs=None):
+def metric_scale(moge_path, vin, depth, conf, torch, max_views=4, device="cuda", fovs=None, use=None):
+    """Factor that brings the camera engine's scene to metres: MoGe-2's metric depth over the engine's,
+    measured on the real photos only (``use``: their indices) - a generated view has no real lens, so
+    its 'metric' depth is a guess."""
     import numpy as np
     from moge.model.v2 import MoGeModel
 
     model = MoGeModel.from_pretrained(moge_path).to(device).eval()
     ratios = []
-    for i in np.linspace(0, len(vin) - 1, min(max_views, len(vin))).round().astype(int):
+    use = list(use) if use else list(range(len(vin)))
+    for i in [use[int(k)] for k in np.linspace(0, len(use) - 1, min(max_views, len(use))).round()]:
         a = vin[i][0]
         t = torch.from_numpy(a).to(device).permute(2, 0, 1)
         with torch.no_grad():
@@ -322,9 +356,28 @@ def consistency_map(ref_img, ref_depth, K0, c2w0, img, depth, K, c2w, cell=4, si
     return np.repeat(np.repeat(conf, cell, 0), cell, 1)[:h, :w].astype(np.float32)
 
 
-def mono_priors(moge_path, imgs, vin, depth, conf, device, torch, fovs=None):
-    """MoGe-2 depth of every view at its training resolution, scaled onto the view's VGGT depth.
-    Returns a list of (H, W) depth maps in scene units (0 where unknown)."""
+def fit_prior(zm, valid, zv, inside, trusted, generated, reject=0.15):
+    """One view's monocular depth ``zm`` brought onto the joint depth ``zv`` (scale and shift, robust,
+    fitted on ``trusted`` pixels); for a generated view, pixels still off by more than ``reject`` are
+    left unknown (0). None when the fit is impossible."""
+    import numpy as np
+
+    fit = align_affine(zm, zv, valid & trusted)
+    if fit is None:
+        return None
+    z = zm * fit[0] + fit[1]
+    keep = valid & (z > 0)
+    if generated:
+        keep &= ~(inside & (zv > 0) & (np.abs(z - zv) > reject * zv))
+    return np.where(keep, z, 0.0).astype(np.float32)
+
+
+def mono_priors(moge_path, imgs, vin, depth, conf, device, torch, fovs=None, generated=None, reject=0.15):
+    """MoGe-2 depth of every view at its training resolution, aligned (scale and shift, robust) onto the
+    view's VGGT depth. In generated views, pixels whose aligned depth still contradicts the joint geometry
+    by more than ``reject`` (relative) are left unknown: one AI view's own depth guess must not pull the
+    shape away from what all views agree on. Returns a list of (H, W) depth maps in scene units
+    (0 where unknown)."""
     import numpy as np
     from moge.model.v2 import MoGeModel
 
@@ -343,8 +396,8 @@ def mono_priors(moge_path, imgs, vin, depth, conf, device, torch, fovs=None):
         del res, t
         zv, inside = vggt_on_image(depth[i], vin[i][1], h, w)
         cv, _ = vggt_on_image(conf[i], vin[i][1], h, w)
-        s = align_scale(zm, zv, valid & inside & (cv >= np.percentile(conf[i], 50)))
-        out.append(np.where(valid, zm * s, 0.0).astype(np.float32) if s else None)
+        out.append(fit_prior(zm, valid, zv, inside, inside & (cv >= np.percentile(conf[i], 50)),
+                             bool(generated is not None and generated[i]), reject))
     del model
     free(torch)
     return out
@@ -360,6 +413,34 @@ def resize_map(m, w, h):
     yi = np.minimum(((np.arange(h) + 0.5) * sh / h).astype(int), sh - 1)
     xi = np.minimum(((np.arange(w) + 0.5) * sw / w).astype(int), sw - 1)
     return m[yi][:, xi]
+
+
+def align_affine(z_mono, z_ref, ok, iters=4, k=3.0):
+    """Robust scale and shift (s, t) with s * z_mono + t ~ z_ref: a scale-only fit cannot correct a
+    monocular depth map that is right in shape but offset; outliers (where the views disagree) are
+    rejected by an iteratively re-estimated residual band. Returns (s, t) or None."""
+    import numpy as np
+
+    m = ok & np.isfinite(z_mono) & (z_mono > 0) & np.isfinite(z_ref) & (z_ref > 0)
+    if m.sum() < 200:
+        return None
+    x, y = z_mono[m].astype(np.float64), z_ref[m].astype(np.float64)
+    s = float(np.median(y / x))
+    t = 0.0
+    keep = np.ones(len(x), bool)
+    for _ in range(iters):
+        r = (s * x + t - y) / y
+        mad = float(np.median(np.abs(r[keep] - np.median(r[keep])))) + 1e-6
+        keep = np.abs(r - np.median(r[keep])) <= k * 1.4826 * mad
+        if keep.sum() < 100:
+            break
+        w = 1.0 / y[keep]                                # relative error: near and far count alike
+        A = np.stack([x[keep] * w, w], 1)
+        sol, *_ = np.linalg.lstsq(A, y[keep] * w, rcond=None)
+        if sol[0] <= 0:
+            break
+        s, t = float(sol[0]), float(sol[1])
+    return s, t
 
 
 def align_scale(z_mono, z_ref, ok):
@@ -520,7 +601,8 @@ def main(req):
     if req.get("moge_path"):
         progress(0.32, "metric scale (MoGe-2)")
         try:
-            scale = metric_scale(req["moge_path"], vin, depth, conf, torch, device=device, fovs=fovs)
+            real = [i for i, it in enumerate(items) if not it.get("generated")]
+            scale = metric_scale(req["moge_path"], vin, depth, conf, torch, device=device, fovs=fovs, use=real)
         except Exception as e:  # noqa: BLE001 - metric scale is optional
             log(f"metric scale failed: {e}")
     if scale and np.isfinite(scale) and scale > 0:
@@ -532,11 +614,13 @@ def main(req):
     # ------------------------------------------------------------ depth priors (sparse views)
     n = len(items)
     Ks = np.stack([to_original_K(K_v[i], vin[i][1], 0) for i in range(n)])
+    Ks = exif_intrinsics(Ks, fovs, [im.shape[:2] for im in train_imgs])
     priors = None
     if (req.get("depth_prior", True) and req.get("moge_path") and n <= int(req.get("prior_max_views", 24))
             and not poses_only):
         try:
-            priors = mono_priors(req["moge_path"], train_imgs, vin, depth, conf, device, torch, fovs=fovs)
+            priors = mono_priors(req["moge_path"], train_imgs, vin, depth, conf, device, torch, fovs=fovs,
+                                 generated=[bool(it.get("generated")) for it in items])
             log("MoGe-2 depth priors: " + ", ".join("-" if p is None else "ok" for p in priors))
         except Exception as e:  # noqa: BLE001 - priors are an improvement, not a requirement
             log(f"depth priors unavailable: {e}")
@@ -634,6 +718,7 @@ def main(req):
             params, hist = st.train(train_imgs, c2ws, Ks, weights, points, colors, cfg, device="cuda",
                                     progress=lambda v, m: progress(0.37 + 0.5 * v, m),
                                     pixel_weights=pixel_w, depth_priors=priors,
+                                    depth_keep=[not it.get("generated") for it in items],
                                     appearance=appearance if appearance and any(appearance) else None,
                                     appearance_out=app_out)
             break

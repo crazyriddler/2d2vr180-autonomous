@@ -1,4 +1,35 @@
-# 2D2VR180 1.0.0-rc46 — Cleanup: fewer engines, clearer menus
+# 2D2VR180 1.0.0-rc47 — More precise distances
+
+A review of how distances are computed for the 3D found four weak points. All four are fixed in this
+version.
+
+## What's new in rc47
+
+- **One focal length for your photo.** Since rc41, MoGe-2 used your photo's real focal length (EXIF), but the
+  cameras still used VGGT's own estimate. When the two differ, the shape stretches or flattens in depth. Now
+  the EXIF value is used for the photo's camera as well.
+  - It is ignored when it disagrees with the image by more than a third, because it is then probably wrong.
+  - It is also ignored for cropped photos, detected because the shape no longer matches the original
+    frame's.
+  - The log shows how far VGGT's estimate was.
+- **Real-world scale only from your photos.** The metric scale used to be measured on up to 4 images, AI views
+  included. AI views have no real lens, so their metric depth is a guess. Now only the real photos count.
+- **Each view's depth is aligned with scale and shift, robustly.** Before, MoGe-2's depth of each image was
+  brought onto the joint geometry with one scale factor. Now a scale and a shift are fitted, and the pixels
+  where the views disagree are rejected while fitting. In an AI view, the areas whose depth still contradicts
+  what all views agree on are left unguided, instead of pulling the shape away.
+  - In a synthetic test (a person 2 m in front of a wall), the old fit was up to 6.6 cm off; the new one is
+    exact.
+- **Your photo keeps guiding the depth until the end.** The depth guidance used to fade out completely at 60 %
+  of the training, after which only colour shaped the 3D, and areas without texture (walls, smooth skin)
+  could drift. Now your photo keeps a weak depth guidance to the end; the AI views still fade out as before.
+
+## Next
+
+MoGe-3 (Microsoft, July 2026) is the successor of MoGe-2, with finer geometry. It needs FlexGEMM built for
+Windows; that build is being prepared in CI for rc48.
+
+## rc46: Cleanup: fewer engines, clearer menus
 
 ## What's new in rc46
 

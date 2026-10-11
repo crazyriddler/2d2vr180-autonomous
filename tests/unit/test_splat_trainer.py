@@ -254,3 +254,10 @@ def test_colour_only_training_keeps_every_splat_where_it_is():
     for k in ("means", "scales", "quats", "opacities"):
         assert torch.equal(p2[k].detach(), before[k])
     assert len(p2["means"]) == len(before["means"]) and not torch.equal(p2["sh0"].detach(), before["sh0"])
+
+
+def test_the_photo_keeps_a_weak_depth_prior_to_the_end():
+    cfg = st.TrainConfig(steps=1000, depth_weight=0.1, depth_until=0.6, depth_floor=0.02)
+    assert st.depth_weight_at(cfg, 0) == 0.1
+    assert st.depth_weight_at(cfg, 900) == 0.0                 # AI views: colour only at the end
+    assert st.depth_weight_at(cfg, 900, keep=True) == 0.02     # the photo: never fully released

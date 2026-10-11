@@ -149,3 +149,61 @@ def test_align_scale_is_robust():
     ref[:5] = 100       # outliers
     assert abs(mv.align_scale(z, ref, np.ones_like(z, bool)) - 2.5) < 1e-6
     assert mv.resize_map(np.arange(4.0).reshape(2, 2), 4, 4)[3, 3] == 3.0
+
+
+def _scene_depth(h=120, w=160):
+    """True depth (m) of a room corner with a person-sized bump 2 m away."""
+    ys, xs = np.mgrid[0:h, 0:w]
+    z = 3.0 + 0.4 * (xs / w) + 0.2 * (ys / h)
+    bump = (xs - w / 2) ** 2 / 30 ** 2 + (ys - h / 2) ** 2 / 45 ** 2 < 1
+    z[bump] = 2.0 - 0.15 * np.cos((xs[bump] - w / 2) / 30)
+    return z
+
+
+def test_scale_and_shift_fit_removes_the_offset_a_scale_alone_leaves():
+    """A monocular depth that is right in shape but offset (z' = 0.9 z + 0.15) and partly wrong: the
+    robust scale+shift fit lands within millimetres; the old scale-only fit stays centimetres off."""
+    truth = _scene_depth()
+    mono = (truth - 0.15) / 0.9
+    rng = np.random.default_rng(0)
+    bad = rng.random(truth.shape) < 0.15
+    joint = np.where(bad, truth * rng.uniform(0.5, 1.5, truth.shape), truth)    # 15 % outliers
+    ok = np.ones_like(truth, bool)
+    s, t = mv.align_affine(mono, joint, ok)
+    err_affine = np.abs(mono * s + t - truth)
+    err_scale = np.abs(mono * mv.align_scale(mono, joint, ok) - truth)
+    assert np.percentile(err_affine, 90) * 100 < 0.3           # cm
+    assert np.percentile(err_scale, 90) * 100 > 1.5            # the subject and the walls a few cm off
+
+
+def test_generated_view_depth_that_contradicts_the_joint_geometry_is_left_unknown():
+    truth = _scene_depth()
+    mono = truth.copy()
+    mono[40:80, 20:50] *= 0.7                 # the AI view "sees" a different shape here
+    valid = inside = np.ones_like(truth, bool)
+    p_gen = mv.fit_prior(mono, valid, truth, inside, inside, True)
+    p_photo = mv.fit_prior(mono, valid, truth, inside, inside, False)
+    assert (p_gen[40:80, 20:50] == 0).mean() > 0.9 and (p_gen[:30] > 0).all()
+    assert (p_photo[40:80, 20:50] > 0).all()                   # the photo keeps its own shape
+
+
+def test_exif_focal_length_sets_the_photo_camera_unless_it_disagrees():
+    K = np.array([[[500.0, 0, 300], [0, 500.0, 200], [0, 0, 1]]] * 2)
+    out = mv.exif_intrinsics(K, {0: 60.0}, [(400, 640), (400, 640)])
+    assert abs(out[0][0, 0] - 320 / np.tan(np.radians(30))) < 1e-6 and out[0][0, 2] == 320
+    assert np.array_equal(out[1], K[1])                        # a generated view keeps its estimate
+    far = mv.exif_intrinsics(K, {0: 120.0}, [(400, 640)] * 2)
+    assert np.array_equal(far[0], K[0])                        # 2x off: the EXIF value is not trusted
+
+
+def test_cropped_photos_do_not_use_the_exif_focal_length(tmp_path):
+    from PIL import Image
+
+    exif = Image.Exif()
+    ifd = exif.get_ifd(0x8769)
+    ifd[0xA405] = 26
+    ifd[0xA002], ifd[0xA003] = 4000, 3000                    # shot at 4:3 ...
+    Image.new("RGB", (400, 400)).save(tmp_path / "crop.jpg", exif=exif)      # ... saved square: cropped
+    assert mv.exif_fov_x(str(tmp_path / "crop.jpg")) is None
+    Image.new("RGB", (400, 300)).save(tmp_path / "resized.jpg", exif=exif)   # only resized: still valid
+    assert mv.exif_fov_x(str(tmp_path / "resized.jpg")) is not None
