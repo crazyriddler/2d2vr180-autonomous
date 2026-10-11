@@ -92,13 +92,26 @@ def system_ram_gib():
 
 def memory_attempts(vram_total_mib, megapixels, ram_total_gib=None):
     """(placement, megapixels) to try in order. The Q5 transformer (15 GB) only fits whole on 24 GB+ cards;
-    otherwise its blocks are moved to the GPU as they are needed. 'stream' overlaps those copies with the
-    computation but page-locks (pins) every block on the way, which on a 32 GB PC exhausts system memory
-    next to the 15 GB of weights (rc50 report: MemoryError after two views), so it is only used with 48 GB+
-    of RAM; 'sync' copies from ordinary memory (a little slower, no extra RAM)."""
+    otherwise its blocks stream to the GPU as they are needed ('stream'). Each block is page-locked (pinned)
+    on the way; PyTorch keeps freed pinned buffers in a cache that it never returns, which on a 32 GB PC
+    exhausted the RAM after two views (rc50 report): the cache is now emptied after every step
+    (release_pinned). Group offloading without streams crashed natively on Windows with these GGUF weights
+    (rc51 report, access violation at the first step), so it is not used. ``ram_total_gib`` is kept for
+    the log only."""
     whole = [("gpu", megapixels)] if vram_total_mib >= 24000 else []
-    stream = [("stream", megapixels)] if ram_total_gib is None or ram_total_gib >= 48 else []
-    return whole + stream + [("sync", megapixels), ("sync", min(megapixels, 0.6))]
+    return whole + [("stream", megapixels), ("stream", min(megapixels, 0.6))]
+
+
+def release_pinned(torch):
+    """Return PyTorch's cached page-locked (pinned) host buffers to Windows. Returns the pinned MB still
+    reserved, or None when the stats are unavailable."""
+    try:
+        torch.cuda.synchronize()
+        torch._C._host_emptyCache()
+        st = torch.cuda.memory.host_memory_stats()
+        return int(st.get("reserved_bytes.all.current", st.get("allocated_bytes.all.current", 0)) // 2**20)
+    except Exception:  # noqa: BLE001 - older / other builds: nothing to release
+        return None
 
 
 # ----------------------------------------------------------------------------- stage 1
@@ -240,11 +253,11 @@ def load_pipeline(req, torch, placement):
     if placement == "gpu":
         pipe.to(dev)
     else:
-        # Blocks move from RAM to the GPU as they are needed: 'stream' overlaps the copies with the
-        # computation (pinning each block on the way), 'sync' copies from ordinary memory (no extra RAM).
+        # Blocks stream from RAM to the GPU as they are needed, pinned on the fly (no second copy of the
+        # weights in RAM); the pinned buffers are released after every step (release_pinned).
         transformer.enable_group_offload(onload_device=dev, offload_device=torch.device("cpu"),
-                                         offload_type="block_level", num_blocks_per_group=1,
-                                         use_stream=placement == "stream", low_cpu_mem_usage=True)
+                                         offload_type="block_level", num_blocks_per_group=1, use_stream=True,
+                                         low_cpu_mem_usage=True)
         vae.to(dev)
     return pipe
 
@@ -311,6 +324,9 @@ def generate(req, torch, image, env):
             done = i * n_cand + c
 
             def on_step(pp, s, t, kw, done=done, i=i, c=c):
+                pinned = release_pinned(torch)
+                if s == 0 and done == 0 and pinned is not None:
+                    log(f"pinned host memory after the first step: {pinned} MB (released after every step)")
                 progress((done + (s + 1) / steps) / total,
                          f"view {i + 1}/{len(req['views'])} ({v.get('label')}), candidate {c + 1}/{n_cand}: "
                          f"step {s + 1}/{steps}")
@@ -339,6 +355,7 @@ def generate(req, torch, image, env):
             del img
             gc.collect()                       # keep RAM flat between candidates
             torch.cuda.empty_cache()
+            release_pinned(torch)
         views.append({"path": paths[0], "candidates": paths, "generated": True, "key": True,
                       "label": v.get("label"), "azimuth": v.get("azimuth", 0), "elevation": v.get("elevation", 0),
                       "refs": [r.get("label") for r in v.get("refs") or []]})

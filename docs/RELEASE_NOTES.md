@@ -1,4 +1,24 @@
-# 2D2VR180 1.0.0-rc51 — Real 3D no longer runs out of RAM
+# 2D2VR180 1.0.0-rc52 — Real 3D memory fix, second try
+
+The owner tested rc51. Real 3D now crashed at the first step of the first AI view, with Windows error
+0xC0000005 (access violation) and no message. The mode rc51 introduced for PCs with 32 GB of RAM ("sync":
+the AI image model's blocks copied to the GPU without streams) does not work with its quantised (GGUF)
+weights on Windows.
+
+## Fixes in rc52
+
+- **Back to the streamed mode that worked**, with the real cause of the RAM exhaustion fixed. Each block of
+  the 15 GB model is page-locked (pinned) on its way to the GPU. PyTorch keeps every freed pinned buffer in
+  a cache and never gives it back to Windows, so the RAM filled up after two views. That cache is now
+  emptied after every step and every view. The log shows how much pinned memory is still held after the
+  first step.
+- The "sync" mode is removed.
+- Kept from rc51:
+  - running out of RAM is retried with a lighter setting;
+  - the VRAM limit follows the memory that is really free;
+  - the photo given to Qwen is reduced to 2048 px.
+
+## rc51: Real 3D no longer runs out of RAM
 
 Owner report (rc50, Real 3D on a 24 MP photo, RTX 4080, 32 GB RAM): the job failed after the first two AI
 views with `MemoryError: Unable to allocate 11.9 MiB`. The PC had run out of system memory (RAM), not GPU
