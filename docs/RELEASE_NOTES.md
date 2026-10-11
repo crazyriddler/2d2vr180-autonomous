@@ -1,4 +1,22 @@
-# 2D2VR180 1.0.0-rc40 — Back to rc19
+# 2D2VR180 1.0.0-rc41 — rc19 plus cleaner textures and more accurate scale
+
+Built on rc19 (rc40), following `docs/research/from-rc19.md`. Only "Real 3D from one photo" changes.
+
+## What's new in rc41
+
+- **Less texture noise.** The splat's colour now depends on the viewing angle only slightly (spherical
+  harmonics degree 1 instead of 3). With 4 images, degree 3 let each splat show a different colour to each
+  camera: the AI views' small disagreements were memorised as colour, which looked like noise and flicker.
+- **Your photo's real detail.** rc19 shrank every image, the photo included, to 1024 px before training. Now the
+  photo is trained at 1280 px (Fast), 1600 px (Auto) or 2048 px (Quality). The AI views stay at their native
+  size (about 1 MP); enlarging them would add nothing.
+- **More training steps for the larger photo:** 6000 (Fast), 12000 (Auto), 20000 (Quality).
+- **More accurate scale and depth.** When the photo has EXIF data with the 35 mm-equivalent focal length (almost
+  every phone and camera), MoGe-2 uses the real field of view instead of guessing it. A wrong field of view
+  stretches or flattens the whole scene in depth. The log shows the EXIF value and VGGT's own estimate.
+- Nothing else changes: the same views, cameras, depth priors and training as rc19, and no cleanup.
+
+## rc40: Back to rc19
 
 ## What's new in rc40
 

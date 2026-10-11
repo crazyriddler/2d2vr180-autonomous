@@ -438,6 +438,10 @@ def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypat
     if n_cand > 1:
         assert all(len(v["candidates"]) == n_cand and v["target_deg"] in (45, 30) for v in mv["images"][1:])
     assert rep["backend"]["extra"]["assembly"] == "train"
+    # photo at its own detail, AI views at their native size, view-independent-ish colour (texture noise)
+    photo_side = {"fast": 1280, "auto": 1600, "quality": 2048}[mode]
+    assert mv["images"][0]["max_side"] == photo_side and all(v["max_side"] == 1328 for v in mv["images"][1:])
+    assert mv["sh_degree"] == 1 and mv["steps"] == {"fast": 6000, "auto": 12000, "quality": 20000}[mode]
 
 
 def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, photo, monkeypatch):

@@ -81,3 +81,19 @@ def test_consistency_map_flags_only_the_changed_region():
     assert conf_ok.shape == (H, W) and np.median(conf_ok) > 0.9          # brightness offset is ignored
     assert conf[40:80, 215:315].mean() < 0.4                               # the changed region
     assert conf[:, :150].mean() > 0.85                                      # the rest stays trusted
+
+
+def test_field_of_view_from_exif(tmp_path):
+    from PIL import Image
+
+    img = Image.new("RGB", (400, 300))
+    exif = Image.Exif()
+    exif.get_ifd(0x8769)[0xA405] = 26                     # a typical phone main camera
+    img.save(tmp_path / "a.jpg", exif=exif)
+    fov = mv.exif_fov_x(str(tmp_path / "a.jpg"))
+    assert fov is not None and 65 < fov < 70             # ~67° across the long side for 4:3
+    img.save(tmp_path / "b.jpg")
+    assert mv.exif_fov_x(str(tmp_path / "b.jpg")) is None
+    tall = Image.new("RGB", (300, 400))
+    tall.save(tmp_path / "c.jpg", exif=exif)
+    assert mv.exif_fov_x(str(tmp_path / "c.jpg")) < fov  # portrait: the short side is horizontal

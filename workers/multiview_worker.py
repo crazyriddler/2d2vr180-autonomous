@@ -38,6 +38,31 @@ def load_rgb(path, max_side=None):
         return np.asarray(im, dtype=np.uint8)
 
 
+def exif_fov_x(path):
+    """Horizontal field of view (degrees) of a photo from its EXIF 35 mm-equivalent focal length, in the
+    orientation the photo is displayed (after the EXIF rotation), or None. A wrong field of view
+    stretches or flattens the whole scene in depth, so a known one is the most accurate scale input."""
+    import math
+
+    from PIL import Image, ImageOps
+
+    try:
+        with Image.open(path) as im:
+            exif = im.getexif()
+            f35 = exif.get_ifd(0x8769).get(0xA405) or exif.get(0xA405)      # FocalLengthIn35mmFilm
+            w, h = ImageOps.exif_transpose(im).size
+    except Exception:  # noqa: BLE001 - no EXIF: unknown
+        return None
+    try:
+        f35 = float(f35)
+    except (TypeError, ValueError):
+        return None
+    if not 8 <= f35 <= 800:
+        return None
+    width_mm = 43.2666 * w / math.hypot(w, h)          # 35 mm-equivalent frame with the photo's aspect
+    return math.degrees(2 * math.atan(width_mm / (2 * f35)))
+
+
 def vggt_input(img):
     """VGGT 'crop' preprocessing with the bookkeeping needed to map results back.
 
@@ -198,7 +223,7 @@ def estimate_cameras(vin, model, dtype, torch, chunk, overlap):
     return c2w, Ks, depth, conf
 
 
-def metric_scale(moge_path, vin, depth, conf, torch, max_views=4, device="cuda"):
+def metric_scale(moge_path, vin, depth, conf, torch, max_views=4, device="cuda", fovs=None):
     import numpy as np
     from moge.model.v2 import MoGeModel
 
@@ -208,7 +233,7 @@ def metric_scale(moge_path, vin, depth, conf, torch, max_views=4, device="cuda")
         a = vin[i][0]
         t = torch.from_numpy(a).to(device).permute(2, 0, 1)
         with torch.no_grad():
-            out = model.infer(t, use_fp16=device == "cuda")
+            out = model.infer(t, use_fp16=device == "cuda", fov_x=(fovs or {}).get(int(i)))
         mz = out["depth"].float().cpu().numpy()
         vz, vc = depth[i], conf[i]
         ok = np.isfinite(mz) & (mz > 0) & (vz > 0) & (vc > np.percentile(vc, 50))
@@ -297,7 +322,7 @@ def consistency_map(ref_img, ref_depth, K0, c2w0, img, depth, K, c2w, cell=4, si
     return np.repeat(np.repeat(conf, cell, 0), cell, 1)[:h, :w].astype(np.float32)
 
 
-def mono_priors(moge_path, imgs, vin, depth, conf, device, torch):
+def mono_priors(moge_path, imgs, vin, depth, conf, device, torch, fovs=None):
     """MoGe-2 depth of every view at its training resolution, scaled onto the view's VGGT depth.
     Returns a list of (H, W) depth maps in scene units (0 where unknown)."""
     import numpy as np
@@ -312,7 +337,7 @@ def mono_priors(moge_path, imgs, vin, depth, conf, device, torch):
         h, w = img.shape[:2]
         t = torch.from_numpy(img).to(device).float().div(255).permute(2, 0, 1)
         with torch.no_grad():
-            res = model.infer(t, resolution_level=9, use_fp16=device == "cuda")
+            res = model.infer(t, resolution_level=9, use_fp16=device == "cuda", fov_x=(fovs or {}).get(i))
         zm = res["depth"].float().cpu().numpy()
         valid = np.isfinite(zm) & (zm > 0)
         if "mask" in res:
@@ -473,7 +498,7 @@ def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side):
             continue
         scored = []
         for path in cands:
-            img = load_rgb(path, max_side)
+            img = load_rgb(path, int(it.get("max_side") or max_side))
             cv = vggt_input(img)
             sc, err, ang, ov = rigidity_score(model, vin[0], cv, dtype, torch, it.get("target_deg"))
             scored.append((sc, path, img, cv, err, ang, ov))
@@ -512,8 +537,16 @@ def main(req):
         sys.exit(1)
     max_side = int(req.get("max_side", 960))
     progress(0.01, f"loading {len(items)} images")
-    train_imgs = [load_rgb(it["path"], max_side) for it in items]
+    # each view may set its own training size (the photo at its full detail, AI views at their native size)
+    train_imgs = [load_rgb(it["path"], int(it.get("max_side") or max_side)) for it in items]
     vin = [vggt_input(im) for im in train_imgs]
+    fovs = {}
+    for i, it in enumerate(items):
+        f = None if it.get("generated") else exif_fov_x(it["path"])
+        if f:
+            fovs[i] = f
+    if fovs:
+        log("field of view from the photos' EXIF: " + ", ".join(f"view {i} {f:.1f}°" for i, f in fovs.items()))
 
     # ------------------------------------------------------------ poses + depth
     from vggt.models.vggt import VGGT
@@ -535,6 +568,9 @@ def main(req):
         progress(0.04, "choosing the most consistent generated views")
         selection = select_candidates(items, train_imgs, vin, model, dtype, torch, max_side)
     c2w_v, K_v, depth, conf = estimate_cameras(vin, model, dtype, torch, chunk, int(req.get("overlap", 8)))
+    for i, f in fovs.items():                      # how far VGGT's own estimate is from the real lens
+        log(f"view {i}: VGGT field of view {np.degrees(2 * np.arctan(VGGT_W / 2 / K_v[i][0][0])):.1f}°, "
+            f"EXIF {f:.1f}°")
     del model
     free(torch)
 
@@ -542,7 +578,7 @@ def main(req):
     if req.get("moge_path"):
         progress(0.32, "metric scale (MoGe-2)")
         try:
-            scale = metric_scale(req["moge_path"], vin, depth, conf, torch, device=device)
+            scale = metric_scale(req["moge_path"], vin, depth, conf, torch, device=device, fovs=fovs)
         except Exception as e:  # noqa: BLE001 - metric scale is optional
             log(f"metric scale failed: {e}")
     if scale and np.isfinite(scale) and scale > 0:
@@ -570,7 +606,7 @@ def main(req):
     if (req.get("depth_prior", True) and req.get("moge_path") and n <= int(req.get("prior_max_views", 24))
             and not poses_only):
         try:
-            priors = mono_priors(req["moge_path"], train_imgs, vin, depth, conf, device, torch)
+            priors = mono_priors(req["moge_path"], train_imgs, vin, depth, conf, device, torch, fovs=fovs)
             log("MoGe-2 depth priors: " + ", ".join("-" if p is None else "ok" for p in priors))
         except Exception as e:  # noqa: BLE001 - priors are an improvement, not a requirement
             log(f"depth priors unavailable: {e}")

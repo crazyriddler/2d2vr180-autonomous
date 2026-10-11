@@ -65,6 +65,14 @@ QWEN_MEGAPIXELS = {"fast": 0.75, "auto": 1.0, "quality": 1.0}
 
 # Candidates generated per view (the most rigid one - a pure camera move of the photo - is kept).
 QWEN_CANDIDATES = {"fast": 1, "auto": 2, "quality": 3}
+# Real 3D training (photo + views), per mode: the photo at its own detail, the AI views at their native
+# size (~1 MP, enlarging adds nothing), more steps for the larger photo. SH degree 1: with a handful of
+# views, higher degrees memorise the views' small disagreements as view-dependent colour, which shows
+# as texture noise (docs/research/from-rc19.md).
+TRI_PHOTO_SIDE = {"fast": 1280, "auto": 1600, "quality": 2048}
+TRI_VIEW_SIDE = 1328
+TRI_STEPS = {"fast": 6000, "auto": 12000, "quality": 20000}
+TRI_SH_DEGREE = 1
 
 
 def installed(ctx, engine: str) -> bool:
@@ -225,8 +233,13 @@ class GenerativeSceneBackend(Backend):
                     for v in views]
         gen_models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
                       for m in models]
+        mv_opts = {**options, "max_side": 1024, "assembly": assembly}
+        if traj == "tri":
+            for v in mv_views:
+                v["max_side"] = TRI_VIEW_SIDE if v["generated"] else TRI_PHOTO_SIDE.get(mode, 1600)
+            mv_opts.update(sh_degree=TRI_SH_DEGREE, train_steps=TRI_STEPS.get(mode, 12000))
         res = self.mv.reconstruct(
-            mv_views, inp, ctx, {**options, "max_side": 1024, "assembly": assembly}, progress, cancel,
+            mv_views, inp, ctx, mv_opts, progress, cancel,
             progress_range=(0.5, 0.97), extra_models=gen_models,
             extra_warnings=[f"Generative completion: {len(views) - 1} views were invented by {name} "
                             f"('{traj}'). Splats taken from those views are labelled GENERATIVE; they are "

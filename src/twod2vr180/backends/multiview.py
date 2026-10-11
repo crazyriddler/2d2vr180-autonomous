@@ -74,6 +74,8 @@ class MultiViewBackend(Backend):
                "moge_path": str(ctx.models.paths("moge-2-vitl-normal")["model.pt"]),
                "max_side": int(options.get("max_side", side)), "steps": int(options.get("train_steps", steps)),
                "max_gaussians": cap, "mesh": bool(options.get("mesh", True)), "assembly": assembly}
+        if options.get("sh_degree") is not None:
+            req["sh_degree"] = int(options["sh_degree"])
         if assembly == "fusion":
             ref_side, gen_side, req["max_gaussians"] = FUSION.get(mode, FUSION["auto"])
             req.update(fuse_ref_side=ref_side, fuse_side=gen_side)
