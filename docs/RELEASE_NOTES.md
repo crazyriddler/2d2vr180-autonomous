@@ -1,4 +1,16 @@
-# 2D2VR180 1.0.0-rc42 — Real 3D all the way round: sides and back
+# 2D2VR180 1.0.0-rc43 — The AI views' colour drift no longer stains the texture
+
+## What's new in rc43
+
+- **Per-view colour correction for the AI views.** Qwen's views usually come out a little brighter, darker
+  or warmer than your photo. rc19 averaged those differences into the splat's colours, which looked blotchy
+  where views overlap. Now each AI view gets a small colour correction while training (a 3x3 colour matrix
+  plus an offset, kept close to "no change"). The splats keep your photo's colours, and each view's drift
+  is absorbed by its own correction.
+  - Only colours are affected: no splats are moved or removed.
+  - The details panel shows the correction learned for each view.
+
+## rc42: Real 3D all the way round: sides and back
 
 ## What's new in rc42
 

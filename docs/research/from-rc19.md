@@ -101,8 +101,9 @@ consistent geometry all around.
 |---|---|---|
 | rc41 | SH degree 1; photo trained at 1600/2048 px with the views at native size; more steps; EXIF focal length → MoGe-2 FOV | Less texture noise, the photo's real detail, more accurate scale and depth |
 | rc42 | Back and sides from Qwen: 90°, 135°, 180°, each conditioned on the photo **and** the previous accepted view | A back of the person exists; views agree with each other |
-| rc43 | Best-view colour baking after training | Texture as sharp as the best view of each surface, no averaging noise |
-| rc44 | Optional TRELLIS.2 "complete subject" (Windows fork), aligned to MoGe-2, front from the photo | Full, consistent 3D subject with a real back |
+| rc43 | Per-view colour correction of the AI views (exposure / white balance), colours only | No blotches from the views' colour drift |
+| rc44 | Best-view colour baking after training | Texture as sharp as the best view of each surface, no averaging noise |
+| rc45 | Optional TRELLIS.2 "complete subject" (Windows fork), aligned to MoGe-2, front from the photo | Full, consistent 3D subject with a real back |
 | later | Qwen-Image-2.1 + its angles LoRA (after resolver check); Difix3D+ repair pass | Higher-resolution, more consistent views |
 | after the image work | **Video → 4D Gaussian Splatting** with a player for 4D splats; the current VR180 video path is removed and rebuilt on top of 4DGS (owner, October 2026: today a video only yields one frame) | Moving scenes in 3D/VR |
 

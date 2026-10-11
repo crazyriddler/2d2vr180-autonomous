@@ -132,4 +132,5 @@ class MultiViewBackend(Backend):
                    "reference_psnr_db": res.get("reference_psnr_db"), "mesh": res.get("mesh"),
                    "assembly": res.get("assembly", "train"),
                    "candidate_selection": res.get("candidate_selection") or [],
-                   "metric_scale_factor": res.get("metric_scale_factor")})
+                   "metric_scale_factor": res.get("metric_scale_factor"),
+                   "colour_correction": res.get("colour_correction") or []})

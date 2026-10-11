@@ -195,3 +195,30 @@ def test_depth_prior_runs_and_keeps_geometry():
     m = (a[..., 0] > 0.5).numpy() & (deps[0] > 0)
     assert np.isfinite(hist[-1][1])
     assert np.median(np.abs(d[..., 0].numpy()[m] - deps[0][m]) / deps[0][m]) < 0.05
+
+
+def test_colour_drift_of_generated_views_is_absorbed_by_appearance():
+    gt, pts, cols, c2ws, Ks, vm, Kt, imgs, _ = _scene()
+    drift = [im.copy() for im in imgs]
+    for i in (1, 2, 3):                       # "generated" views: darker and warmer than the photo
+        f = drift[i].astype(np.float32) / 255
+        f = f * np.array([0.95, 0.75, 0.6]) + np.array([0.08, 0.02, 0.0])
+        drift[i] = (f.clip(0, 1) * 255).round().astype(np.uint8)
+    cfg = st.TrainConfig(steps=200, sh_degree=0, densify=False, coarse_until=0.0, lr_sh0=0.05, log_every=50,
+                         lr_appearance=5e-3)
+    rng = np.random.default_rng(1)
+    noisy = pts + rng.normal(0, 0.03, pts.shape).astype(np.float32)
+
+    def fit(appearance):
+        out = []
+        p, _ = st.train(drift, c2ws, Ks, [1, 1, 1, 1], noisy, np.full_like(cols, 0.5), cfg, device="cpu",
+                        render_fn=ref_render, appearance=appearance, appearance_out=out)
+        with torch.no_grad():
+            r = ref_render(p, vm[2:3], Kt[2:3], 24, 24, 0)[0].clamp(0, 1)
+        return st.psnr(r, torch.from_numpy(imgs[2]).float() / 255), out   # against the photo's colours
+
+    base, _ = fit(None)
+    corrected, out = fit([False, True, True, True])
+    assert corrected > base + 1.0
+    assert out[0] is None and out[1] is not None
+    assert out[1][0][2][2] < 0.95             # it learned to darken blue for the generated views

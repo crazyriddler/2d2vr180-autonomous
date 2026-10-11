@@ -49,6 +49,8 @@ class TrainConfig:
     log_every: int = 250
     depth_weight: float = 0.1      # monocular depth prior (relative L1), decays linearly to 0 ...
     depth_until: float = 0.6       # ... at this fraction of the steps
+    lr_appearance: float = 1e-3    # per-view colour correction (generated views only)
+    appearance_reg: float = 0.05   # keeps that correction close to identity
 
 
 def knn_scales(points, k: int = 4):
@@ -144,10 +146,15 @@ def scene_scale(c2ws: np.ndarray, points: np.ndarray) -> float:
 
 def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.ndarray, colors: np.ndarray,
           cfg: TrainConfig | None = None, device="cuda", render_fn=None, progress=None, cancel=None,
-          pixel_weights: list | None = None, depth_priors: list | None = None):
+          pixel_weights: list | None = None, depth_priors: list | None = None,
+          appearance: list | None = None, appearance_out: list | None = None):
     """Optimise Gaussians. ``images``: list of (H,W,3) uint8 arrays (sizes may differ).
     ``pixel_weights``: per view None or an (H,W) float map in [0,1] (photometric confidence).
-    ``depth_priors``: per view None or an (H,W) depth map in scene units (0 = unknown)."""
+    ``depth_priors``: per view None or an (H,W) depth map in scene units (0 = unknown).
+    ``appearance``: per view True to learn a colour correction (3x3 matrix + offset) applied to the
+    render before the loss. Used for generated views, whose exposure / white balance drifts from the
+    photo: the splats keep the photo's colours instead of averaging in the drift. ``appearance_out``
+    receives the learned corrections ([A, b] per view, None when not learned)."""
     import torch
     import torch.nn.functional as F
 
@@ -181,6 +188,10 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
     viewmats = torch.linalg.inv(torch.as_tensor(np.asarray(c2ws), dtype=torch.float32)).to(device)
     Kt = torch.as_tensor(np.asarray(Ks), dtype=torch.float32).to(device)
     w = torch.as_tensor(np.asarray(weights, np.float64) / np.sum(weights), dtype=torch.float32)
+    app = [bool(a) for a in (appearance or [False] * len(images))]
+    app_A = torch.eye(3, device=device).repeat(len(images), 1, 1).requires_grad_(any(app))
+    app_b = torch.zeros(len(images), 3, device=device).requires_grad_(any(app))
+    app_opt = torch.optim.Adam([app_A, app_b], lr=cfg.lr_appearance) if any(app) else None
     g = torch.Generator().manual_seed(cfg.seed)
     history = []
     for step in range(cfg.steps):
@@ -211,6 +222,10 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
             rgb = rgb[..., :3]
         if strategy is not None:
             strategy.step_pre_backward(params, opt, state, step, info)
+        app_loss = None
+        if app[i]:
+            rgb = rgb @ app_A[i].T + app_b[i]
+            app_loss = (app_A[i] - torch.eye(3, device=device)).square().sum() + app_b[i].square().sum()
         if wm is None:
             l1 = (rgb - gt).abs().mean()
             gt_s = gt
@@ -232,6 +247,8 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
             loss = loss + cfg.scale_reg * (ratio - cfg.max_aniso).clamp_min(0).mean()
         if cfg.opacity_reg > 0:
             loss = loss + cfg.opacity_reg * params["opacities"].sigmoid().mean()
+        if app_loss is not None:
+            loss = loss + cfg.appearance_reg * app_loss
         loss.backward()
         if strategy is not None:
             if len(params["means"]) >= cfg.max_gaussians and strategy.refine_stop_iter > step:
@@ -240,12 +257,18 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         for o in opt.values():
             o.step()
             o.zero_grad(set_to_none=True)
+        if app_opt is not None:
+            app_opt.step()
+            app_opt.zero_grad(set_to_none=True)
         means_sched.step()
         if step % cfg.log_every == 0 or step == cfg.steps - 1:
             history.append((step, float(loss.detach())))
             if progress:
                 progress((step + 1) / cfg.steps, f"training splats {step + 1}/{cfg.steps} · "
                                                  f"{len(params['means']):,} splats · loss {float(loss.detach()):.4f}")
+    if appearance_out is not None:
+        appearance_out.extend([app_A[k].detach().cpu().tolist(), app_b[k].detach().cpu().tolist()] if app[k]
+                              else None for k in range(len(images)))
     return params, history
 
 

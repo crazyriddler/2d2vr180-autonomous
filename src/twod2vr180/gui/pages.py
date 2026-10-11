@@ -642,6 +642,10 @@ class ResultsPage(QWidget):
         if rep.get("error"):
             html.append(f"<p style='color:#e66'><b>Error</b> [{rep['error'].get('code')}]: "
                         f"{rep['error'].get('message')}</p>")
+        cc = [c for c in ((rep.get("backend") or {}).get("extra") or {}).get("colour_correction") or [] if c]
+        if cc:
+            gains = ", ".join("/".join(f"{g:.2f}" for g in c["gain"]) for c in cc)
+            html.append(f"<p><small>Colour drift of the AI views corrected (R/G/B gain per view: {gains})</small></p>")
         cov = (rep.get("coverage") or {}).get("by_splat")
         if cov:
             html.append("<p><b>Geometry provenance</b>: " + ", ".join(f"{k} {v:.0%}" for k, v in cov.items() if v)
