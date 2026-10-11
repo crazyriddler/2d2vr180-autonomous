@@ -49,34 +49,10 @@ verified (SHA256) before use.
 ## Make something
 
 1. Open **Create** and drop one or more photos or videos (or click to browse).
-2. Answer **What do you want to make?**
-   - **Real 3D from one photo (recommended).**
-     - AI (Qwen-Image-Edit + Multiple-Angles) draws your subject from more angles:
-       - Fast: 45° and 90° to each side and from above (5 views);
-       - Auto: also 135° to each side, the back and from below (9 views);
-       - Quality: also raised 45° diagonals (11 views).
-     - In Auto and Quality, 2-3 candidates are made per angle, and the one that best behaves like a pure camera
-       move of your photo is kept automatically. Views that contradict the photo are dropped.
-     - The multi-view engine (Depth Anything 3 if installed, otherwise VGGT) finds where each view was taken
-       and builds the 3D:
-       - your photo's part is one splat per photo pixel, with the photo's own colours, so it keeps its detail;
-       - the AI views only add what the photo does not show, so there are no double copies;
-       - this raw Depth Anything 3 splat is the result as it is: no training or cleanup afterwards. The same
-         applies to every multi-view job when Depth Anything 3 can take the images (up to 32 of the same shape).
-     - **FlashWorld** (optional, Components, ~35 GB; choose it under *Generative engine*) generates the whole
-       3D directly from the photo instead.
-     - **Results → AI views overview** shows every candidate, its score and which one was used.
-     - **Results → Play turntable** plays a short video of the 3D swinging left and right, so you can judge its
-       volume without the headset.
-   - **Quick 3D.** Depth from the photo alone (MoGe-2 / SHARP). Takes seconds, but it is a relief rather than
-     full volume.
-   - **360° around the subject (experimental).** The sides, back, top and bottom are invented and joined with
-     sharp fusion.
-   - **Custom.** Every setting is under *Advanced options* (below).
-3. Choose **Quality**: Auto (recommended), Quality (slower) or Fast. Tick **Also make VR180** for VR180
-   stills and videos.
-4. **Advanced options** (folded away):
-   - **Photo: generative 3D** (Custom) — *Off* uses only what the photo shows. *3 views (Qwen)* makes 45° left, 45° right
+2. Choose **Auto** (recommended), **Quality** or **Fast**.
+3. Choose outputs: VR180 side-by-side and/or top/bottom, VR180 or flat 3D projection.
+4. Under **3D reconstruction**:
+   - **Photo: generative 3D** — *Off* uses only what the photo shows. *3 views (Qwen)* makes 45° left, 45° right
      and a high-angle view of your photo (in Auto/Quality 2-3 candidates per angle, the one most consistent
      with a pure camera move is kept automatically) and reconstructs them with the photo in the multi-view
      engine (trained splat). Choosing the *Multi-view* backend with one photo does the same. *360° photo capture* makes a few widely

@@ -27,9 +27,8 @@ MODE_HELP = {
 # "What do you want to make?" — each preset sets the advanced reconstruction controls.
 PRESETS = {
     "real3d": ("Real 3D from one photo (recommended)",
-               "AI (Qwen-Image-Edit) draws your subject from 5-11 angles (sides, back, above, below); Depth Anything 3 "
-               "assembles them with your photo, which "
-               "keeps its full detail in front. (FlashWorld can be chosen as the generative engine instead.)"),
+               "AI makes 3 more views (45° left, 45° right, from above), then the multi-view engine reconstructs "
+               "real volume and scale from all four. Needs the Qwen-Image-Edit and Multi-view components."),
     "quick": ("Quick 3D",
               "Depth from the photo alone (MoGe-2 / SHARP). Seconds; sharp from the front, flat from the side."),
     "around": ("360° around the subject (experimental)",
@@ -248,7 +247,7 @@ class CreatePage(QWidget):
         gf.addRow("Backend", self.backend)
         self.generative = QComboBox()
         for label, val in (("Off — only what the photo shows", "off"),
-                           ("Real 3D views (Qwen) — 5 to 11 angles around the subject → multi-view", "tri"),
+                           ("3 views (Qwen) — 45° left, 45° right, high angle → multi-view", "tri"),
                            ("360° photo capture — 45°, 90°, 135°, 180°, 270°, above, below (Quality: more)",
                             "capture"),
                            ("Around the subject — sides, above and below (best for people)", "arc"),
@@ -263,7 +262,6 @@ class CreatePage(QWidget):
         self.engine = QComboBox()
         for label, val in (("Automatic — Qwen if installed, then Wan 2.2", "auto"),
                            ("Qwen-Image-Edit — sharp ~1 MP images per angle", "qwen"),
-                           ("FlashWorld — the 3D generated directly (Real 3D only)", "flashworld"),
                            ("Wan 2.2 — video camera moves (smooth, 704 px)", "wan"),
                            ("Stable Virtual Camera — scenes/objects (not people)", "seva")):
             self.engine.addItem(label, val)
@@ -374,8 +372,7 @@ class CreatePage(QWidget):
 
             ctx = self.win.ctx
             need = []
-            flashworld = self.preset() == "real3d" and installed(ctx, "flashworld")
-            if not flashworld and not (installed(ctx, "qwen") or (self.preset() == "around" and installed(ctx, "wan"))):
+            if not (installed(ctx, "qwen") or (self.preset() == "around" and installed(ctx, "wan"))):
                 need.append("Qwen-Image-Edit-2511 + Multiple-Angles" if self.preset() == "real3d"
                             else "Qwen-Image-Edit or Wan 2.2")
             if not all(m in ctx.models.entries and ctx.models.is_installed(m) for m in ("vggt-1b", "moge-2-vitl-normal")):
@@ -556,9 +553,6 @@ class ResultsPage(QWidget):
         self.btn = {}
         for i, (key, label) in enumerate([("explore", "Explore in 3D"), ("vr", "View in VR (6DoF)"),
                                           ("vrimg", "Open VR180 image"), ("vrvid", "Play VR180 video"),
-                                          ("spin", "Play turntable"), ("spin_ff", "Turntable: raw DA3 splat"),
-                                          ("views", "AI views overview"),
-                                          ("rebuild", "Rebuild with my picks…"),
                                           ("folder", "Open folder"), ("export", "Copy results to…"),
                                           ("delete", "Delete")]):
             b = QPushButton(label)
@@ -617,100 +611,6 @@ class ResultsPage(QWidget):
         frames = sorted((d / "frames").glob("*.png"))
         return str(frames[0]) if frames else None
 
-    @staticmethod
-    def _turntable(d: Path, rep: dict, key: str = "turntable") -> str | None:
-        p = ((rep.get("backend") or {}).get("extra") or {}).get(key)
-        if p and Path(p).exists():
-            return p
-        cand = d / "export" / f"{key}.mp4"
-        return str(cand) if cand.exists() else None
-
-    @staticmethod
-    def _sheet(d: Path, rep: dict) -> str | None:
-        p = ((rep.get("backend") or {}).get("extra") or {}).get("contact_sheet")
-        if p and Path(p).exists():
-            return p
-        cand = d / "export" / "generated_views_sheet.jpg"
-        return str(cand) if cand.exists() else None
-
-    @staticmethod
-    def _candidate_groups(d: Path, rep: dict) -> list[tuple[str, list[str], str | None]]:
-        """(label, candidate files, chosen file) per generated angle of a job (Qwen views)."""
-        import re
-
-        gen = d / "generated_views"
-        if not gen.exists():
-            return []
-        groups: dict[int, list[str]] = {}
-        for f in sorted(gen.glob("view*.png")):
-            m = re.match(r"view(\d+)(?:_c\d+)?\.png$", f.name)
-            if m:
-                groups.setdefault(int(m.group(1)), []).append(str(f))
-        sel = ((rep.get("backend") or {}).get("extra") or {}).get("candidate_selection") or []
-        out = []
-        for k, i in enumerate(sorted(groups)):
-            s = sel[k] if k < len(sel) else {}
-            chosen = next((c for c in groups[i] if Path(c).name == s.get("chosen")), None)
-            out.append((s.get("view") or f"view {i + 1}", groups[i], None if s.get("dropped") else chosen))
-        return out
-
-    def rebuild_with_picks(self, d: Path, rep: dict):
-        """Choose the candidate for every AI angle yourself and rebuild the 3D (no new generation)."""
-        from PySide6.QtWidgets import QDialog, QDialogButtonBox
-
-        groups = self._candidate_groups(d, rep)
-        photo = Path((rep.get("input") or {}).get("path", ""))
-        if not photo.exists():
-            photo = d / "frames" / "frame_00000.png"
-        if not groups or not photo.exists():
-            QMessageBox.information(self, APP_NAME, "This result has no AI views to choose from.")
-            return
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Rebuild with my picks")
-        lay = QVBoxLayout(dlg)
-        lay.addWidget(note("Pick the view to use for every angle (the automatic choice is preselected), or untick an "
-                           "angle to leave it out. The 3D is rebuilt from your photo and these views by the "
-                           "multi-view engine; nothing is generated again."))
-        grid = QGridLayout()
-        rows = []
-        for r, (label, files, chosen) in enumerate(groups):
-            use = QCheckBox(label)
-            use.setChecked(chosen is not None)
-            combo = QComboBox()
-            for f in files:
-                combo.addItem(Path(f).name, f)
-            combo.setCurrentIndex(max(combo.findData(chosen), 0) if chosen else 0)
-            thumb = QLabel()
-            thumb.setFixedSize(220, 150)
-            thumb.setAlignment(Qt.AlignCenter)
-
-            def show(_=None, c=combo, t=thumb):
-                pm = QPixmap(c.currentData())
-                t.setPixmap(pm.scaled(220, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
-            combo.currentIndexChanged.connect(show)
-            show()
-            grid.addWidget(use, r, 0)
-            grid.addWidget(combo, r, 1)
-            grid.addWidget(thumb, r, 2)
-            rows.append((use, combo))
-        lay.addLayout(grid)
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(dlg.accept)
-        bb.rejected.connect(dlg.reject)
-        lay.addWidget(bb)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        picks = [c.currentData() for use, c in rows if use.isChecked()]
-        if not picks:
-            QMessageBox.information(self, APP_NAME, "Pick at least one view.")
-            return
-        opts = self.win.settings.job_options(backend="multiview", generative="off", gen_assembly="train",
-                                             generated_inputs=[str(p) for p in picks])
-        self.win.queue.add([photo] + [Path(p) for p in picks], opts)
-        QMessageBox.information(self, APP_NAME, f"Rebuilding from your photo and {len(picks)} chosen view(s) — "
-                                                "follow it on the Create page.")
-
     def _current(self) -> tuple[Path | None, dict]:
         it = self.list.currentItem()
         if not it:
@@ -735,47 +635,12 @@ class ResultsPage(QWidget):
         self.btn["vr"].setEnabled(bool(out.get("scene_ply")))
         self.btn["vrimg"].setEnabled(bool(vr.get("stills")))
         self.btn["vrvid"].setEnabled(bool(vr.get("videos")))
-        sheet = self._sheet(d, rep)
-        self.btn["views"].setEnabled(sheet is not None)
-        self.btn["spin"].setEnabled(self._turntable(d, rep) is not None)
-        self.btn["spin_ff"].setEnabled(self._turntable(d, rep, "turntable_feedforward") is not None)
-        self.btn["rebuild"].setEnabled(bool(self._candidate_groups(d, rep)))
-        extra = (rep.get("backend") or {}).get("extra") or {}
         html = [f"<h3>{Path((rep.get('input') or {}).get('path', '')).name}</h3>",
                 f"<p>Status: <b>{rep.get('status')}</b> · backend: {(rep.get('backend') or {}).get('name', '—')}"
                 f" · time: {rep.get('runtime_s', '?')} s</p>"]
         if rep.get("error"):
             html.append(f"<p style='color:#e66'><b>Error</b> [{rep['error'].get('code')}]: "
                         f"{rep['error'].get('message')}</p>")
-        if extra.get("engine") or extra.get("camera_engine"):
-            bits = []
-            if extra.get("engine"):
-                bits.append(f"AI views: {extra['engine']} ({extra.get('generated_views', '?')} views, "
-                            f"{extra.get('trajectory', '')})")
-            if extra.get("camera_engine"):
-                bits.append(f"camera engine: {extra['camera_engine']}")
-            if extra.get("subject_mode"):
-                bits.append("subject mode (background from your photo)")
-            if extra.get("assembly"):
-                bits.append(f"assembly: {extra['assembly']}")
-            html.append("<p>" + " · ".join(bits) + "</p>")
-        for s in extra.get("candidate_selection") or []:
-            state = "dropped" if s.get("dropped") else f"used {s.get('chosen')}"
-            scores = ", ".join(f"{k} {v:.3f}" for k, v in (s.get("scores") or {}).items())
-            html.append(f"<p><small>{s.get('view')}: {state} — scores {scores}</small></p>")
-        pr = extra.get("pose_refinement") or []
-        if pr:
-            html.append("<p><small>Cameras of the AI views refined during training: " +
-                        ", ".join(f"{p['view']} {p['rotation_deg']:.1f}°" for p in pr) + "</small></p>")
-        va = extra.get("view_alignment") or []
-        if va:
-            html.append("<p><small>Local misalignment of the AI views absorbed while training (mean / max): " +
-                        ", ".join(f"{a['view']} {a['mean_px']:.1f}/{a['max_px']:.1f} px" for a in va) +
-                        "</small></p>")
-        cc = [c for c in extra.get("colour_correction") or [] if c]
-        if cc:
-            gains = ", ".join("/".join(f"{g:.2f}" for g in c["gain"]) for c in cc)
-            html.append(f"<p><small>Colour drift of the AI views corrected (R/G/B gain per view: {gains})</small></p>")
         cov = (rep.get("coverage") or {}).get("by_splat")
         if cov:
             html.append("<p><b>Geometry provenance</b>: " + ", ".join(f"{k} {v:.0%}" for k, v in cov.items() if v)
@@ -810,14 +675,6 @@ class ResultsPage(QWidget):
             open_path(vr["stills"][0]["image"])
         elif key == "vrvid" and vr.get("videos"):
             open_path(vr["videos"][0]["path"])
-        elif key == "rebuild":
-            self.rebuild_with_picks(d, rep)
-        elif key == "spin" and self._turntable(d, rep):
-            open_path(self._turntable(d, rep))
-        elif key == "spin_ff" and self._turntable(d, rep, "turntable_feedforward"):
-            open_path(self._turntable(d, rep, "turntable_feedforward"))
-        elif key == "views" and self._sheet(d, rep):
-            open_path(self._sheet(d, rep))
         elif key == "folder":
             open_path(d / "export" if (d / "export").exists() else d)
         elif key == "export":

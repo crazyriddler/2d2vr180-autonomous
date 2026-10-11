@@ -1,4 +1,16 @@
-# 2D2VR180 1.0.0-rc39 — A more complete 3D: more angles, and a mesh that is not set in stone
+# 2D2VR180 1.0.0-rc40 — Back to rc19
+
+## What's new in rc40
+
+- **Everything is back to how it was in rc19.** After many tests, rc19's "Real 3D from one photo" gave the
+  best 3D geometry: Qwen-Image-Edit views, VGGT cameras, MoGe-2 depth priors and a trained splat.
+- Every change from rc20 to rc39 is removed: Depth Anything 3, subject mode, the cleanup steps, colour
+  correction, camera refinement, AbsGS, the feed-forward splat, FlashWorld, the photo layer, more angles,
+  the layered mesh and the rest. The cleanup steps had removed detail from both the scene and the subject.
+- The code is identical to rc19; only the version number changed. Improvements will be built again on this
+  base, one at a time, starting from a research review (see `docs/research/`).
+
+## rc39: A more complete 3D: more angles, and a mesh that is not set in stone
 
 ## What's new in rc39
 

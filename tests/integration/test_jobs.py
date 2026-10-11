@@ -219,18 +219,6 @@ def test_several_photos_become_one_multiview_scene(ctx, rtx4080, tmp_path, monke
     req = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     assert [Path(v["path"]).name for v in req["images"]][0] == "frame_00000.png"
     assert rep["outputs"]["vr180"]["stills"]
-    tt = rep["backend"]["extra"]["turntable"]
-    assert tt and Path(tt).name == "turntable.mp4" and Path(tt).stat().st_size > 0
-    assert req["assembly"] == "fusion"                             # no Depth Anything 3 installed
-    # with Depth Anything 3, several real photos also give its raw splat (fusion only as fallback)
-    from conftest import install_fake_model
-
-    install_fake_model(ctx.models, "da3-nested-giant-large")
-    job, rep, _ = run_job(ctx, rtx4080, paths, mode="fast", layouts=["sbs"], renderer="cpu")
-    assert rep["status"] == "succeeded", rep.get("error")
-    req = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert req["assembly"] == "ff" and req["ff_fallback"] == "fusion" and req["ff_polish"] is False
-    assert rep["backend"]["extra"]["assembly"] == "ff-raw"
 
 
 def test_folder_of_photos_is_expanded(tmp_path):
@@ -441,88 +429,15 @@ def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypat
     assert rep["status"] == "succeeded", rep.get("error")
     gen = job.dir / "generated_views"
     enc = json.loads((gen / "stage_encode.json").read_text())
-    from twod2vr180.backends.generative import QWEN_VIEWS
-
-    angles = [(az, el) for _, az, el in QWEN_VIEWS[f"tri_{mode}"]]
-    assert angles[:5] == [(315, 0), (45, 0), (0, 30), (270, 0), (90, 0)]       # every mode has the sides
-    assert len(angles) == {"fast": 5, "auto": 9, "quality": 11}[mode]
-    assert [(v["azimuth"], v["elevation"]) for v in enc["views"]] == angles
+    assert [(v["azimuth"], v["elevation"]) for v in enc["views"]] == [(315, 0), (45, 0), (0, 30)]
     assert enc["angles_strength"] > 0 and enc["candidates"] == n_cand
-    retry = 2 if n_cand > 1 else 0          # the fake scorer finds the first angle weak (Auto/Quality retry)
-    assert len(list(gen.glob("view*.png"))) == len(angles) * n_cand + retry
+    assert len(list(gen.glob("view*.png"))) == 3 * n_cand
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "train" and len(mv["images"]) == 1 + len(angles)     # the photo + the views
+    assert mv["assembly"] == "train" and len(mv["images"]) == 4      # the photo + exactly 3 views
     assert not mv["images"][0]["generated"]
     if n_cand > 1:
-        assert [len(v["candidates"]) for v in mv["images"][1:]] == [n_cand + retry] + [n_cand] * (len(angles) - 1)
-        assert {v["target_deg"] for v in mv["images"][1:]} >= {45, 30, 90}
+        assert all(len(v["candidates"]) == n_cand and v["target_deg"] in (45, 30) for v in mv["images"][1:])
     assert rep["backend"]["extra"]["assembly"] == "train"
-    sheet = job.dir / "export" / "generated_views_sheet.jpg"
-    assert sheet.exists() and rep["backend"]["extra"]["contact_sheet"].endswith("generated_views_sheet.jpg")
-
-
-@pytest.mark.parametrize("with_8", [False, True])
-def test_quality_uses_the_8_step_lightning_lora_when_installed(ctx, rtx4080, photo, monkeypatch, with_8):
-    from conftest import install_fake_model
-
-    _fake_generative(monkeypatch)
-    for mid in QWEN_IDS + (("qwen-edit-2511-lightning-8",) if with_8 else ()):
-        install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality", generative="tri", layouts=["sbs"], renderer="cpu")
-    assert rep["status"] == "succeeded", rep.get("error")
-    enc = json.loads((job.dir / "generated_views" / "stage_encode.json").read_text())
-    assert enc["steps"] == (8 if with_8 else 4)
-    assert ("8steps" in enc["lora_lightning"]) == with_8
-    ids = {m["id"] for m in rep["models"]}
-    assert ("qwen-edit-2511-lightning-8" in ids) == with_8
-
-
-def test_real3d_outputs_the_raw_feedforward_splat_when_depth_anything_3_is_installed(ctx, rtx4080, photo, monkeypatch):
-    from conftest import install_fake_model
-
-    _fake_generative(monkeypatch)
-    for mid in QWEN_IDS + ("da3-nested-giant-large",):
-        install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
-    assert rep["status"] == "succeeded", rep.get("error")
-    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "ff" and mv["pose_engine"] == "da3" and mv["ff_polish"] is False
-    extra = rep["backend"]["extra"]
-    assert extra["assembly"] == "ff-raw"                       # the raw DA3 splat is the VR result
-    assert extra["feedforward_ply"] is None                    # nothing else to compare with
-    assert "unprocessed" in rep["coverage"]["note"]
-
-
-def test_real3d_generates_the_3d_directly_with_flashworld_when_installed(ctx, rtx4080, photo, monkeypatch):
-    from conftest import REPO, install_fake_model
-    from twod2vr180.backends.generative import GenerativeSceneBackend
-
-    _fake_generative(monkeypatch)
-    monkeypatch.setattr(GenerativeSceneBackend, "flashworld_script",
-                        str(REPO / "tests" / "fakes" / "fake_flashworld_worker.py"))
-    for mid in QWEN_IDS + ("flashworld", "wan2.2-ti2v-5b-base"):
-        install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
-    assert rep["status"] == "succeeded", rep.get("error")
-    assert rep["backend"]["extra"]["engine"] == "qwen"            # Qwen views stay the default
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu",
-                          gen_engine="flashworld")
-    assert rep["status"] == "succeeded", rep.get("error")
-    extra = rep["backend"]["extra"]
-    assert extra["engine"] == "flashworld" and extra["assembly"] == "generated"
-    gen = json.loads((job.dir / "fake_flashworld_generate.json").read_text())
-    assert gen["frames"] == 24 and gen["swing_deg"] == 30 and gen["ckpt"].endswith("model.ckpt")
-    assert gen["base_dir"].endswith("wan2.2-ti2v-5b-base") and Path(gen["embeds_path"]).exists()
-    assert not (job.dir / "generated_views").exists()            # no separate AI views any more
-    cov = rep["coverage"]["by_splat"]
-    assert cov["inferred"] > 0 and cov["generative"] > 0           # the photo's part vs the invented part
-    assert Path(extra["turntable"]).name == "turntable.mp4"
-    assert {m["id"] for m in rep["models"]} >= {"flashworld", "wan2.2-ti2v-5b-base"}
-    # the text embedding is computed once and reused
-    job2, rep2, _ = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu",
-                            gen_engine="flashworld")
-    assert rep2["status"] == "succeeded"
-    assert Path(gen["embeds_path"] + ".calls").read_text().count("1") == 1
 
 
 def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, photo, monkeypatch):
@@ -542,50 +457,3 @@ def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, phot
 def test_multiview_backend_on_one_photo_without_generation_explains(ctx, rtx4080, photo):
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", backend="multiview", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "failed" and "generative mode" in rep["error"]["message"]
-
-
-def test_real3d_trains_at_photo_detail_with_low_sh(ctx, rtx4080, photo, monkeypatch):
-    from conftest import install_fake_model
-
-    _fake_generative(monkeypatch)
-    for mid in QWEN_IDS:
-        install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality", generative="tri", layouts=["sbs"], renderer="cpu")
-    assert rep["status"] == "succeeded", rep.get("error")
-    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["max_side"] == 1600 and mv["sh_degree"] == 1
-
-
-
-def test_weak_angle_gets_more_candidates(ctx, rtx4080, photo, monkeypatch):
-    from conftest import install_fake_model
-
-    _fake_generative(monkeypatch)
-    for mid in QWEN_IDS:
-        install_fake_model(ctx.models, mid)
-    job, rep, log = run_job(ctx, rtx4080, photo, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
-    assert rep["status"] == "succeeded", rep.get("error")
-    gen = job.dir / "generated_views"
-    req = json.loads((gen / "stage_generate.json").read_text())         # the last generate call (the retry)
-    counts = {v["label"]: v.get("candidates") for v in req["views"]}
-    assert counts["45° left"] == 4 and counts["45° right"] is None and counts["high angle"] is None
-    assert len(list(gen.glob("view00*.png"))) == 4 and len(list(gen.glob("view01*.png"))) == 2
-
-
-def test_rebuild_with_own_picks_marks_ai_views(ctx, rtx4080, photo, tmp_path, monkeypatch):
-    from conftest import REPO
-    from twod2vr180.backends.multiview import MultiViewBackend
-
-    monkeypatch.setattr(MultiViewBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_multiview_worker.py"))
-    import shutil
-
-    picks = []
-    for name in ("view00_c1.png", "view01.png"):
-        shutil.copy(photo, tmp_path / name)
-        picks.append(tmp_path / name)
-    job, rep, _ = run_job(ctx, rtx4080, [photo] + picks, mode="quality", backend="multiview",
-                          generated_inputs=[str(p) for p in picks], layouts=["sbs"], renderer="cpu")
-    assert rep["status"] == "succeeded", rep.get("error")
-    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert [v["generated"] for v in mv["images"]] == [False, True, True]
-    assert mv["images"][0]["weight"] >= 4 and mv["max_side"] == 1600 and mv["sh_degree"] == 1
