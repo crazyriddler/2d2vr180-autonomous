@@ -56,8 +56,7 @@ class JobOptions:
     video_mode: str = "auto"             # auto | multiview (all frames → one 3D scene) | per_frame | best_frame
     export_sequence: bool = False        # fixed-camera video: also export one .ply per frame (4D sequence)
     generative: str = "off"              # off | capture | arc | orbit | explore | spiral: invent unseen views
-    gen_assembly: str = "fusion"         # fusion (sharp: MoGe-2 per view, merged) | train (one optimised splat)
-    gen_engine: str = "auto"             # auto | qwen | wan | seva: model that invents the other views
+    gen_engine: str = "auto"             # auto | qwen | wan: model that invents the other views
     ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
 
 
@@ -278,14 +277,12 @@ class JobRunner:
 
             # ---------------------------------------------------- select
             sel = None
-            assembly = opts.gen_assembly
             wants_mv = opts.backend == "multiview" and kind == "photo"
             if wants_mv and opts.generative == "off":
                 raise BackendError("Multi-view needs several photos of the same scene. For a single photo, choose "
-                                   "a generative mode (for example '3 views') to create the other views first.",
+                                   "a generative mode (for example 'Real 3D') to create the other views first.",
                                    code="bad_input")
             if wants_mv:
-                assembly = "train"   # generated views + photo → the multi-view engine's trained splat
                 log("multi-view backend on one photo: generating the views first, then a trained multi-view splat")
             if (opts.generative != "off" and (not opts.backend or wants_mv)
                     and (kind == "photo" or inp.video_kind == "static_scene")):
@@ -333,7 +330,7 @@ class JobRunner:
             ref_index = report.get("processing", {}).get("reference_frame_index", 0)
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index,
                      "trajectory": opts.generative if opts.generative != "off" else None,
-                     "assembly": assembly, "engine": opts.gen_engine,
+                     "engine": opts.gen_engine,
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
             if bopts["hfov_deg"]:
                 log(f"EXIF field of view: {bopts['hfov_deg']:.1f}°")
@@ -503,7 +500,7 @@ class JobRunner:
 
     def _vr180(self, job: Job, scene, inp: JobInput, result: BackendResult, kind: str, emit, warnings,
                check_cancel) -> dict:
-        from .vr180 import StereoOptions, save_stereo_image, still_to_video
+        from .vr180 import save_stereo_image, still_to_video
 
         opts = job.options
         vr_dir = job.dir / "export" / "vr180"

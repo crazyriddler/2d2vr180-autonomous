@@ -111,10 +111,10 @@ def test_obj_export_drops_discontinuities(tmp_path):
     assert info["faces"] > 0 and info["dropped_discontinuity_quads"] > 0
     txt = (tmp_path / "m.obj").read_text()
     assert "mtllib m.mtl" in txt and (tmp_path / "m_texture.png").exists()
-    nv = sum(1 for l in txt.splitlines() if l.startswith("v "))
-    nf = sum(1 for l in txt.splitlines() if l.startswith("f "))
+    nv = sum(1 for line in txt.splitlines() if line.startswith("v "))
+    nf = sum(1 for line in txt.splitlines() if line.startswith("f "))
     assert nv == info["vertices"] and nf == info["faces"]
-    idx = [int(t.split("/")[0]) for l in txt.splitlines() if l.startswith("f ") for t in l.split()[1:]]
+    idx = [int(t.split("/")[0]) for line in txt.splitlines() if line.startswith("f ") for t in line.split()[1:]]
     assert min(idx) >= 1 and max(idx) <= nv
 
 

@@ -1,4 +1,4 @@
-"""TEST-ONLY stand-in for workers/seva_worker.py: "generates" views by copying the
+"""TEST-ONLY stand-in for workers/wan_worker.py: "generates" views by copying the
 input photo, in the real worker's result format."""
 
 import os

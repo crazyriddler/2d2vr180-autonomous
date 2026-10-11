@@ -162,7 +162,7 @@ def read_metadata(path: Path) -> dict:
             elif kind == b"sv3d":
                 i = blob.find(b"equi", pos, pos + size)
                 if i > 0:
-                    t, b, l, r = struct.unpack(">IIII", blob[i + 8:i + 24])
-                    out["equi_bounds"] = {"top": t, "bottom": b, "left": l, "right": r}
-                    out["projection"] = "equirect180" if l == r == 0x40000000 else "equirect"
+                    top, bottom, left, right = struct.unpack(">IIII", blob[i + 8:i + 24])
+                    out["equi_bounds"] = {"top": top, "bottom": bottom, "left": left, "right": right}
+                    out["projection"] = "equirect180" if left == right == 0x40000000 else "equirect"
     return out

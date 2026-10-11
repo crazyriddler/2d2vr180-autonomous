@@ -1,4 +1,27 @@
-# 2D2VR180 1.0.0-rc45 — Optional: the complete subject in 3D with TRELLIS.2
+# 2D2VR180 1.0.0-rc46 — Cleanup: fewer engines, clearer menus
+
+## What's new in rc46
+
+- **Removed what the current workflow no longer uses.**
+  - **Stable Virtual Camera** (engine, worker and 3 models, about 9 GB). It was only a fallback when Wan 2.2
+    was missing, needed a Hugging Face token, and distorted people. Qwen-Image-Edit and Wan 2.2 cover every
+    path. If you installed it, you can delete it from the models folder.
+  - **"Sharp fusion" assembly.** It assembled views from each one's own MoGe-2 depth without training. Your
+    tests found that worse than the trained splat, which is now the only way: Real 3D, 360° capture, Explore
+    and several photos are all trained.
+  - The "Around the subject", "Wide orbit" and "Spiral" paths, which overlapped with Real 3D and 360° capture.
+- **Reorganised Create page.**
+  - Three presets plus Custom: *Real 3D from one photo* (recommended), *Quick 3D*, *360° capture*.
+  - Advanced options in three groups: *VR180 output*; *One photo* (AI views, AI model for the views,
+    reconstruction engine); *Several photos and videos*.
+- **Recommended components match the workflow.**
+  - Qwen-Image-Edit and its parts are now recommended, because Real 3D needs them.
+  - Wan 2.2 and Depth-Anything-V2 are optional: Wan is for exploring surroundings, and Depth-Anything-V2 only
+    for the Commercial profile.
+- **Real 3D without Qwen** now falls back to Wan 2.2's 360° capture instead of failing.
+- Video is unchanged for now: it will be rebuilt on 4D Gaussian Splatting next.
+
+## rc45: Optional: the complete subject in 3D with TRELLIS.2
 
 ## What's new in rc45
 

@@ -242,22 +242,18 @@ def test_video_mode_multiview_overrides_static_analysis(ctx, rtx4080, videos, mo
 
 
 def test_generative_photo_to_3d(ctx, rtx4080, photo, monkeypatch):
-    from conftest import REPO, install_fake_model
-    from twod2vr180.backends.generative import GenerativeSceneBackend
-    from twod2vr180.backends.multiview import MultiViewBackend
+    """Explore the surroundings (VR180) with Wan 2.2: every second frame is trained with the photo."""
+    from conftest import install_fake_model
 
-    fakes = REPO / "tests" / "fakes"
-    monkeypatch.setattr(MultiViewBackend, "worker_script", str(fakes / "fake_multiview_worker.py"))
-    monkeypatch.setattr(GenerativeSceneBackend, "worker_script", str(fakes / "fake_seva_worker.py"))
-    for mid in ("seva-1.1", "sd21-vae", "clip-vit-h-14"):
-        install_fake_model(ctx.models, mid)
+    _fake_generative(monkeypatch)
+    install_fake_model(ctx.models, "wan2.2-fun-5b-camera")
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="explore", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["backend"]["id"] == "generative_scene"
     assert rep["coverage"]["by_splat"]["generative"] > 0.2
-    assert {m["id"] for m in rep["models"]} >= {"seva-1.1", "vggt-1b"}
-    req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
-    assert req["trajectory"] == "explore" and req["num_frames"] == 48
+    assert {m["id"] for m in rep["models"]} >= {"wan2.2-fun-5b-camera", "vggt-1b"}
+    req = json.loads((job.dir / "worker" / "fake_wan_worker_request.json").read_text())
+    assert req["trajectory"] == "explore" and req["frames"] == 49 and req["every"] == 2
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     assert mv["images"][0]["generated"] is False and mv["images"][0]["weight"] > 1
     assert all(v["generated"] for v in mv["images"][1:])
@@ -265,7 +261,7 @@ def test_generative_photo_to_3d(ctx, rtx4080, photo, monkeypatch):
 
 
 def test_generative_request_falls_back_when_models_missing(ctx, rtx4080, photo):
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="orbit", layouts=["sbs"])
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="capture", layouts=["sbs"])
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["backend"]["id"] == "moge_rgbd"
     assert any("Generative 3D was requested" in w for w in rep["warnings"])
@@ -299,45 +295,18 @@ def test_dynamic_video_exports_4d_sequence(ctx, rtx4080, videos):
     assert "stabilised" in dyn["method"] and dyn["sequence_dir"].endswith("sequence")
 
 
-def test_generative_prefers_wan_when_installed(ctx, rtx4080, photo, monkeypatch):
-    from conftest import REPO, install_fake_model
-    from twod2vr180.backends.generative import GenerativeSceneBackend
-    from twod2vr180.backends.multiview import MultiViewBackend
+def test_real3d_uses_wan_capture_when_qwen_is_missing(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
 
-    fakes = REPO / "tests" / "fakes"
-    monkeypatch.setattr(MultiViewBackend, "worker_script", str(fakes / "fake_multiview_worker.py"))
-    monkeypatch.setattr(GenerativeSceneBackend, "wan_script", str(fakes / "fake_seva_worker.py"))
-    for mid in ("wan2.2-fun-5b-camera", "seva-1.1", "sd21-vae", "clip-vit-h-14"):
-        install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="arc", layouts=["sbs"], renderer="cpu")
-    assert rep["status"] == "succeeded", rep.get("error")
-    assert {m["id"] for m in rep["models"]} >= {"wan2.2-fun-5b-camera", "vggt-1b"}
-    assert "seva-1.1" not in {m["id"] for m in rep["models"]}
-    req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
-    assert req["trajectory"] == "arc" and req["frames"] == 25 and req["model_dir"].endswith("wan2.2-fun-5b-camera")
-    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    # sharp fusion (default): the photo + a few key views, not every generated frame
-    assert mv["assembly"] == "fusion" and mv["fuse_ref_side"] == 1024
-    assert len(mv["images"]) == 17 and not mv["images"][0]["generated"]
-    assert rep["backend"]["extra"]["assembly"] == "fusion"
-
-
-def test_generative_trained_assembly_uses_every_frame(ctx, rtx4080, photo, monkeypatch):
-    from conftest import REPO, install_fake_model
-    from twod2vr180.backends.generative import GenerativeSceneBackend
-    from twod2vr180.backends.multiview import MultiViewBackend
-
-    fakes = REPO / "tests" / "fakes"
-    monkeypatch.setattr(MultiViewBackend, "worker_script", str(fakes / "fake_multiview_worker.py"))
-    monkeypatch.setattr(GenerativeSceneBackend, "wan_script", str(fakes / "fake_seva_worker.py"))
+    _fake_generative(monkeypatch)
     install_fake_model(ctx.models, "wan2.2-fun-5b-camera")
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="arc", gen_assembly="train",
-                          layouts=["sbs"], renderer="cpu")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
-    req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
-    assert req["frames"] == 49 and req["steps"] == 30
+    assert rep["backend"]["extra"]["engine"] == "wan" and rep["backend"]["extra"]["trajectory"] == "capture"
+    req = json.loads((job.dir / "worker" / "fake_wan_worker_request.json").read_text())
+    assert req["trajectory"] == "capture" and req["frames"] == 33 and req["steps"] == 25
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "train" and len(mv["images"]) == 50
+    assert len(mv["images"]) > 2 and not mv["images"][0]["generated"]       # trained, never fused
 
 
 def test_wan_out_of_memory_retries_in_a_fresh_process(ctx, rtx4080, photo, monkeypatch):
@@ -347,12 +316,13 @@ def test_wan_out_of_memory_retries_in_a_fresh_process(ctx, rtx4080, photo, monke
 
     fakes = REPO / "tests" / "fakes"
     monkeypatch.setattr(MultiViewBackend, "worker_script", str(fakes / "fake_multiview_worker.py"))
-    monkeypatch.setattr(GenerativeSceneBackend, "wan_script", str(fakes / "fake_seva_worker.py"))
+    monkeypatch.setattr(GenerativeSceneBackend, "wan_script", str(fakes / "fake_wan_worker.py"))
     monkeypatch.setenv("FAKE_WAN_OOM_ATTEMPTS", "2")
     install_fake_model(ctx.models, "wan2.2-fun-5b-camera")
-    job, rep, log = run_job(ctx, rtx4080, photo, mode="fast", generative="arc", layouts=["sbs"], renderer="cpu")
+    job, rep, log = run_job(ctx, rtx4080, photo, mode="fast", generative="capture", gen_engine="wan",
+                            layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
-    req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
+    req = json.loads((job.dir / "worker" / "fake_wan_worker_request.json").read_text())
     assert req["attempt"] == 2
 
 
@@ -363,7 +333,7 @@ def _fake_generative(monkeypatch):
 
     fakes = REPO / "tests" / "fakes"
     monkeypatch.setattr(MultiViewBackend, "worker_script", str(fakes / "fake_multiview_worker.py"))
-    monkeypatch.setattr(GenerativeSceneBackend, "wan_script", str(fakes / "fake_seva_worker.py"))
+    monkeypatch.setattr(GenerativeSceneBackend, "wan_script", str(fakes / "fake_wan_worker.py"))
     monkeypatch.setattr(GenerativeSceneBackend, "qwen_script", str(fakes / "fake_qwen_worker.py"))
 
 
@@ -389,7 +359,7 @@ def test_qwen_360_capture(ctx, rtx4080, photo, monkeypatch, mode, n_views):
     assert enc["gguf"].endswith("qwen-image-edit-2511-Q5_K_M.gguf") and enc["base_dir"].endswith(
         "qwen-image-edit-2511-base")
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "fusion" and len(mv["images"]) == n_views + 1
+    assert len(mv["images"]) == n_views + 1
     assert {m["id"] for m in rep["models"]} >= set(QWEN_IDS)
 
 
@@ -402,7 +372,7 @@ def test_wan_360_capture_when_chosen(ctx, rtx4080, photo, monkeypatch):
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality", generative="capture", gen_engine="wan",
                           layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
-    req = json.loads((job.dir / "worker" / "fake_seva_worker_request.json").read_text())
+    req = json.loads((job.dir / "worker" / "fake_wan_worker_request.json").read_text())
     assert req["trajectory"] == "capture_full" and req["frames"] == 49
     assert rep["backend"]["extra"]["engine"] == "wan"
 
@@ -452,7 +422,7 @@ def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypat
         assert scores[1][side["anchor"]]["label"] == "45° left" and abs(side["anchor_deg"] - 45) < 1e-6
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     n_views = {"fast": 5, "auto": 8, "quality": 8}[mode]
-    assert mv["assembly"] == "train" and len(mv["images"]) == 1 + n_views
+    assert len(mv["images"]) == 1 + n_views
     assert not mv["images"][0]["generated"] and not any(v.get("candidates") for v in mv["images"])
     assert rep["backend"]["extra"]["assembly"] == "train"
     # photo at its own detail, AI views at their native size, view-independent-ish colour (texture noise)
@@ -468,11 +438,10 @@ def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, phot
     for mid in QWEN_IDS:
         install_fake_model(ctx.models, mid)
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", backend="multiview", generative="capture",
-                          gen_assembly="fusion", layouts=["sbs"], renderer="cpu")
+                          layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["selection"]["backend"] == "generative_scene"
-    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "train"
+    assert rep["backend"]["extra"]["assembly"] == "train"
 
 
 def test_multiview_backend_on_one_photo_without_generation_explains(ctx, rtx4080, photo):

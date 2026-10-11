@@ -27,19 +27,19 @@ MODE_HELP = {
 # "What do you want to make?" — each preset sets the advanced reconstruction controls.
 PRESETS = {
     "real3d": ("Real 3D from one photo (recommended)",
-               "AI draws your subject ring by ring around it (45°, 90°, 135° and the back; Fast stops at 90°), each "
-               "view continuing the previous one, then the multi-view engine reconstructs real volume and scale. "
-               "Needs the Qwen-Image-Edit and Multi-view components."),
+               "AI draws your subject all the way round - sides and back, each view continuing the previous one - "
+               "and one 3D splat is trained from your photo and those views. Several minutes. Needs Qwen-Image-Edit "
+               "and the Multi-view engine; TRELLIS.2 (optional) adds the subject's complete shape."),
     "quick": ("Quick 3D",
-              "Depth from the photo alone (MoGe-2 / SHARP). Seconds; sharp from the front, flat from the side."),
-    "around": ("360° around the subject (experimental)",
-               "AI invents the sides, back, top and bottom; assembled with sharp fusion."),
+              "Depth from the photo alone (MoGe-2 / SHARP). Seconds. Sharp from the front, nothing behind objects."),
+    "around": ("360° capture (experimental)",
+               "Like Real 3D with more angles at once, including overhead and from below."),
     "custom": ("Custom", "Choose every setting yourself under Advanced options."),
 }
 PRESET_VALUES = {
-    "real3d": {"generative": "tri", "engine": "auto", "assembly": "train", "backend": None},
-    "quick": {"generative": "off", "engine": "auto", "assembly": "fusion", "backend": None},
-    "around": {"generative": "capture", "engine": "auto", "assembly": "fusion", "backend": None},
+    "real3d": {"generative": "tri", "engine": "auto", "backend": None},
+    "quick": {"generative": "off", "engine": "auto", "backend": None},
+    "around": {"generative": "capture", "engine": "auto", "backend": None},
 }
 PROVENANCE_HELP = ("<b>Observed</b>: reconstructed from several views. <b>Inferred</b>: seen in the input but its "
                    "depth is predicted by a network. <b>Interpolated</b>: small gaps filled from neighbouring "
@@ -242,38 +242,30 @@ class CreatePage(QWidget):
         of.addRow("Projection", self.projection)
         al.addWidget(obox)
 
-        gbox = QGroupBox("Reconstruction (Custom)")
+        gbox = QGroupBox("One photo")
         gf = QFormLayout(gbox)
-        self.backend = QComboBox()
-        gf.addRow("Backend", self.backend)
         self.generative = QComboBox()
-        for label, val in (("Off — only what the photo shows", "off"),
-                           ("Real 3D views (Qwen) — rings around the subject, back included → multi-view", "tri"),
-                           ("360° photo capture — 45°, 90°, 135°, 180°, 270°, above, below (Quality: more)",
-                            "capture"),
-                           ("Around the subject — sides, above and below (best for people)", "arc"),
-                           ("Wide orbit — invent the back too (objects; less reliable)", "orbit"),
-                           ("Explore — invent the surroundings (best for VR180)", "explore"),
-                           ("Spiral — small, faithful extension", "spiral")):
+        for label, val in (("Real 3D — rings around the subject, back included (recommended)", "tri"),
+                           ("360° capture — more angles at once, overhead and from below", "capture"),
+                           ("Explore the surroundings — for VR180 (needs Wan 2.2)", "explore"),
+                           ("Off — only what the photo shows (Quick 3D)", "off")):
             self.generative.addItem(label, val)
         self.generative.setCurrentIndex(max(self.generative.findData(win.settings.generative), 0))
-        self.generative.setToolTip("Generative 3D (photos): an AI model makes the photo's other views, then they "
-                                   "are assembled into one 3D scene. Invented parts are labelled 'generative'.")
-        gf.addRow("Photo: generative 3D", self.generative)
+        self.generative.setToolTip("An AI model draws the photo's other views, then one 3D splat is trained from "
+                                   "the photo and the views. Invented parts are labelled 'generative'.")
+        gf.addRow("AI views", self.generative)
         self.engine = QComboBox()
-        for label, val in (("Automatic — Qwen if installed, then Wan 2.2", "auto"),
-                           ("Qwen-Image-Edit — sharp ~1 MP images per angle", "qwen"),
-                           ("Wan 2.2 — video camera moves (smooth, 704 px)", "wan"),
-                           ("Stable Virtual Camera — scenes/objects (not people)", "seva")):
+        for label, val in (("Automatic — Qwen-Image-Edit if installed, otherwise Wan 2.2", "auto"),
+                           ("Qwen-Image-Edit — sharp ~1 MP image per angle (recommended)", "qwen"),
+                           ("Wan 2.2 — filmed camera moves (smoother, 704 px)", "wan")):
             self.engine.addItem(label, val)
         self.engine.setCurrentIndex(max(self.engine.findData(win.settings.gen_engine), 0))
-        gf.addRow("Generative engine", self.engine)
-        self.assembly = QComboBox()
-        for label, val in (("Sharp fusion — MoGe-2 geometry per view, as sharp as a single photo", "fusion"),
-                           ("Trained splat — one optimised model (multi-view engine)", "train")):
-            self.assembly.addItem(label, val)
-        self.assembly.setCurrentIndex(max(self.assembly.findData(win.settings.gen_assembly), 0))
-        gf.addRow("Generative 3D assembly", self.assembly)
+        gf.addRow("AI model for the views", self.engine)
+        self.backend = QComboBox()
+        gf.addRow("Reconstruction engine", self.backend)
+        al.addWidget(gbox)
+        mbox = QGroupBox("Several photos and videos")
+        mf = QFormLayout(mbox)
         self.video_mode = QComboBox()
         for label, val in (("Automatic (analyse the video)", "auto"),
                            ("Whole video → one 3D scene (camera moves)", "multiview"),
@@ -281,21 +273,21 @@ class CreatePage(QWidget):
                            ("Sharpest frame only", "best_frame")):
             self.video_mode.addItem(label, val)
         self.video_mode.setCurrentIndex(max(self.video_mode.findData(win.settings.video_mode), 0))
-        gf.addRow("Video", self.video_mode)
+        mf.addRow("Video", self.video_mode)
         self.combine = QCheckBox("Combine several photos into one 3D scene")
         self.combine.setChecked(win.settings.combine_photos)
         self.combine.setToolTip("Photos of the same place from different angles are reconstructed together "
                                 "(multi-view). Untick to process each photo separately.")
-        gf.addRow("Several photos", self.combine)
+        mf.addRow("Several photos", self.combine)
         self.sequence = QCheckBox("Moving people/animals: also save one 3D splat per frame (4D sequence)")
         self.sequence.setChecked(win.settings.export_sequence)
         self.sequence.toggled.connect(self._save_opts)
-        gf.addRow("", self.sequence)
-        for w in (self.generative, self.assembly, self.engine, self.backend):
+        mf.addRow("", self.sequence)
+        for w in (self.generative, self.engine, self.backend):
             w.currentIndexChanged.connect(self._custom_changed)
         self.video_mode.currentIndexChanged.connect(self._save_opts)
         self.combine.toggled.connect(self._save_opts)
-        al.addWidget(gbox)
+        al.addWidget(mbox)
         self.advanced.setVisible(False)
         opts.addWidget(self.advanced)
         opts.addStretch(1)
@@ -345,7 +337,7 @@ class CreatePage(QWidget):
         cur = self.backend.currentData()
         self.backend.blockSignals(True)
         self.backend.clear()
-        self.backend.addItem("Automatic (recommended)", None)
+        self.backend.addItem("Automatic — chosen for the input (recommended)", None)
         for b in all_backends():
             if b.maturity == "unsupported":
                 continue
@@ -404,7 +396,7 @@ class CreatePage(QWidget):
         if values:   # write the preset into the advanced controls
             self._applying = True
             for combo, val in ((self.generative, values["generative"]), (self.engine, values["engine"]),
-                               (self.assembly, values["assembly"]), (self.backend, values["backend"])):
+                               (self.backend, values["backend"])):
                 combo.setCurrentIndex(max(combo.findData(val), 0))
             self._applying = False
         else:
@@ -416,7 +408,7 @@ class CreatePage(QWidget):
         if self._applying:
             return
         cur = {"generative": self.generative.currentData(), "engine": self.engine.currentData(),
-               "assembly": self.assembly.currentData(), "backend": self.backend.currentData()}
+               "backend": self.backend.currentData()}
         match = next((k for k, v in PRESET_VALUES.items() if v == cur), "custom")
         for b in self.preset_group.buttons():
             if b.property("preset") == match and not b.isChecked():
@@ -434,7 +426,6 @@ class CreatePage(QWidget):
         s.layout_tb = self.tb.isChecked()
         s.projection = self.projection.currentData()
         s.generative = self.generative.currentData()
-        s.gen_assembly = self.assembly.currentData()
         s.gen_engine = self.engine.currentData()
         s.video_mode = self.video_mode.currentData()
         s.combine_photos = self.combine.isChecked()
@@ -955,7 +946,7 @@ class SettingsPage(QWidget):
         form.addRow("Also copy results to", orow)
         self.token = QLineEdit(s.hf_token)
         self.token.setEchoMode(QLineEdit.Password)
-        self.token.setPlaceholderText("needed for Stable Virtual Camera (gated); stored on this computer only")
+        self.token.setPlaceholderText("only for gated models; stored on this computer only")
         form.addRow("Hugging Face token", self.token)
         v.addLayout(form)
         from ..paths import app_paths

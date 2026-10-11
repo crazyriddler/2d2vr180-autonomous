@@ -212,7 +212,7 @@ jobs:
           ./scripts/bootstrap.ps1
           ./scripts/build.ps1
           .venv\Scripts\python.exe -m pip install scikit-image==0.25.2
-      - name: Generative runtime (install, real LaMa inpainting on CPU, Stable Virtual Camera import)
+      - name: Generative runtime (install, real LaMa inpainting on CPU, Wan 2.2 import)
         shell: pwsh
         env:
           TWOD2VR180_HOME: D:\2d2vr180-home

@@ -3,7 +3,7 @@ import pytest
 from PIL import Image
 
 from test_render_vr180 import plane_scene, white_centroid_x
-from twod2vr180.render import fill_disocclusions, render_pinhole
+from twod2vr180.render import render_pinhole
 from twod2vr180.rgbd import disparity_to_points, pointmap_to_gaussians
 from twod2vr180.vr180 import StereoOptions, assemble_gpu, finalize_stereo, gpu_views, plan_stereo, render_stereo
 

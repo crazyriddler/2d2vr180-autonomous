@@ -208,11 +208,11 @@
    "commit_date": "2025-06-05",
    "code_license": "Stability AI Non-Commercial Research Community License (code and weights)",
    "model_license": "stabilityai-ai-non-commercial (gated on Hugging Face; outputs non-commercial)",
-   "category": "local-user-only",
+   "category": "reference-only",
    "windows": "native Windows works with PyTorch SDPA (upstream forces flash attention; the worker lifts that restriction)",
    "vram": "~12-14 GB at 576 px short side (estimate); worker retries at 448/384 px on out-of-memory",
    "gpu_smoke_test": "not run",
-   "integration": "workers/seva_worker.py: img2trajvid_s-prob two-pass procedural sampling with our own trajectories (orbit, explore, spiral); the views are reconstructed by the multi-view engine.",
+   "integration": "removed in rc46 (fallback engine no longer needed: Qwen-Image-Edit and Wan 2.2 cover every path; it distorted people)",
    "findings": "Original stabilityai/stable-diffusion-2-1-base repository is gone (HTTP 401); the identical VAE is taken from sd2-community/stable-diffusion-2-1-base."
   },
   {

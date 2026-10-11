@@ -31,9 +31,8 @@ class Settings:
     vr_help_seen: bool = False
     check_updates: bool = False                  # no network access unless the user enables it
     preset: str = "real3d"                       # real3d | quick | around | custom (Create page choice)
-    generative: str = "off"                      # off | tri | capture | arc | orbit | explore | spiral
-    gen_assembly: str = "fusion"                 # fusion | train
-    gen_engine: str = "auto"                     # auto | qwen | wan | seva
+    generative: str = "tri"                      # off | tri | capture | explore
+    gen_engine: str = "auto"                     # auto | qwen | wan
     video_mode: str = "auto"                     # auto | multiview | per_frame | best_frame
     combine_photos: bool = True                  # several photos dropped together → one multi-view scene
     ai_hole_fill: bool = True                    # LaMa inpainting of VR180 disocclusions
@@ -58,13 +57,11 @@ class Settings:
             self.mode = "auto"
         if self.renderer not in ("auto", "gpu", "cpu"):
             self.renderer = "auto"
-        if self.generative not in ("off", "tri", "capture", "arc", "orbit", "explore", "spiral"):
-            self.generative = "off"
-        if self.gen_assembly not in ("fusion", "train"):
-            self.gen_assembly = "fusion"
+        if self.generative not in ("off", "tri", "capture", "explore"):
+            self.generative = "tri" if self.generative in ("arc", "orbit", "spiral") else "off"
         if self.preset not in ("real3d", "quick", "around", "custom"):
             self.preset = "real3d"
-        if self.gen_engine not in ("auto", "qwen", "wan", "seva"):
+        if self.gen_engine not in ("auto", "qwen", "wan"):
             self.gen_engine = "auto"
         if self.video_mode not in ("auto", "multiview", "per_frame", "best_frame"):
             self.video_mode = "auto"
@@ -91,7 +88,7 @@ class Settings:
                        eye_separation_m=self.eye_separation_mm / 1000.0,
                        still_video_seconds=self.still_video_seconds, license_profile=self.license_profile,
                        output_dir=self.output_dir or None, fill_holes=self.fill_holes, renderer=self.renderer,
-                       allow_cpu=self.allow_cpu, generative=self.generative, gen_assembly=self.gen_assembly,
+                       allow_cpu=self.allow_cpu, generative=self.generative,
                        gen_engine=self.gen_engine,
                        video_mode=self.video_mode,
                        ai_hole_fill=self.ai_hole_fill, export_sequence=self.export_sequence)

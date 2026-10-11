@@ -140,3 +140,12 @@ def test_angle_between_ring_views():
         earlier = {lb for r in TRI_RINGS[:k] for lb, *_ in r}
         assert all(set(refs) <= earlier for *_, refs in ring)
     assert "back" in labels and len(labels) == len(set(labels)) == 8
+
+
+def test_align_scale_is_robust():
+    rng = np.random.default_rng(0)
+    z = rng.uniform(1, 5, (50, 50))
+    ref = 2.5 * z
+    ref[:5] = 100       # outliers
+    assert abs(mv.align_scale(z, ref, np.ones_like(z, bool)) - 2.5) < 1e-6
+    assert mv.resize_map(np.arange(4.0).reshape(2, 2), 4, 4)[3, 3] == 3.0

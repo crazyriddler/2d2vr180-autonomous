@@ -24,24 +24,21 @@ The portable ZIP works the same way: unzip anywhere and run `2D2VR180.exe`.
 
 ## First start: install the components
 
-On first start the app offers to install the recommended components (about 40 GB in total).
-You can also open **Components** at any time and install only what you need.
+On first start the app offers to install the recommended components (about 65 GB in total, most of it the
+Qwen-Image-Edit model that Real 3D needs). You can also open **Components** at any time and install only what you
+need.
 
 | Component | What it enables | Size |
 |---|---|---|
 | Photo engine | every single-photo reconstruction, fixed-camera video, GPU VR180 renderer | ~5.5 GB |
 | MoGe-2 Large / Small | metric depth for photos and video; real-world scale for the multi-view engine | 1.3 / 0.14 GB |
-| Depth-Anything-V2 Small | fallback depth model (Apache-2.0, commercial OK) | 0.1 GB |
-| Apple SHARP | best direct single-photo 3D (**research licence**) | ~2.5 GB |
-| Multi-view engine + VGGT-1B | several photos of one place, videos where the camera moves, Generative 3D (**non-commercial**) | ~7 GB + 5 GB |
-| Generative engine | Stable Virtual Camera and LaMa | ~5.5 GB |
-| LaMa | AI filling of the gaps behind objects in VR180 | 0.2 GB |
-| Wan 2.2 Fun 5B Control-Camera | generative 3D: films new camera moves around your photo (Apache-2.0; keeps people intact) | ~25 GB (needs ~32 GB RAM) |
-| Qwen-Image-Edit-2511 + Multiple-Angles + Lightning *(optional)* | generative 3D: redraws your photo from other camera angles, sharp ~1 MP stills (Apache-2.0) | ~33 GB (needs ~32 GB RAM) |
-| Stable Virtual Camera 1.1 *(optional)* | alternative generative engine for scenes/objects without people (**non-commercial, gated**) | 5 GB + 0.3 GB + 3.9 GB |
-
-Stable Virtual Camera is optional and needs a free Hugging Face account (accept the licence at
-https://huggingface.co/stabilityai/stable-virtual-camera, create a *Read* token, paste it in Settings).
+| Apple SHARP | best direct single-photo 3D for Quick 3D (**research licence**) | ~2.5 GB |
+| Multi-view engine + VGGT-1B | Real 3D, several photos of one place, videos where the camera moves (**non-commercial**) | ~7 GB + 5 GB |
+| Generative engine + LaMa | the runtime for Qwen-Image-Edit and Wan 2.2; AI filling of the gaps behind objects in VR180 | ~6 GB + 0.2 GB |
+| Qwen-Image-Edit-2511 + Multiple-Angles + Lightning | **Real 3D**: redraws your photo from other camera angles, sharp ~1 MP stills (Apache-2.0) | ~33 GB (needs ~32 GB RAM) |
+| TRELLIS.2 *(optional)* | Real 3D: the subject's complete shape, back included (MIT; its helpers DINOv3/RMBG-2.0 non-commercial) | ~5 GB runtime + ~11 GB |
+| Wan 2.2 Fun 5B Control-Camera *(optional)* | exploring the surroundings for VR180; Real 3D when Qwen is not installed (Apache-2.0) | ~25 GB (needs ~32 GB RAM) |
+| Depth-Anything-V2 Small *(optional)* | depth model for the Commercial licence profile (Apache-2.0) | 0.1 GB |
 
 Every model shows its licence before downloading. Downloads resume if interrupted and are
 verified (SHA256) before use.
@@ -51,31 +48,28 @@ verified (SHA256) before use.
 1. Open **Create** and drop one or more photos or videos (or click to browse).
 2. Choose **Auto** (recommended), **Quality** or **Fast**.
 3. Choose outputs: VR180 side-by-side and/or top/bottom, VR180 or flat 3D projection.
-4. Under **3D reconstruction**:
-   - **Photo: generative 3D** — *Off* uses only what the photo shows. *Real 3D views (Qwen)* draws your subject ring by
-     ring: 45° left, 45° right and from above; then 90° to each side; then 135° to each side and the back
-     (Fast stops at 90°). Each view is drawn from your photo *and* the neighbouring view already accepted,
-     so clothes and hair stay the same all the way round. In Auto/Quality 2-3 candidates per angle are made
-     and the one that best continues its neighbour is kept automatically. Everything is reconstructed with
-     the photo in the multi-view engine (trained splat). Choosing the *Multi-view* backend with one photo does the same. *360° photo capture* makes a few widely
-     spaced views starting from your photo: 45°, 90°, 135°, 180° (the back is invented), 270°, overhead and
-     from below; in Quality mode it adds 225°, 315° and four raised diagonals. *Around the subject* films four short
-     camera moves (45° to each side, from above, from below) and is the best choice for people; *Wide orbit* also
-     invents the back (objects), *Explore* invents the surroundings so a VR180 is filled (best for VR180),
-     *Spiral* adds a small, faithful extension.
-   - **Generative engine** — *Qwen-Image-Edit* (with the Multiple-Angles LoRA) draws every angle as a sharp
-     ~1 megapixel image; *Wan 2.2* films the camera moving around the subject and takes the frames at those
-     angles (smoother, 704 px); *Automatic* uses Qwen when it is installed, then Wan 2.2.
-   - **Generative 3D assembly** — *Sharp fusion* (default) gives every view MoGe-2's crisp per-pixel geometry,
-     keeps the photo exactly as it is and adds only what the other views show (sides, top, underside): as
-     sharp as a single photo from any angle. *Trained splat* fits one model to every generated frame: smoother
-     transitions but softer, because the generated frames never agree perfectly.
-   - **Video** — *Automatic* analyses the video; *Whole video → one 3D scene* reconstructs every part of the
-     video into one splat (camera must move); *Frame by frame* for people/animals moving in front of a fixed
-     camera; *Sharpest frame only*.
-   - **Combine several photos into one 3D scene** — photos of the same place taken from different
-     positions are reconstructed together (the more angles, the more complete).
-   - **Also save one 3D splat per frame** — a 4D sequence for fixed-camera videos with movement.
+4. **What do you want to make?** — *Real 3D from one photo* (recommended), *Quick 3D* (seconds, depth from the
+   photo alone), *360° capture* (more angles at once) or *Custom*. **Advanced options** show every setting:
+   - **VR180 output** — layouts (side-by-side, top/bottom) and projection.
+   - **One photo**
+     - **AI views** — *Real 3D* draws your subject ring by ring: 45° left, 45° right and from above; then 90° to
+       each side; then 135° to each side and the back (Fast stops at 90°). Each view is drawn from your photo
+       *and* the neighbouring view already accepted, so clothes and hair stay the same all the way round; in
+       Auto/Quality 2-3 candidates per angle are made and the one that best continues its neighbour is kept.
+       *360° capture* draws 45°, 90°, 135°, 180°, 270°, overhead and from below at once (Quality adds 225°,
+       315° and raised diagonals). *Explore the surroundings* (Wan 2.2) films the view around the photo's
+       position so a VR180 is filled. *Off* uses only what the photo shows. In every case the photo and the views
+       are reconstructed together into one trained 3D splat.
+     - **AI model for the views** — *Qwen-Image-Edit* (recommended) draws every angle as a sharp ~1 megapixel
+       image; *Wan 2.2* films the camera moving (smoother, 704 px); *Automatic* uses Qwen when installed.
+     - **Reconstruction engine** — *Automatic* picks the best one for the input.
+   - **Several photos and videos**
+     - **Video** — *Automatic* analyses the video; *Whole video → one 3D scene* reconstructs every part of the
+       video into one splat (camera must move); *Frame by frame* for people/animals moving in front of a fixed
+       camera; *Sharpest frame only*.
+     - **Combine several photos into one 3D scene** — photos of the same place taken from different
+       positions are reconstructed together (the more angles, the more complete).
+     - **Also save one 3D splat per frame** — a 4D sequence for fixed-camera videos with movement.
 5. Click **Generate**. Jobs run one after another; you can cancel any of them.
 
 When a job finishes, **Results** shows it. From there you can:
@@ -97,7 +91,7 @@ When a job finishes, **Results** shows it. From there you can:
 | Input | What happens |
 |---|---|
 | Photo | Single-image 3D (SHARP if installed and allowed, otherwise MoGe-2, otherwise Depth-Anything). |
-| Photo + generative 3D | Wan 2.2 films 1–4 short camera moves that start at your photo (Stable Virtual Camera if Wan is not installed). Sharp fusion: VGGT places a few key views in 3D, MoGe-2 gives each one sharp geometry, and the photo is kept whole while the key views add only what it does not show. Trained splat: one 3D splat optimised on all frames. |
+| Photo + AI views (Real 3D) | Qwen-Image-Edit draws the other angles (Wan 2.2 if Qwen is not installed); VGGT places every view in 3D, MoGe-2 gives real-world scale and depth, TRELLIS.2 (if installed) the subject's complete shape; one 3D splat is trained on the photo and the views, and its colours are finally taken from the view that sees each surface best. |
 | Several photos | Multi-view engine: VGGT finds where each photo was taken, MoGe-2 gives real-world scale, a 3D Gaussian splat is trained on all photos. |
 | Video, camera moves | Multi-view engine on up to 80 keyframes of the whole video. |
 | Video, fixed camera, people/animals move | Each frame is reconstructed (depth stabilised over time) → a VR180 video of the motion, optional 4D sequence. |
@@ -110,7 +104,7 @@ Speed on an RTX 4080 (estimates): photo 20–60 s; several photos / video 5–15
 2D2VR180 can invent missing content when you ask it to, and it always tells you which parts are real:
 - **Observed** geometry: seen in two or more of your photos/frames.
 - **Inferred**: seen in one input image, depth predicted by a network.
-- **Generative**: invented by the generative engine (only when *Photo: generative 3D* is on). Plausible, not measured.
+- **Generative**: invented by the AI views (Real 3D, 360° capture, Explore). Plausible, not measured.
 - **Interpolated**: gaps behind objects in VR180 filled from the background or by LaMa.
 - **Unknown**: never seen — black in VR180.
 
@@ -125,7 +119,7 @@ around the picture; with *Explore* the surroundings are generated.
 - **VR180 renderer**: Automatic uses the GPU splat renderer when available, otherwise the CPU renderer.
 - **Eye separation**, **resolutions**, **video length**, **hole filling** (and **AI hole filling** with LaMa),
   **CPU mode** (slow, for PCs without NVIDIA GPU; not available for multi-view or generative 3D),
-  **copy results to** a folder, **Hugging Face token** (needed for Stable Virtual Camera).
+  **copy results to** a folder, **Hugging Face token** (only for gated models).
 - Data lives in `%LOCALAPPDATA%\2D2VR180`. Set `TWOD2VR180_HOME` to move it to another drive.
 
 ## VR: two ways to use a headset
