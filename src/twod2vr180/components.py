@@ -24,16 +24,16 @@ class Component:
 COMPONENTS: list[Component] = [
     # ---------------------------------------------------------------- photos
     Component("engine-photo", "Photo engine", "runtime", "photo-cu128",
-              "Required for every single-photo backend, fixed-camera video and the GPU VR180 renderer "
+              "Required for every single-photo backend, the single-frame fallback for videos and the GPU VR180 renderer "
               "(PyTorch + CUDA, installed privately for 2D2VR180).", True),
     Component("model-moge-l", "MoGe-2 Large — quality metric depth", "model", "moge-2-vitl-normal",
-              "Quality mode for photos and fixed-camera video (metric scale, textured mesh); also gives the "
+              "Quality mode for photos (metric scale, textured mesh); also gives the 4D video engine its depth and the "
               "multi-view engine its real-world scale.", True, ("engine-photo",)),
     Component("model-moge3", "MoGe-3 Large — the photo's geometry for Real 3D", "model", "moge-3-vitl",
               "Sharper depth, field of view and real-world scale of your photo for Real 3D (MIT). Without it "
               "Real 3D uses MoGe-2.", True, ("engine-photo",)),
     Component("model-moge-s", "MoGe-2 Small — fast metric depth", "model", "moge-2-vits-normal",
-              "Fast mode for photos and fixed-camera video.", True, ("engine-photo",)),
+              "Fast mode for photos.", True, ("engine-photo",)),
     Component("model-da2", "Depth-Anything-V2 Small — commercial-safe depth", "model", "depth-anything-v2-small",
               "Apache-2.0 fallback usable in the Commercial licence profile (relative depth). Only needed for "
               "commercial use.", False,
@@ -42,9 +42,10 @@ COMPONENTS: list[Component] = [
               "Feed-forward 3D Gaussians from one photo. Apple research licence: non-commercial.", True,
               ("engine-photo",)),
     # ---------------------------------------------------------------- multi-view
-    Component("engine-video", "Multi-view engine (several photos, moving-camera video)", "runtime", "recon3d-cu124",
-              "Turns several photos of one scene, or a video where the camera moves, into one trained 3D "
-              "Gaussian splat (VGGT + gsplat). Also used by Generative 3D. Needs an NVIDIA GPU with 10 GB+.", True),
+    Component("engine-video", "Multi-view and 4D video engine (several photos, videos)", "runtime", "recon3d-cu124",
+              "Turns several photos of one scene into one trained 3D Gaussian splat, and a video into a 4D scene "
+              "(the still surroundings in 3D plus everything that moves, frame by frame). VGGT + MoGe-2 + gsplat. "
+              "Also used by Real 3D. Needs an NVIDIA GPU with 10 GB+.", True),
     Component("model-vggt", "VGGT-1B — camera poses and depth from many views (non-commercial)", "model", "vggt-1b",
               "Finds where each photo/frame was taken and its depth.", True, ("engine-video",)),
     # ---------------------------------------------------------------- generative

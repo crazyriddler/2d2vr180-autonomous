@@ -40,7 +40,8 @@
    "required_vram_gb": 5,
    "backends": [
     "moge_rgbd",
-    "multiview"
+    "multiview",
+    "video4d"
    ],
    "requires_acceptance": true,
    "gated": false,
@@ -153,7 +154,8 @@
    "required_vram_gb": 10,
    "backends": [
     "multiview",
-    "generative_scene"
+    "generative_scene",
+    "video4d"
    ],
    "requires_acceptance": true,
    "gated": false,

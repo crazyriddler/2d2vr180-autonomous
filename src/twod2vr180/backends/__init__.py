@@ -7,10 +7,12 @@ from .generative import GenerativeSceneBackend
 from .photo import DepthAnythingBackend, MoGeRGBDBackend, SharpBackend
 from .multiview import MultiViewBackend
 from .video import RESEARCH_BACKENDS
+from .video4d import Video4DBackend
 
 
 def all_backends() -> list[Backend]:
-    return [SharpBackend(), MoGeRGBDBackend(), DepthAnythingBackend(), MultiViewBackend(), GenerativeSceneBackend(), *RESEARCH_BACKENDS]
+    return [SharpBackend(), MoGeRGBDBackend(), DepthAnythingBackend(), MultiViewBackend(), GenerativeSceneBackend(),
+            Video4DBackend(), *RESEARCH_BACKENDS]
 
 
 def get_backend(backend_id: str) -> Backend:

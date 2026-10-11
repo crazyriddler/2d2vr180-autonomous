@@ -234,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     w = MainWindow()
     if argv:
         p = Path(argv[0])
-        if p.suffix.lower() in (".ply", ".splat"):
+        if p.suffix.lower() in (".ply", ".splat", ".splatv"):
             w.open_scene(p)
         else:
             w.create.add_files([str(p)])

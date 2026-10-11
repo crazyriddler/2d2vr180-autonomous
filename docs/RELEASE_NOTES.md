@@ -1,4 +1,57 @@
-# 2D2VR180 1.0.0-rc48 — MoGe-3 for your photo's geometry
+# 2D2VR180 1.0.0-rc49 — Videos become 4D scenes
+
+Until now a video only really used one frame. From this version every video becomes a **4D Gaussian splat
+scene**: 3D that changes over time. It comes with a player for the app and for VR, and the VR180 video is
+rendered from it.
+
+## What's new in rc49
+
+- **Videos in 4D.** For every frame of the video (by quality: 8, 12 or 15 per second, for 8, 12 or 15 s):
+  - VGGT finds where the camera was, and MoGe-2 gives the depth at real-world scale. A camera on a tripod is
+    detected and held exactly still.
+  - **What moves is found in 3D.** Each frame is compared with frames before and after it and across the
+    clip: if another frame sees empty space where a point is, or another colour at the same depth, that part
+    is moving. Someone who stands still for a while and then walks away still counts as moving.
+  - **The surroundings are trained once** as one 3D splat from all frames, leaving out what moves. What a
+    passer-by hides in one frame is filled in from the frames where it is visible.
+  - **What moves is rebuilt frame by frame** in the same 3D space, from the side the camera saw. It is
+    labelled *inferred*.
+- **4D player.**
+  - **In the app**, the 3D viewer plays a 4D result with play/pause and a timeline.
+  - **View in VR** opens a new 4D player in Chrome or Edge. You walk around the scene while it moves. The
+    trigger plays and pauses; the sticks move and turn you as before.
+- **New VR180 video.** It is rendered from the 4D scene: every frame from where the camera was, with the path
+  smoothed and the horizon levelled, showing the background plus what moved at that moment. The old
+  frame-by-frame video path, its 4D sequence of `.ply` files and the *Video* mode menu are gone.
+- **New files.**
+  - `scene.splatv` is the whole 4D scene. It uses splaTV's format, so it also plays in splaTV-compatible
+    players.
+  - `scene.ply` is the still background only, for any splat viewer.
+- **New options** under *Several photos and videos*: *Video length (4D)* and *Video frames (4D)*. The
+  recommended setting for both is "by quality". From the command line, use `--video-seconds`,
+  `--video-fps` and `--video-start`.
+- **If the 4D engine cannot run** (it needs the multi-view engine, VGGT, MoGe-2 and 10 GB of VRAM), the
+  sharpest frame is reconstructed as a photo, and the report says why.
+
+## Not yet tested on your hardware
+
+The 4D engine has not been run on an RTX 4080 with the real models. These parts were tested without the real
+models or a GPU:
+
+- motion detection, on synthetic videos;
+- the whole worker, run end to end with stand-ins for VGGT, MoGe-2 and gsplat;
+- the players, in a browser and in the app.
+
+Still to measure on your hardware: speed, memory, and how well motion is found in real footage (shadows,
+reflections, lighting changes).
+
+## Next
+
+The moving parts are rebuilt per frame, so they only show the side the camera saw. True 4D Gaussians that
+move and keep their volume (4DGT, Shape of Motion) are next. The `.splatv` format and the player already
+support moving splats.
+
+## rc48: MoGe-3 for your photo's geometry
 
 Reviewing which method computes distances most precisely today on an RTX 4080 found one better than
 MoGe-2: **MoGe-3** (Microsoft, MIT licence). Real 3D now uses it for your photo.

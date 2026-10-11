@@ -125,7 +125,7 @@ def test_worker_oom_reported(ctx, rtx4080, photo, monkeypatch):
 
 def test_cancel_kills_worker(ctx, rtx4080, tmp_path, videos, monkeypatch):
     monkeypatch.setenv("FAKE_WORKER_DELAY", "2")
-    job = Job(videos["dynamic"], JobOptions(eye_resolution=128, video_eye_resolution=64, dynamic_fps=5))
+    job = Job(videos["dynamic"], JobOptions(eye_resolution=128, video_eye_resolution=64, mode="fast"))
     runner = JobRunner(ctx, rtx4080)
 
     def on_event(ev):
@@ -137,47 +137,66 @@ def test_cancel_kills_worker(ctx, rtx4080, tmp_path, videos, monkeypatch):
     assert rep["runtime_s"] < 30
 
 
-def test_static_video_is_treated_as_photo(ctx, rtx4080, videos):
-    job, rep, _ = run_job(ctx, rtx4080, videos["static"], mode="fast")
+def test_static_video_becomes_a_4d_scene_with_nothing_moving(ctx, rtx4080, videos):
+    job, rep, _ = run_job(ctx, rtx4080, videos["static"], mode="fast", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["input"]["analysis"]["kind"] == "static_scene"
-    assert rep["selection"]["effective_kind"] == "video:static_scene"
-    assert len(list((job.dir / "frames").glob("*.png"))) == 1
+    assert rep["backend"]["id"] == "video4d"
+    assert len(list((job.dir / "frames").glob("*.png"))) == 24        # fast: 8 per second of the 3 s video
+    assert rep["outputs"]["frames"] == 24 and rep["outputs"]["moving_gaussians"] == 0
 
 
-def test_dynamic_video_per_frame(ctx, rtx4080, videos):
-    job, rep, _ = run_job(ctx, rtx4080, videos["dynamic"], mode="fast", dynamic_fps=5, layouts=["sbs"])
+def test_dynamic_video_becomes_a_4d_scene_and_a_4d_vr180_video(ctx, rtx4080, videos):
+    from twod2vr180.scene4d import Scene4D, read_splatv
+
+    job, rep, _ = run_job(ctx, rtx4080, videos["dynamic"], mode="fast", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
-    vids = rep["outputs"]["vr180"]["videos"]
-    dyn = [v for v in vids if "dynamic" in Path(v["path"]).name]
-    assert dyn and dyn[0]["frames"] >= 10 and dyn[0]["stereo_mode"] == "left_right"
-    assert "per-frame" in dyn[0]["method"]
+    out = rep["outputs"]
+    assert out["frames"] == 24 and out["fps"] == 8.0 and out["moving_gaussians"] > 0
+    s4 = Scene4D.load(Path(out["scene4d"]))
+    assert s4.frames == 24 and len(s4.dynamic) == out["moving_gaussians"]
+    # the red box moves to the right over the clip
+    x0 = s4.dynamic.at(s4.time_of(0)).means[:, 0].mean()
+    x1 = s4.dynamic.at(s4.time_of(23)).means[:, 0].mean()
+    assert x1 > x0 + 0.3
+    v = read_splatv(Path(out["splatv"]))
+    assert v.frames == 24 and len(v.background) == len(s4.background) and len(v.dynamic) == len(s4.dynamic)
+    vids = out["vr180"]["videos"]
+    assert len(vids) == 1 and "_4d_180_LR" in Path(vids[0]["path"]).name
+    assert vids[0]["frames"] == 24 and vids[0]["fps"] == 8.0 and "4D scene" in vids[0]["method"]
+    assert "fixed camera position" in vids[0]["method"]
+    assert rep["validation"]["source_view"] in ("ok", "degraded")
+    readme = (job.dir / "export" / "README.txt").read_text()
+    assert "scene.splatv" in readme and "4D SCENE" in readme
+    assert (job.dir / "export" / "_2d2vr180" / "moving_preview.png").exists()
 
 
-def test_moving_camera_without_multiview_backend_falls_back(ctx, rtx4080, videos):
-    # the multi-view runtime is "installed" (fake): force unavailability with a GPU that is too small.
-    rtx4080.gpus[0].total_mib = 8_000
+def test_video_options_choose_the_part_of_the_video(ctx, rtx4080, videos):
+    job, rep, _ = run_job(ctx, rtx4080, videos["dynamic"], mode="fast", layouts=["sbs"], renderer="cpu",
+                          vr180=False, video_seconds=1.0, video_fps=5.0, video_start_s=1.0)
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["outputs"]["frames"] == 5
+    assert rep["processing"]["video_fps"] == 5.0 and rep["processing"]["video_start_s"] == 1.0
+    assert any("Only 1.0 s of the 3.0 s video" in w for w in rep["warnings"])
+
+
+def test_video_without_the_4d_engine_falls_back_to_the_sharpest_frame(ctx, rtx4080, videos):
+    rtx4080.gpus[0].total_mib = 8_000          # too small for the 4D engine
     job, rep, _ = run_job(ctx, rtx4080, videos["pan"], mode="fast")
     assert rep["status"] == "succeeded", rep.get("error")
-    assert rep["selection"]["effective_kind"] == "video:static_scene"
-    assert any("falling back" in w for w in rep["warnings"])
-    assert any(r["backend"] == "multiview" for r in rep["selection"]["rejected"])
+    assert rep["selection"]["effective_kind"] == "video:frame"
+    assert rep["backend"]["id"] == "moge_rgbd"
+    assert len(list((job.dir / "frames").glob("*.png"))) == 1
+    assert any("falling back" in w and "4D video" in w for w in rep["warnings"])
+    assert any(r["backend"] == "video4d" for r in rep["selection"]["rejected"])
 
 
-def test_moving_camera_multiview_path_video(ctx, rtx4080, videos, monkeypatch):
-    from conftest import REPO
-    from twod2vr180.backends.multiview import MultiViewBackend
-
-    monkeypatch.setattr(MultiViewBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_multiview_worker.py"))
+def test_moving_camera_video_follows_the_smoothed_camera_path(ctx, rtx4080, videos):
     job, rep, _ = run_job(ctx, rtx4080, videos["pan"], mode="fast", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
-    assert rep["backend"]["id"] == "multiview"
-    assert rep["coverage"]["by_splat"]["observed"] == 1.0
-    vids = rep["outputs"]["vr180"]["videos"]
-    path = [v for v in vids if "_path_" in Path(v["path"]).name]
-    assert path and path[0]["frames"] >= len(rep["input"]["analysis"]["keyframes"])
-    assert "interpolated" in path[0]["method"]
-    assert path[0]["spherical_metadata"]["projection"] == "equirect180"
+    assert rep["backend"]["id"] == "video4d" and rep["backend"]["extra"]["camera_motion"] == "moving"
+    assert "camera path" in rep["outputs"]["vr180"]["videos"][0]["method"]
+    assert rep["outputs"]["vr180"]["videos"][0]["spherical_metadata"]["projection"] == "equirect180"
 
 
 def test_job_state_is_final_only_after_report_is_written(ctx, rtx4080, photo, monkeypatch):
@@ -229,18 +248,6 @@ def test_folder_of_photos_is_expanded(tmp_path):
     assert [p.name for p in expand_inputs(tmp_path)] == ["a.png", "b.jpg"]
 
 
-def test_video_mode_multiview_overrides_static_analysis(ctx, rtx4080, videos, monkeypatch):
-    from conftest import REPO
-    from twod2vr180.backends.multiview import MultiViewBackend
-
-    monkeypatch.setattr(MultiViewBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_multiview_worker.py"))
-    job, rep, _ = run_job(ctx, rtx4080, videos["static"], mode="fast", layouts=["sbs"], renderer="cpu",
-                          video_mode="multiview", max_keyframes=12)
-    assert rep["status"] == "succeeded", rep.get("error")
-    assert rep["backend"]["id"] == "multiview"
-    assert len(list((job.dir / "frames").glob("*.png"))) >= 6
-
-
 def test_generative_photo_to_3d(ctx, rtx4080, photo, monkeypatch):
     """Explore the surroundings (VR180) with Wan 2.2: every second frame is trained with the photo."""
     from conftest import install_fake_model
@@ -283,16 +290,6 @@ def test_vr180_holes_filled_by_lama_when_installed(ctx, rtx4080, photo, monkeypa
     magenta = (img[..., 0] > 200) & (img[..., 1] < 60) & (img[..., 2] > 200)
     assert magenta.any()
     assert not any("LaMa) not used" in w for w in rep["warnings"])
-
-
-def test_dynamic_video_exports_4d_sequence(ctx, rtx4080, videos):
-    job, rep, _ = run_job(ctx, rtx4080, videos["dynamic"], mode="fast", dynamic_fps=5, layouts=["sbs"],
-                          export_sequence=True)
-    assert rep["status"] == "succeeded", rep.get("error")
-    seq = sorted((job.dir / "export" / "sequence").glob("frame_*.ply"))
-    assert len(seq) >= 10
-    dyn = [v for v in rep["outputs"]["vr180"]["videos"] if "dynamic" in Path(v["path"]).name][0]
-    assert "stabilised" in dyn["method"] and dyn["sequence_dir"].endswith("sequence")
 
 
 def test_real3d_uses_wan_capture_when_qwen_is_missing(ctx, rtx4080, photo, monkeypatch):

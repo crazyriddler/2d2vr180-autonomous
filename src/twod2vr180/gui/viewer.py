@@ -1,5 +1,7 @@
 """Interactive scene viewer (orbit / pan / zoom / fly) — GPU point-sprite
-rendering via OpenGL, with the numpy reference renderer as fallback."""
+rendering via OpenGL, with the numpy reference renderer as fallback. 4D scenes
+play over time (timeline under the view): the background stays, the moving
+splats of each frame replace the previous frame's."""
 
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ from ..scene import GaussianScene
 
 MAX_CPU_SPLATS = 400_000       # CPU fallback, full quality
 MAX_CPU_DRAG_SPLATS = 120_000  # CPU fallback while the mouse is moving
+MAX_FRAME_SPLATS = 200_000     # 4D: moving splats shown per frame
 PROV_COLORS = np.array([[60, 200, 90], [70, 140, 255], [255, 80, 200], [200, 200, 200]], np.float32) / 255
 
 
@@ -80,6 +83,29 @@ class SceneViewer(QWidget):
         self.info.setObjectName("note")
         row.addWidget(self.info, 1)
         v.addLayout(row)
+        # 4D timeline (hidden for still scenes)
+        self.timeline = QWidget()
+        tl = QHBoxLayout(self.timeline)
+        tl.setContentsMargins(0, 0, 0, 0)
+        self.play_btn = QPushButton("Pause")
+        self.play_btn.clicked.connect(lambda: self.set_playing(not self._playing))
+        tl.addWidget(self.play_btn)
+        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider.valueChanged.connect(self._slider_moved)
+        tl.addWidget(self.frame_slider, 1)
+        self.frame_label = QLabel("")
+        self.frame_label.setMinimumWidth(150)
+        tl.addWidget(self.frame_label)
+        self.timeline.setVisible(False)
+        v.addWidget(self.timeline)
+        self.scene4d = None
+        self.frame = 0
+        self._moving = None
+        self._cpu_frame = None
+        self._frame_idx: list[np.ndarray] = []
+        self._playing = False
+        self._play_timer = QTimer(self)
+        self._play_timer.timeout.connect(self._tick)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._render_cpu)
@@ -94,6 +120,8 @@ class SceneViewer(QWidget):
         self.info.setText(f"GPU view unavailable ({why[:80]}); using CPU preview.")
         self.stack.setCurrentWidget(self.image)
         self.gl = None
+        if self.scene4d is not None:
+            self.show_frame(self.frame)
         self.schedule()
 
     def _verify_gl(self) -> None:
@@ -102,9 +130,100 @@ class SceneViewer(QWidget):
             self._gl_failed("could not create an OpenGL 3.3 context")
 
     def set_scene(self, scene: GaussianScene) -> None:
+        self._stop_4d()
+        self._set_static(scene)
+
+    def _stop_4d(self) -> None:
+        self._play_timer.stop()
+        self._playing = False
+        self.scene4d = None
+        self._frame_idx = []
+        self.timeline.setVisible(False)
+
+    def set_scene4d(self, s4d) -> None:
+        """Play a 4D scene (scene4d.Scene4D): its background is the still scene, the splats visible at each
+        frame are shown on top while the timeline plays."""
+        self._stop_4d()
+        self._set_static(s4d.background)
+        self.scene4d = s4d
+        dy = s4d.dynamic
+        rng = np.random.default_rng(0)
+        for k in range(s4d.frames):    # which moving splats belong to each frame (drawn when >= half visible)
+            idx = np.nonzero(dy.temporal_opacity(s4d.time_of(k)) >= 0.5)[0]
+            if len(idx) > MAX_FRAME_SPLATS:
+                idx = np.sort(rng.choice(idx, MAX_FRAME_SPLATS, replace=False))
+            self._frame_idx.append(idx)
+        self.frame_slider.blockSignals(True)
+        self.frame_slider.setRange(0, max(s4d.frames - 1, 0))
+        self.frame_slider.setValue(0)
+        self.frame_slider.blockSignals(False)
+        self.timeline.setVisible(s4d.frames > 1)
+        self._play_timer.setInterval(int(round(1000 / max(s4d.fps, 1.0))))
+        self.show_frame(0)
+        self.info.setText(self.info.text() + f" · 4D: {s4d.frames} frames at {s4d.fps:g} fps, "
+                          f"{len(dy):,} moving splats")
+        self.set_playing(s4d.frames > 1)
+
+    def set_playing(self, on: bool) -> None:
+        self._playing = bool(on and self.scene4d is not None)
+        self.play_btn.setText("Pause" if self._playing else "Play")
+        if self._playing:
+            self._play_timer.start()
+        else:
+            self._play_timer.stop()
+
+    def _tick(self) -> None:
+        if self.scene4d is not None:
+            self.show_frame((self.frame + 1) % self.scene4d.frames)
+
+    def _slider_moved(self, k: int) -> None:
+        if self.scene4d is not None and k != self.frame:
+            self.set_playing(False)
+            self.show_frame(k)
+
+    def moving_splats(self, k: int) -> GaussianScene:
+        """The moving splats shown at frame ``k`` (moved / faded to that time)."""
+        from ..scene4d import DynamicSplats
+
+        dy, idx = self.scene4d.dynamic, self._frame_idx[k]
+        pick = lambda a: None if a is None else a[idx]  # noqa: E731
+        sub = DynamicSplats(dy.means[idx], dy.scales[idx], dy.quats[idx], dy.opacity[idx], dy.colors[idx],
+                            dy.t_center[idx], dy.t_scale[idx], pick(dy.motion), pick(dy.omega), dy.provenance[idx])
+        return sub.at(self.scene4d.time_of(k), threshold=0.0)
+
+    def show_frame(self, k: int) -> None:
+        if self.scene4d is None:
+            return
+        self.frame = k
+        mv = self.moving_splats(k)
+        if self.prov.isChecked():
+            mv.colors = (PROV_COLORS[np.minimum(mv.provenance, 3)] * 0.6 + mv.colors * 0.4).astype(np.float32)
+        self.frame_slider.blockSignals(True)
+        self.frame_slider.setValue(k)
+        self.frame_slider.blockSignals(False)
+        self.frame_label.setText(f"{k / max(self.scene4d.fps, 1e-6):.2f} s · frame {k + 1}/{self.scene4d.frames}")
+        self._moving, self._cpu_frame = mv, None
+        if self.gl is not None:
+            from .gl_view import splat_radii
+
+            self.gl.set_moving_points(mv.means, mv.colors, splat_radii(mv))
+        if not self.using_gl:
+            self._sync_cpu_frame()
+        self.schedule()
+
+    def _sync_cpu_frame(self) -> None:
+        """CPU preview scenes: background + the moving splats of the current frame."""
+        from ..scene4d import merge
+
+        if self.scene4d is not None and self._cpu_frame != self.frame:
+            self.view_scene = merge(self._bg_view, self._moving)
+            self.drag_scene = merge(self._bg_drag, self._moving)
+            self._cpu_frame = self.frame
+
+    def _set_static(self, scene: GaussianScene) -> None:
         self.scene = scene
-        self.view_scene = _subsample(scene, MAX_CPU_SPLATS)
-        self.drag_scene = _subsample(scene, MAX_CPU_DRAG_SPLATS, seed=1)
+        self.view_scene = self._bg_view = _subsample(scene, MAX_CPU_SPLATS)
+        self.drag_scene = self._bg_drag = _subsample(scene, MAX_CPU_DRAG_SPLATS, seed=1)
         self._colors = scene.colors.copy()
         cam = scene.cameras[0] if scene.cameras else None
         self.base = np.asarray(cam.c2w if cam is not None else np.eye(4), np.float64)
@@ -143,12 +262,14 @@ class SceneViewer(QWidget):
             return
         cols = (PROV_COLORS[np.minimum(self.scene.provenance, 3)] * 0.6 + self._colors * 0.4) if on else self._colors
         self.scene.colors = cols.astype(np.float32)
-        self.view_scene = _subsample(self.scene, MAX_CPU_SPLATS)
-        self.drag_scene = _subsample(self.scene, MAX_CPU_DRAG_SPLATS, seed=1)
+        self.view_scene = self._bg_view = _subsample(self.scene, MAX_CPU_SPLATS)
+        self.drag_scene = self._bg_drag = _subsample(self.scene, MAX_CPU_DRAG_SPLATS, seed=1)
         if self.gl is not None:
             from .gl_view import splat_radii
 
             self.gl.set_points(self.scene.means, self.scene.colors, splat_radii(self.scene))
+        if self.scene4d is not None:
+            self.show_frame(self.frame)
         self.schedule()
 
     def _size_changed(self, v: int) -> None:
@@ -177,6 +298,7 @@ class SceneViewer(QWidget):
             return None
         c2w, vfov = self.camera()
         f = (height / 2) / np.tan(np.radians(vfov) / 2)
+        self._sync_cpu_frame()
         sc = self.drag_scene if fast else self.view_scene
         r = render_pinhole(sc, c2w, width, height, f, f, width / 2, height / 2, background=(24, 24, 28),
                            crack_fill=not fast)

@@ -42,14 +42,44 @@ Target: RTX 4080 16 GB, 32 GB RAM, Windows 11, everything local.
 - Our own viewers (GL viewer in the app; WebXR viewer served to the browser) can play option 1 directly.
   Option 2 needs a shader that evaluates motion per Gaussian.
 
-## Plan
+## Plan and status
 
-| Step | Content | Result for the owner |
+| Step | Content | Status |
 |---|---|---|
-| 1 | **4D player:** the app's 3D viewer and the WebXR (VR) viewer play a splat sequence (play/pause, timeline, loop) | Today's per-frame sequences can be watched in 3D/VR, moving |
-| 2 | **Static background + moving foreground:** MegaSaM cameras and depth for every frame; people/animals masked; the background trained once from all frames (multi-view engine, sharp and complete); the foreground as per-frame splats in the same world frame | A real 4D scene: a solid 3D background, people moving in it |
-| 3 | **True 4DGS for the moving parts:** evaluate 4DGT (feed-forward, fast) and Shape of Motion (optimised, best quality) on the RTX 4080; export `.splatv` and/or the sequence | Moving subjects with volume, not only their visible side |
-| 4 | **New VR180 video:** stereo frames rendered from the 4D scene along the original camera path (or a stabilised one); the old per-frame VR180 path removed | VR180 videos with real depth and parallax |
+| 1 | **4D player:** the app's 3D viewer and the WebXR (VR) viewer play a 4D scene (play/pause, timeline, loop) | **Done in rc49.** `.splatv` (splaTV format) with our own WebGL2/WebXR player derived from splaTV (MIT); the app's viewer plays the same scene with a timeline |
+| 2 | **Static background + moving foreground** in one world frame | **Done in rc49**, with VGGT instead of MegaSaM (see below) |
+| 3 | **True 4DGS for the moving parts:** evaluate 4DGT (feed-forward) and Shape of Motion (optimised) on the RTX 4080 | Next. The player and `.splatv` already carry per-splat motion (polynomial + rotation velocity + temporal opacity), so moving Gaussians need no new format |
+| 4 | **New VR180 video** from the 4D scene; old per-frame VR180 path removed | **Done in rc49** |
 
-Each step: research the upstream, record commit, licence and model hashes, build an isolated adapter, smoke
-test, then integrate (CLAUDE.md).
+### What rc49 builds (workers/video4d_worker.py)
+
+1. **Frames:** every frame at a fixed rate (by quality: 8 / 12 / 15 per second, 8 / 12 / 15 s; adjustable).
+2. **Cameras:** VGGT on all frames, chunked and Sim(3)-stitched (the multi-view engine's code). A camera that
+   neither moves (1 % of the scene depth) nor turns (1°) is held exactly still. MegaSaM was the research choice
+   for dynamic videos, but it needs DROID-SLAM CUDA extensions with no Windows build and ~24 GB for 100 frames;
+   VGGT is installed already and robust when most of the image is still. To be revisited if poses drift on
+   videos dominated by movement.
+3. **Depth:** MoGe-2 per frame with the camera's field of view, aligned (scale + shift, robust) onto VGGT's
+   joint geometry; metric scale from MoGe-2.
+4. **What moves:** each frame is reprojected into frames 0.5, 1.5 and 3 s away and into five frames spread
+   over the clip. A pixel moves if any of them sees free space where its 3D point is (it is not permanent),
+   or if most of them see another colour at the same depth (best match within one pixel; global exposure
+   removed). No evidence (hidden, out of view, depth edge) counts as still. Masks are cleaned (opening,
+   closing, small blobs removed, holes filled) and grown by about 1 %. Depth is then aligned again on still
+   pixels only; with a fixed camera all frames share one median background depth.
+5. **Background:** one 3D Gaussian splat trained on all frames with the moving pixels weighted 0 and the
+   still pixels' depth as prior: what a passer-by hides in one frame is learnt from the others.
+6. **Moving parts:** per frame, splats on a pixel grid of the moving region (budget 25k / 40k / 60k per frame),
+   flat discs facing that frame's camera, at that frame's aligned depth, visible only at that frame's time.
+   2.5D: the side the camera saw. Labelled INFERRED.
+7. **Outputs:** `scene.ply` (background, for any viewer), `scene.splatv` (whole 4D scene, capped at 4 M splats
+   for the browser), full-precision `dynamic.npz` + `scene4d.json`, a TSDF mesh of the background, a preview of
+   the moving masks.
+8. **VR180 video:** each frame rendered (gsplat, background + that frame's moving splats) from the levelled
+   camera of that frame; a moving camera's path is smoothed (Gaussian, σ = fps / 4 frames).
+
+Not yet measured on the RTX 4080: speed, VRAM, mask quality on real footage (shadows, reflections, lighting
+changes), and pose stability on videos where most of the image moves.
+
+Each further step: research the upstream, record commit, licence and model hashes, build an isolated adapter,
+smoke test, then integrate (CLAUDE.md).

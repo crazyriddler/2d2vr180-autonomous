@@ -1,6 +1,7 @@
 """GPU scene view: Gaussian splats drawn as depth-tested round point sprites
 (OpenGL 3.3 core via Qt). Interactive at millions of splats; the CPU renderer
-remains the fallback when OpenGL is unavailable."""
+remains the fallback when OpenGL is unavailable. Two layers: the scene (static)
+and, for 4D scenes, the splats of the current moment (replaced while playing)."""
 
 from __future__ import annotations
 
@@ -85,10 +86,7 @@ class GLSplatView(QOpenGLWidget):
         super().__init__(parent)
         self.setFormat(gl_format())
         self.program: QOpenGLShaderProgram | None = None
-        self.vao: QOpenGLVertexArrayObject | None = None
-        self.vbo: QOpenGLBuffer | None = None
-        self.count = 0
-        self.pending: np.ndarray | None = None
+        self.layers: list[dict] = [{"vao": None, "vbo": None, "count": 0, "pending": None} for _ in range(2)]
         self.c2w = np.eye(4)
         self.vfov = 50.0
         self.near, self.far = 0.01, 1000.0
@@ -97,10 +95,20 @@ class GLSplatView(QOpenGLWidget):
         self.background = (0.094, 0.094, 0.11)
 
     # ---------------------------------------------------------------- data
+    @staticmethod
+    def _pack(means: np.ndarray, colors: np.ndarray, radii: np.ndarray) -> np.ndarray:
+        return np.ascontiguousarray(np.concatenate([means.astype(np.float32), np.clip(colors, 0, 1).astype(np.float32),
+                                                    radii[:, None].astype(np.float32)], axis=1))
+
     def set_points(self, means: np.ndarray, colors: np.ndarray, radii: np.ndarray) -> None:
-        self.pending = np.ascontiguousarray(
-            np.concatenate([means.astype(np.float32), np.clip(colors, 0, 1).astype(np.float32),
-                            radii[:, None].astype(np.float32)], axis=1))
+        """The scene's splats (layer 0); clears the moving layer."""
+        self.layers[0]["pending"] = self._pack(means, colors, radii)
+        self.layers[1]["pending"] = np.zeros((0, 7), np.float32)
+        self.update()
+
+    def set_moving_points(self, means: np.ndarray, colors: np.ndarray, radii: np.ndarray) -> None:
+        """The splats of the current moment of a 4D scene (layer 1)."""
+        self.layers[1]["pending"] = self._pack(means, colors, radii)
         self.update()
 
     def set_camera(self, c2w: np.ndarray, vfov_deg: float, near: float, far: float) -> None:
@@ -121,21 +129,25 @@ class GLSplatView(QOpenGLWidget):
             if not prog.link():
                 raise RuntimeError("link: " + prog.log())
             self.program = prog
-            self.vao = QOpenGLVertexArrayObject(self)
-            self.vao.create()
-            self.vbo = QOpenGLBuffer(QOpenGLBuffer.VertexBuffer)
-            self.vbo.create()
+            for layer in self.layers:
+                layer["vao"] = QOpenGLVertexArrayObject(self)
+                layer["vao"].create()
+                layer["vbo"] = QOpenGLBuffer(QOpenGLBuffer.VertexBuffer)
+                layer["vbo"].create()
             self.ok = True
         except Exception as e:  # noqa: BLE001 - fall back to the CPU view
             self.ok = False
             self.failed.emit(str(e))
 
-    def _upload(self) -> None:
-        data = self.pending
-        self.pending = None
-        self.vao.bind()
-        self.vbo.bind()
-        self.vbo.allocate(data.tobytes(), data.nbytes)
+    def _upload(self, layer: dict) -> None:
+        data = layer["pending"]
+        layer["pending"] = None
+        layer["count"] = len(data)
+        if not len(data):
+            return
+        layer["vao"].bind()
+        layer["vbo"].bind()
+        layer["vbo"].allocate(data.tobytes(), data.nbytes)
         p = self.program
         p.bind()
         stride = 7 * 4
@@ -145,8 +157,7 @@ class GLSplatView(QOpenGLWidget):
         p.setAttributeBuffer(1, GL_FLOAT, 12, 3, stride)
         p.enableAttributeArray(2)
         p.setAttributeBuffer(2, GL_FLOAT, 24, 1, stride)
-        self.vao.release()
-        self.count = len(data)
+        layer["vao"].release()
 
     def paintGL(self):  # noqa: N802
         f = self.context().functions()
@@ -154,9 +165,10 @@ class GLSplatView(QOpenGLWidget):
         f.glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         if not self.ok:
             return
-        if self.pending is not None:
-            self._upload()
-        if not self.count:
+        for layer in self.layers:
+            if layer["pending"] is not None:
+                self._upload(layer)
+        if not any(layer["count"] for layer in self.layers):
             return
         f.glEnable(GL_DEPTH_TEST)
         f.glEnable(GL_PROGRAM_POINT_SIZE)
@@ -172,6 +184,8 @@ class GLSplatView(QOpenGLWidget):
         p.setUniformValue(p.uniformLocation("u_proj"), QMatrix4x4(*proj.flatten().tolist()))
         p.setUniformValue1f(p.uniformLocation("u_focal"), float((h / 2) / np.tan(np.radians(self.vfov) / 2)))
         p.setUniformValue1f(p.uniformLocation("u_scale"), float(self.splat_scale))
-        self.vao.bind()
-        f.glDrawArrays(GL_POINTS, 0, self.count)
-        self.vao.release()
+        for layer in self.layers:
+            if layer["count"]:
+                layer["vao"].bind()
+                f.glDrawArrays(GL_POINTS, 0, layer["count"])
+                layer["vao"].release()

@@ -1,5 +1,5 @@
-"""Multi-view Gaussian splatting: several photos of the same scene, the frames of
-a moving-camera video, or views produced by a generative model.
+"""Multi-view Gaussian splatting: several photos of the same scene, or views produced
+by a generative model (videos go to the 4D engine, backends/video4d.py).
 
 VGGT (camera poses + depth, chunk-stitched) → MoGe-2 metric scale → 3DGS
 optimisation with gsplat → per-splat provenance from real-view visibility.
@@ -26,14 +26,14 @@ QUALITY = {  # mode → (training steps, longest image side, splat cap)
 class MultiViewBackend(Backend):
     id = "multiview"
     display_name = "Multi-view 3D Gaussian Splatting (VGGT + gsplat)"
-    inputs = ("images", "video:moving_camera")
+    inputs = ("images",)
     capabilities = frozenset({MULTI_VIEW, SCENE_STATIC})
     runtime_id = "recon3d-cu124"
     maturity = "experimental"
     upstream = ["vggt", "moge", "gsplat"]
     commercial_use = False  # facebook/VGGT-1B checkpoint is non-commercial
     worker_script = "multiview_worker.py"
-    description = ("Several photos of one scene, or the frames of a video where the camera moves → VGGT camera "
+    description = ("Several photos of one scene → VGGT camera "
                    "poses and depth → metric scale (MoGe-2) → trained 3D Gaussian splats and a TSDF mesh. "
                    "Surfaces seen from two or more photos are OBSERVED; the more angles, the more complete.")
 

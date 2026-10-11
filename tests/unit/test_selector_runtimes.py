@@ -16,12 +16,13 @@ def test_sharp_preferred_when_installed(ctx, rtx4080, tmp_path):
 
 
 def test_fallback_is_explained(ctx, rtx4080, tmp_path):
-    rtx4080.gpus[0].total_mib = 8192  # too small for multi-view
+    rtx4080.gpus[0].total_mib = 8192  # too small for the 4D engine
     inp = JobInput(tmp_path / "a.mp4", "video", tmp_path, video_kind="moving_camera")
     sel = select(inp, rtx4080, ctx, "auto")
-    assert sel.backend.id == "moge_rgbd" and sel.effective_kind == "video:static_scene"
+    assert sel.backend.id == "moge_rgbd" and sel.effective_kind == "video:frame"
     rej = {r["backend"]: r["reasons"] for r in sel.rejected}
-    assert any("10 GB" in r for r in rej["multiview"])
+    assert any("10 GB" in r for r in rej["video4d"])
+    assert "10 GB" in sel.notes[0] and "sharpest frame" in sel.notes[0]
     assert "longsplat" in rej  # unsupported research backends are listed with reasons
 
 

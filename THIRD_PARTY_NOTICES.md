@@ -13,6 +13,7 @@ downloads the components below. **No model weights are bundled.**
 | Qt for Python (PySide6-Essentials, shiboken6) | 6.11.2 | LGPL-3.0 | dynamically linked, unmodified Qt libraries in the install folder may be replaced by the user |
 | three.js | 0.170.0 | MIT | assets/webxr/three.module.js — WebXR splat viewer |
 | GaussianSplats3D (@mkkellogg/gaussian-splats-3d) | 0.4.7 | MIT | assets/webxr/gaussian-splats-3d.module.js — WebXR splat viewer |
+| splaTV (antimatter15/splaTV, hybrid.js) | main, 2024 | MIT | assets/webxr/player4d.js — 4D splat rasteriser (shaders, depth sort, .splatv layout) adapted for the 4D player; LICENSE-splatv.txt |
 | uv | 0.12.19 | MIT OR Apache-2.0 | bin/uv.exe — installs the backend runtimes |
 | FFmpeg | 7.1 (imageio-ffmpeg 0.6.0 build) | **GPL-3.0-or-later** | bin/ffmpeg.exe, run as a separate process. Source: https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz ; configuration: `ffmpeg -buildconf`. |
 

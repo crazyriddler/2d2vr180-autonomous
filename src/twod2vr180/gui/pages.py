@@ -96,6 +96,11 @@ def open_in_vr(parent, ply: Path, scene=None) -> None:
         settings.vr_help_seen = True
         settings.save()
     try:
+        from ..scene4d import Scene4D, is_scene4d, splatv_for
+
+        ply = Path(ply)
+        if is_scene4d(ply):          # a 4D scene plays in the 4D player (.splatv)
+            scene, ply = Scene4D.load(ply).background, splatv_for(ply)
         scene = scene if scene is not None else load_scene(Path(ply))
         depth, xf = view_params(scene)
         url = get_server().share(Path(ply), depth, Path(ply).parent.parent.name, xf)
@@ -266,26 +271,31 @@ class CreatePage(QWidget):
         al.addWidget(gbox)
         mbox = QGroupBox("Several photos and videos")
         mf = QFormLayout(mbox)
-        self.video_mode = QComboBox()
-        for label, val in (("Automatic (analyse the video)", "auto"),
-                           ("Whole video → one 3D scene (camera moves)", "multiview"),
-                           ("Frame by frame (people/animals moving)", "per_frame"),
-                           ("Sharpest frame only", "best_frame")):
-            self.video_mode.addItem(label, val)
-        self.video_mode.setCurrentIndex(max(self.video_mode.findData(win.settings.video_mode), 0))
-        mf.addRow("Video", self.video_mode)
+        self.video_len = QComboBox()
+        for label, val in (("By quality — 8 s fast, 12 s balanced, 15 s best (recommended)", 0.0),
+                           ("5 seconds", 5.0), ("10 seconds", 10.0), ("20 seconds", 20.0), ("30 seconds", 30.0)):
+            self.video_len.addItem(label, val)
+        self.video_len.setCurrentIndex(max(self.video_len.findData(win.settings.video_seconds), 0))
+        self.video_len.setToolTip("Videos become a 4D scene: the still surroundings in 3D plus everything that "
+                                  "moves, frame by frame. Longer videos take longer and need more memory.")
+        mf.addRow("Video length (4D)", self.video_len)
+        self.video_fps = QComboBox()
+        for label, val in (("By quality — 8 / 12 / 15 per second (recommended)", 0.0), ("6 per second", 6.0),
+                           ("10 per second", 10.0), ("15 per second", 15.0), ("24 per second", 24.0)):
+            self.video_fps.addItem(label, val)
+        self.video_fps.setCurrentIndex(max(self.video_fps.findData(win.settings.video_fps), 0))
+        self.video_fps.setToolTip("How many frames per second of the video are rebuilt in 3D: more is smoother "
+                                  "motion, but slower and a larger 4D file.")
+        mf.addRow("Video frames (4D)", self.video_fps)
         self.combine = QCheckBox("Combine several photos into one 3D scene")
         self.combine.setChecked(win.settings.combine_photos)
         self.combine.setToolTip("Photos of the same place from different angles are reconstructed together "
                                 "(multi-view). Untick to process each photo separately.")
         mf.addRow("Several photos", self.combine)
-        self.sequence = QCheckBox("Moving people/animals: also save one 3D splat per frame (4D sequence)")
-        self.sequence.setChecked(win.settings.export_sequence)
-        self.sequence.toggled.connect(self._save_opts)
-        mf.addRow("", self.sequence)
         for w in (self.generative, self.engine, self.backend):
             w.currentIndexChanged.connect(self._custom_changed)
-        self.video_mode.currentIndexChanged.connect(self._save_opts)
+        self.video_len.currentIndexChanged.connect(self._save_opts)
+        self.video_fps.currentIndexChanged.connect(self._save_opts)
         self.combine.toggled.connect(self._save_opts)
         al.addWidget(mbox)
         self.advanced.setVisible(False)
@@ -427,9 +437,9 @@ class CreatePage(QWidget):
         s.projection = self.projection.currentData()
         s.generative = self.generative.currentData()
         s.gen_engine = self.engine.currentData()
-        s.video_mode = self.video_mode.currentData()
+        s.video_seconds = float(self.video_len.currentData())
+        s.video_fps = float(self.video_fps.currentData())
         s.combine_photos = self.combine.isChecked()
-        s.export_sequence = self.sequence.isChecked()
         self.sbs.setEnabled(s.vr180)
         self.tb.setEnabled(s.vr180)
         self.projection.setEnabled(s.vr180)
@@ -439,7 +449,7 @@ class CreatePage(QWidget):
         ok, bad = [], []
         for p in paths:
             ext = Path(p).suffix.lower()
-            if ext in (".ply", ".splat"):
+            if ext in (".ply", ".splat", ".splatv"):
                 self.win.open_scene(Path(p))
                 continue
             (ok if ext in IMAGE_EXTS | VIDEO_EXTS else bad).append(p)
@@ -651,7 +661,7 @@ class ResultsPage(QWidget):
                         f"{c['unknown_fraction']:.0%}; renderer {md.get('renderer', '?')}</p>")
         for w in rep.get("warnings", []):
             html.append(f"<p>⚠ {w}</p>")
-        files = [out.get(k) for k in ("scene_ply", "splat", "obj") if out.get(k)]
+        files = [out.get(k) for k in ("scene_ply", "splatv", "splat", "obj") if out.get(k)]
         files += [v["path"] for v in vr.get("videos", [])]
         if files:
             html.append("<p><b>Files</b><br>" + "<br>".join(Path(f).name for f in files) + "</p>")
@@ -664,9 +674,9 @@ class ResultsPage(QWidget):
         out = rep.get("outputs") or {}
         vr = out.get("vr180") or {}
         if key == "explore" and out.get("scene_ply"):
-            self.exploreScene.emit(out["scene_ply"])
+            self.exploreScene.emit(out.get("scene4d") or out["scene_ply"])
         elif key == "vr" and out.get("scene_ply"):
-            open_in_vr(self, Path(out["scene_ply"]))
+            open_in_vr(self, Path(out.get("splatv") or out["scene_ply"]))
         elif key == "vrimg" and vr.get("stills"):
             open_path(vr["stills"][0]["image"])
         elif key == "vrvid" and vr.get("videos"):
@@ -1055,7 +1065,7 @@ class ViewerPage(QWidget):
         head = QHBoxLayout()
         head.addWidget(h1("3D viewer"))
         head.addStretch(1)
-        ob = QPushButton("Open .ply / .splat…")
+        ob = QPushButton("Open .ply / .splat / .splatv…")
         ob.clicked.connect(self.open_file)
         head.addWidget(ob)
         self.xr_btn = QPushButton("View in VR (6DoF)")
@@ -1072,19 +1082,23 @@ class ViewerPage(QWidget):
         self.path: Path | None = None
 
     def open_file(self):
-        p, _ = QFileDialog.getOpenFileName(self, "Open 3D scene", "", "Gaussian splats (*.ply *.splat)")
+        p, _ = QFileDialog.getOpenFileName(self, "Open 3D or 4D scene", "",
+                                           "Gaussian splats (*.ply *.splat *.splatv)")
         if p:
             self.win.open_scene(Path(p))
 
     def load(self, path: Path) -> bool:
         from ..scene import SceneError, load_scene
+        from ..scene4d import Scene4D, is_scene4d
 
         try:
-            scene = load_scene(path)
-        except (SceneError, OSError, ValueError) as e:
+            if is_scene4d(path):
+                self.viewer.set_scene4d(Scene4D.load(path))
+            else:
+                self.viewer.set_scene(load_scene(path))
+        except (SceneError, OSError, ValueError, KeyError) as e:
             QMessageBox.warning(self, APP_NAME, f"Cannot open {path.name}: {e}")
             return False
-        self.viewer.set_scene(scene)
         self.path = path
         self.vr_btn.setEnabled(True)
         self.xr_btn.setEnabled(True)

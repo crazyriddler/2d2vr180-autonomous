@@ -33,10 +33,10 @@ class Settings:
     preset: str = "real3d"                       # real3d | quick | around | custom (Create page choice)
     generative: str = "tri"                      # off | tri | capture | explore
     gen_engine: str = "auto"                     # auto | qwen | wan
-    video_mode: str = "auto"                     # auto | multiview | per_frame | best_frame
     combine_photos: bool = True                  # several photos dropped together → one multi-view scene
     ai_hole_fill: bool = True                    # LaMa inpainting of VR180 disocclusions
-    export_sequence: bool = False                # fixed-camera video: one .ply per frame (4D)
+    video_seconds: float = 0.0                   # 4D video: seconds used (0 = by quality: 8 / 12 / 15)
+    video_fps: float = 0.0                       # 4D video: frames per second (0 = by quality: 8 / 12 / 15)
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":
@@ -63,8 +63,8 @@ class Settings:
             self.preset = "real3d"
         if self.gen_engine not in ("auto", "qwen", "wan"):
             self.gen_engine = "auto"
-        if self.video_mode not in ("auto", "multiview", "per_frame", "best_frame"):
-            self.video_mode = "auto"
+        self.video_seconds = float(min(max(self.video_seconds, 0.0), 120.0))
+        self.video_fps = float(min(max(self.video_fps, 0.0), 30.0))
         if self.projection not in ("equirect180", "flat"):
             self.projection = "equirect180"
         self.eye_separation_mm = float(min(max(self.eye_separation_mm, 0.0), 200.0))
@@ -89,9 +89,8 @@ class Settings:
                        still_video_seconds=self.still_video_seconds, license_profile=self.license_profile,
                        output_dir=self.output_dir or None, fill_holes=self.fill_holes, renderer=self.renderer,
                        allow_cpu=self.allow_cpu, generative=self.generative,
-                       gen_engine=self.gen_engine,
-                       video_mode=self.video_mode,
-                       ai_hole_fill=self.ai_hole_fill, export_sequence=self.export_sequence)
+                       gen_engine=self.gen_engine, ai_hole_fill=self.ai_hole_fill,
+                       video_seconds=self.video_seconds, video_fps=self.video_fps)
         for k, v in overrides.items():
             setattr(o, k, v)
         return o

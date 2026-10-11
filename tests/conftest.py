@@ -78,10 +78,12 @@ def install_fake_model(mm, model_id, content=b"fake-weights"):
 def ctx(app_home, monkeypatch):
     from twod2vr180.backends.base import BackendContext
     from twod2vr180.backends.photo import DepthAnythingBackend, MoGeRGBDBackend
+    from twod2vr180.backends.video4d import Video4DBackend
     from twod2vr180.models import ModelManager
 
     monkeypatch.setattr(MoGeRGBDBackend, "worker_script", str(FAKE_WORKER))
     monkeypatch.setattr(DepthAnythingBackend, "worker_script", str(FAKE_WORKER))
+    monkeypatch.setattr(Video4DBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_video4d_worker.py"))
     mm = ModelManager()
     for mid in ("moge-2-vits-normal", "moge-2-vitl-normal", "depth-anything-v2-small", "vggt-1b"):
         install_fake_model(mm, mid)

@@ -9,7 +9,7 @@ import numpy as np
 
 from ..rgbd import disparity_to_points, pointmap_to_gaussians, pointmap_to_obj
 from ..scene import INFERRED, Camera, read_gaussian_ply, write_gaussian_ply, write_splat
-from .base import (DYNAMIC, SCENE_STATIC, SINGLE_VIEW, Backend, BackendContext, BackendResult, Estimate,
+from .base import (SCENE_STATIC, SINGLE_VIEW, Backend, BackendContext, BackendResult, Estimate,
                    JobInput, run_worker)
 
 
@@ -35,8 +35,8 @@ def load_pointmap(npz_path: Path, hfov_deg: float | None = None) -> tuple[np.nda
 class _RGBDBackend(Backend):
     """Shared path: worker writes per-frame geometry → Gaussians + OBJ."""
 
-    inputs = ("photo", "video:static_scene", "video:static_camera_dynamic")
-    capabilities = frozenset({SINGLE_VIEW, SCENE_STATIC, DYNAMIC})
+    inputs = ("photo", "video:frame")
+    capabilities = frozenset({SINGLE_VIEW, SCENE_STATIC})
     runtime_id = "photo-cu128"
     cpu_capable = True
     worker_script = ""
@@ -77,7 +77,7 @@ class _RGBDBackend(Backend):
             warnings.append("Inference ran on the CPU (no CUDA device available to the runtime).")
         return BackendResult(
             backend=self.id, scene_ply=ply, splat=splat, obj=exp / "scene.obj",
-            frame_scenes=npzs if len(npzs) > 1 else [], cameras=[cam.to_dict()], metric_scale=self.metric,
+            cameras=[cam.to_dict()], metric_scale=self.metric,
             provenance_note="All splats INFERRED: observed colours, network-predicted depth; no hidden geometry.",
             vram_peak_mib=out["result"].get("vram_peak_mib"), worker_env=out["env"],
             models_used=[{"id": model_id, "revision": st["revision"], "license": st["license"],
@@ -144,7 +144,7 @@ class DepthAnythingBackend(_RGBDBackend):
 class SharpBackend(Backend):
     id = "sharp"
     display_name = "Apple SHARP (research licence)"
-    inputs = ("photo", "video:static_scene")
+    inputs = ("photo", "video:frame")
     capabilities = frozenset({SINGLE_VIEW, SCENE_STATIC})
     runtime_id = "photo-cu128"
     maturity = "research"

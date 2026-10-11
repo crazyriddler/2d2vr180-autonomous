@@ -13,10 +13,16 @@ Legend: ✅ done and tested here · 🟡 implemented, not verified on target har
 - 🟡 `moge_rgbd`: MoGe-2 point map → surface-aligned Gaussians + textured OBJ (conversion tested; model never run)
 - 🟡 `sharp`: Apple SHARP adapter (research profile only)
 
-## Milestone 3 — video
-- ✅ Video analysis: fixed vs moving camera (phase correlation), moving subjects, scene cuts, keyframes, redundancy
-- ✅ Static scene → single sharpest frame; fixed camera + motion → per-frame 2.5D; moving camera → multi-view
-- 🟡 `recon3d_video` adapter (VGGT + MoGe-2 + gsplat) — runtime unverified on Windows
+## Milestone 3 — video (rebuilt on 4D in rc49)
+- ✅ Video analysis: fixed vs moving camera (phase correlation), moving subjects, scene cuts, best frame
+- ✅ 4D scene model (`scene4d.py`): background + time-local / moving splats, `.splatv` read/write (splaTV layout)
+- ✅ 4D players: WebXR/desktop `player4d` (browser test, SwiftShader) and the app viewer's timeline (offscreen + Xvfb GL)
+- 🟡 `video4d` worker: VGGT poses for every frame, MoGe-2 aligned depth, moving masks by 3D reprojection (unit-tested on
+  synthetic scenes), masked background training, per-frame moving splats — dry-run end to end with mocked models;
+  never run with the real models / GPU
+- 🟡 VR180 video from the 4D scene (GPU renderer draws the splats of each frame's time); old per-frame and
+  camera-path VR180 code removed
+- ⬜ True 4DGS for the moving parts (4DGT / Shape of Motion evaluation)
 
 ## Milestone 4 — viewer / export
 - ✅ PLY (INRIA 3DGS layout) + `.splat` + OBJ/MTL/texture; provenance sidecar; SHARP-style PLY import

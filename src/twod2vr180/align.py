@@ -142,3 +142,29 @@ def quat_xyzw_to_rotmat(q) -> np.ndarray:
     return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
                      [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
                      [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
+
+
+def smooth_c2ws(c2ws, sigma: float = 2.0) -> list[np.ndarray]:
+    """A hand-held camera path made smooth for VR (shake is uncomfortable in a headset): positions and
+    orientations averaged over a Gaussian window of ``sigma`` frames (sign-aligned quaternion mean)."""
+    c2ws = [np.asarray(c, np.float64) for c in c2ws]
+    n = len(c2ws)
+    if n < 3 or sigma <= 0:
+        return [c.copy() for c in c2ws]
+    pos = np.stack([c[:3, 3] for c in c2ws])
+    quats = np.stack([rotmat_to_quat_xyzw(c[:3, :3]) for c in c2ws])
+    for i in range(1, n):                        # one hemisphere: q and -q are the same rotation
+        if quats[i] @ quats[i - 1] < 0:
+            quats[i] = -quats[i]
+    r = int(np.ceil(3 * sigma))
+    out = []
+    for i in range(n):
+        j = np.arange(max(0, i - r), min(n, i + r + 1))
+        wts = np.exp(-0.5 * ((j - i) / sigma) ** 2)
+        wts /= wts.sum()
+        q = (quats[j] * wts[:, None]).sum(0)
+        m = np.eye(4)
+        m[:3, :3] = quat_xyzw_to_rotmat(q / np.linalg.norm(q))
+        m[:3, 3] = (pos[j] * wts[:, None]).sum(0)
+        out.append(m)
+    return out

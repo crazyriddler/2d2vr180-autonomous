@@ -43,13 +43,17 @@ class GpuSplatRenderer:
         self.chunk = chunk_frames
 
     def frames(self, scene: GaussianScene, scene_ply: Path, opts: StereoOptions, heads: list[np.ndarray],
-               progress: Callable[[float, str], None], cancel: Callable[[], bool]) -> Iterator[StereoFrame]:
+               progress: Callable[[float, str], None], cancel: Callable[[], bool],
+               dynamic: Path | None = None, times: list[float] | None = None) -> Iterator[StereoFrame]:
+        """Stereo frames for ``heads``. 4D scenes: ``dynamic`` (dynamic.npz) and one scene time per head."""
         n = len(heads)
         for c0 in range(0, n, self.chunk):
             plans = [plan_stereo(scene, opts, h) for h in heads[c0:c0 + self.chunk]]
             views, counts = [], []
-            for p in plans:
+            for k, p in enumerate(plans):
                 v = gpu_views(p)
+                if times is not None:
+                    v = [{**x, "time": float(times[c0 + k])} for x in v]
                 counts.append(len(v))
                 views += v
             out_dir = self.work_dir / "gpu_views"
@@ -57,6 +61,8 @@ class GpuSplatRenderer:
                 shutil.rmtree(out_dir)
             req = {"ply": str(scene_ply), "out_dir": str(out_dir),
                    "views": [{**v, "c2w": np.asarray(v["c2w"]).tolist()} for v in views]}
+            if dynamic is not None:
+                req["dynamic"] = str(dynamic)
             lo, hi = c0 / n, min(1.0, (c0 + len(plans)) / n)
             rt = pick_runtime(self.ctx)
             run_worker(self.ctx.runtimes.python(rt), "render_worker.py", req, self.work_dir / "worker",

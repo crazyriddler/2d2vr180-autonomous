@@ -8,7 +8,7 @@ process is uploaded anywhere.
 
 - Windows 10 (build 19041+) or Windows 11, 64-bit
 - An NVIDIA GPU with a recent driver (target: RTX 4080 16 GB; 8 GB+ works for photos;
-  12 GB+ for moving-camera video). Driver 570 or newer is recommended.
+  10 GB+ for videos in 4D, 12 GB+ recommended). Driver 570 or newer is recommended.
 - About 8 GB of free disk space for the engine and models (+ space for your results)
 - Internet access **only** for the one-time download of the engine and models
 
@@ -65,24 +65,28 @@ verified (SHA256) before use.
        image; *Wan 2.2* films the camera moving (smoother, 704 px); *Automatic* uses Qwen when installed.
      - **Reconstruction engine** — *Automatic* picks the best one for the input.
    - **Several photos and videos**
-     - **Video** — *Automatic* analyses the video; *Whole video → one 3D scene* reconstructs every part of the
-       video into one splat (camera must move); *Frame by frame* for people/animals moving in front of a fixed
-       camera; *Sharpest frame only*.
+     - **Video length (4D)** — how much of the video becomes 4D: by quality (8 s Fast, 12 s Auto, 15 s
+       Quality, recommended) or 5–30 s. Longer takes longer and needs more memory.
+     - **Video frames (4D)** — frames per second rebuilt in 3D: by quality (8 / 12 / 15, recommended) or
+       6–24. More is smoother motion, but slower and a larger 4D file.
      - **Combine several photos into one 3D scene** — photos of the same place taken from different
        positions are reconstructed together (the more angles, the more complete).
-     - **Also save one 3D splat per frame** — a 4D sequence for fixed-camera videos with movement.
 5. Click **Generate**. Jobs run one after another; you can cancel any of them.
 
 When a job finishes, **Results** shows it. From there you can:
 - **Explore in 3D** — GPU viewer: orbit (drag), pan (right-drag), zoom (wheel), splat size, colour by provenance.
-- **View in VR (6DoF)** — look around the 3D splat in a headset connected to this PC (see below).
+  A 4D result (video) plays: play/pause and a timeline under the view.
+- **View in VR (6DoF)** — look around the 3D splat in a headset connected to this PC (see below). A 4D result
+  opens in the 4D player: the scene moves while you walk around it (trigger = play/pause).
 - **Open VR180 image / Play VR180 video**.
 - **Open folder** — the `export` folder contains:
-  - `scene.ply` / `scene.splat` — Gaussian splat (opens in SuperSplat, Postshot, etc.)
+  - `scene.ply` / `scene.splat` — Gaussian splat (opens in SuperSplat, Postshot, etc.); for a video, the still
+    background only
+  - `scene.splatv` — videos: the whole 4D scene (background + everything that moves, frame by frame); plays in
+    the app and in splaTV-compatible players
   - `scene.obj` (+ `.mtl`, texture) — mesh, when the backend provides one
   - `vr180/…_180_LR.jpg|mp4`, `…_180_TB.jpg|mp4` — VR180 stereo, with spherical metadata
   - `vr180/…_coverage.png` — white = seen, grey = interpolated, black = unknown
-  - `sequence/frame_*.ply` — one splat per video frame (when enabled)
   - `README.txt` — explains every file
   - `_2d2vr180/` — metadata the app uses to reopen the scene (other programs ignore it)
   - `run_report.json` (one level up) — everything about the run
@@ -94,11 +98,12 @@ When a job finishes, **Results** shows it. From there you can:
 | Photo | Single-image 3D (SHARP if installed and allowed, otherwise MoGe-2, otherwise Depth-Anything). |
 | Photo + AI views (Real 3D) | Qwen-Image-Edit draws the other angles (Wan 2.2 if Qwen is not installed); VGGT places every view in 3D, MoGe-3 (or MoGe-2) gives your photo's real-world scale and depth, TRELLIS.2 (if installed) the subject's complete shape; one 3D splat is trained on the photo and the views, and its colours are finally taken from the view that sees each surface best. |
 | Several photos | Multi-view engine: VGGT finds where each photo was taken, MoGe-2 gives real-world scale, a 3D Gaussian splat is trained on all photos. |
-| Video, camera moves | Multi-view engine on up to 80 keyframes of the whole video. |
-| Video, fixed camera, people/animals move | Each frame is reconstructed (depth stabilised over time) → a VR180 video of the motion, optional 4D sequence. |
-| Video, fixed camera, nothing moves | The sharpest frame is used (or choose *Whole video → one 3D scene*). |
+| Video (any) | **4D scene**: VGGT places every frame's camera, MoGe-2 gives every frame's depth at real-world scale; what moves is found by comparing each frame in 3D with frames before and after it; the still surroundings are trained once as one 3D splat from all frames (what someone hides in one frame is filled in from the others) and the moving parts are rebuilt frame by frame in the same space. Then a VR180 video is rendered from the 4D scene, from where the camera was (path smoothed and levelled). |
+| Video, 4D engine not available | The sharpest frame is reconstructed as a photo (the report says why). |
+| Video + Real 3D | Real 3D on the sharpest frame (for videos where nothing moves). |
 
-Speed on an RTX 4080 (estimates): photo 20–60 s; several photos / video 5–15 min; generative 3D 10–25 min.
+Speed on an RTX 4080 (estimates): photo 20–60 s; several photos 5–15 min; video in 4D 8–25 min; generative 3D
+10–25 min.
 
 ## Honesty about what is real
 

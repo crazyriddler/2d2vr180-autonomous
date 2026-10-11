@@ -1,7 +1,8 @@
 """Local WebXR splat viewer server.
 
-Serves the bundled viewer (assets/webxr: three.js + GaussianSplats3D, MIT) and
-explicitly shared scene files on http://127.0.0.1 only. A browser on this PC
+Serves the bundled viewers (assets/webxr: three.js + GaussianSplats3D, MIT, for 3D scenes; the
+4D player derived from splaTV, MIT, for .splatv scenes that change over time) and explicitly shared
+scene files on http://127.0.0.1 only. A browser on this PC
 (Chrome/Edge) opens it; with a PC-VR headset connected (Quest Link, Air Link,
 Virtual Desktop, SteamVR) the page's ENTER VR button starts an immersive
 WebXR session. localhost counts as a secure context, so WebXR is allowed
@@ -21,6 +22,7 @@ from .paths import resource_root
 
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".ply": "application/octet-stream", ".splat": "application/octet-stream",
+         ".splatv": "application/octet-stream",
          ".txt": "text/plain; charset=utf-8"}
 
 
@@ -85,7 +87,8 @@ class VRViewerServer:
             q["p"] = ",".join(f"{v:.5f}" for v in transform["position"])
             if transform.get("target"):
                 q["t"] = ",".join(f"{v:.5f}" for v in transform["target"])
-        return f"http://127.0.0.1:{self.port}/viewer.html?" + urllib.parse.urlencode(q)
+        page = "player4d.html" if scene.suffix.lower() == ".splatv" else "viewer.html"
+        return f"http://127.0.0.1:{self.port}/{page}?" + urllib.parse.urlencode(q)
 
     def stop(self) -> None:
         self.httpd.shutdown()

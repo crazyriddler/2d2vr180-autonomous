@@ -144,3 +144,51 @@ def test_gpu_view_renders_with_real_opengl(qapp, tmp_path):
     drawn = sum(abs(c.red() - bg[0]) + abs(c.green() - bg[1]) + abs(c.blue() - bg[2]) > 30 for c in px)
     assert drawn > 0.3 * len(px)  # the scene fills a large part of the view
     v.close()
+
+
+def _scene4d_dir(tmp_path, frames=5):
+    from twod2vr180.scene import Camera, GaussianScene, load_scene
+    from twod2vr180.scene4d import DynamicSplats, Scene4D, per_frame_splats
+
+    bg = load_scene(_scene_ply(tmp_path))
+    parts = []
+    for k in range(frames):      # a small red square moving to the right in front of the background
+        xs, ys = np.meshgrid(np.linspace(-0.1, 0.1, 12), np.linspace(-0.1, 0.1, 12))
+        m = np.stack([xs.ravel() - 0.4 + 0.2 * k, ys.ravel(), np.full(xs.size, 1.0)], 1).astype(np.float32)
+        n = len(m)
+        sq = GaussianScene(m, np.full((n, 3), 0.01, np.float32), np.tile(np.float32([1, 0, 0, 0]), (n, 1)),
+                           np.ones(n, np.float32), np.tile(np.float32([1, 0, 0]), (n, 1)))
+        parts.append(per_frame_splats(sq, k, frames))
+    cam = bg.cameras[0] if bg.cameras else Camera(80, 60, 70, 70, 40, 30)
+    s4 = Scene4D(bg, DynamicSplats.concat(parts), 10.0, frames, [cam] * frames, {"playback": "frames"})
+    out = tmp_path / "export4d"
+    s4.save(out)
+    return out
+
+
+def test_viewer_plays_a_4d_scene(window, qapp, tmp_path):
+    w = window
+    exp = _scene4d_dir(tmp_path)
+    import time
+
+    w.open_scene(exp / "scene.ply")               # a 4D result's scene.ply opens as the 4D scene
+    v = w.viewer_page.viewer
+    t0 = time.time()
+    while time.time() - t0 < 0.6:                 # offscreen: the GPU view gives way to the CPU preview
+        qapp.processEvents()
+        time.sleep(0.02)
+    assert v.scene4d is not None and v.scene4d.frames == 5 and v.timeline.isVisibleTo(w)
+    assert all(len(i) == 144 for i in v._frame_idx)
+    v.set_playing(False)
+    v.show_frame(0)
+    x0 = v.moving_splats(0).means[:, 0].mean()
+    v.show_frame(4)
+    assert abs(v.moving_splats(4).means[:, 0].mean() - x0 - 0.8) < 1e-5
+    assert "frame 5/5" in v.frame_label.text()
+    v._tick()
+    assert v.frame == 0                            # loops
+    f0 = v.render_frame(160, 120)
+    v.show_frame(2)
+    assert not np.array_equal(v.render_frame(160, 120), f0)
+    w.open_scene(_scene_ply(tmp_path))             # a still scene hides the timeline
+    assert v.scene4d is None and not v.timeline.isVisibleTo(w)

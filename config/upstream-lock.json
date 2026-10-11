@@ -275,6 +275,21 @@
    "entry_point": "trellis2.pipelines.Trellis2ImageTo3DPipeline.from_pretrained(dir) -> sample_sparse_structure / sample_shape_slat_cascade / decode_shape_slat (shape only)",
    "gpu_smoke_test": "not run",
    "integration": "workers/trellis_subject_worker.py in runtime 'subject3d-cu128'; mesh aligned to the photo by workers/subject_align.py and used as the AI views' depth prior in Real 3D (rc45)"
+  },
+  {
+   "name": "splatv",
+   "url": "https://github.com/antimatter15/splaTV",
+   "role": "4d_player_rasteriser",
+   "commit": "8b313fea028d32f3c978f06b0a8bd2050b03ff28",
+   "commit_date": "2024",
+   "code_license": "MIT (Kevin Kwok); copy in assets/webxr/LICENSE-splatv.txt",
+   "model_license": "none (no models)",
+   "category": "redistributable",
+   "windows": "plain WebGL2 in Chrome / Edge; no native code",
+   "vram": "the browser holds every splat of the 4D scene: the app caps a .splatv at 4 M splats (~256 MB)",
+   "entry_point": "hybrid.js (sha256 c1dfe6309a0602a1e94c0858259936e9b6b0c017847c3b57a677e1c5c5f012a7): shaders, worker depth sort and the .splatv layout were adapted, not copied verbatim",
+   "gpu_smoke_test": "browser test with SwiftShader (tests/integration/test_player4d.py); not yet run in a headset",
+   "integration": "assets/webxr/player4d.html + player4d.js (WebXR, timeline, frame-accurate playback); .splatv written by src/twod2vr180/scene4d.py (rc49)"
   }
  ],
  "auxiliary_archives": [
