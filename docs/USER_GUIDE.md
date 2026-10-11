@@ -52,10 +52,12 @@ verified (SHA256) before use.
 2. Choose **Auto** (recommended), **Quality** or **Fast**.
 3. Choose outputs: VR180 side-by-side and/or top/bottom, VR180 or flat 3D projection.
 4. Under **3D reconstruction**:
-   - **Photo: generative 3D** — *Off* uses only what the photo shows. *3 views (Qwen)* makes 45° left, 45° right
-     and a high-angle view of your photo (in Auto/Quality 2-3 candidates per angle, the one most consistent
-     with a pure camera move is kept automatically) and reconstructs them with the photo in the multi-view
-     engine (trained splat). Choosing the *Multi-view* backend with one photo does the same. *360° photo capture* makes a few widely
+   - **Photo: generative 3D** — *Off* uses only what the photo shows. *Real 3D views (Qwen)* draws your subject ring by
+     ring: 45° left, 45° right and from above; then 90° to each side; then 135° to each side and the back
+     (Fast stops at 90°). Each view is drawn from your photo *and* the neighbouring view already accepted,
+     so clothes and hair stay the same all the way round. In Auto/Quality 2-3 candidates per angle are made
+     and the one that best continues its neighbour is kept automatically. Everything is reconstructed with
+     the photo in the multi-view engine (trained splat). Choosing the *Multi-view* backend with one photo does the same. *360° photo capture* makes a few widely
      spaced views starting from your photo: 45°, 90°, 135°, 180° (the back is invented), 270°, overhead and
      from below; in Quality mode it adds 225°, 315° and four raised diagonals. *Around the subject* films four short
      camera moves (45° to each side, from above, from below) and is the best choice for people; *Wide orbit* also

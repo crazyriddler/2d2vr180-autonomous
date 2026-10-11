@@ -20,6 +20,16 @@ def main(req):
 
     emit("env", torch=None, cuda="12.4", cuda_available=True, device="fake")
     views = req["images"]
+    if req.get("score_only"):      # the real worker's choice between generation rounds: here the last candidate
+        sel = [{"view": v.get("label", ""), "chosen": os.path.basename(v["candidates"][-1]), "path": v["candidates"][-1],
+                "judged_against": views[v["anchor"]].get("label") if v.get("anchor") else "photo",
+                "anchor_deg": v.get("anchor_deg"), "target_deg": v.get("target_deg")}
+               for v in views if len(v.get("candidates") or []) > 1]
+        calls = os.path.join(os.path.dirname(req["output_dir"]), "fake_score_calls.json")
+        prev = json.load(open(calls)) if os.path.exists(calls) else []
+        json.dump(prev + [views], open(calls, "w"))
+        emit("result", outputs={}, candidate_selection=sel, vram_peak_mib=None)
+        return
     frames = [os.path.basename(v["path"]) for v in views]
     h, w, f = 90, 120, 100.0
     ys, xs = np.mgrid[0:h, 0:w]

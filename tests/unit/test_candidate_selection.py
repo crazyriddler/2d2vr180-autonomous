@@ -97,3 +97,46 @@ def test_field_of_view_from_exif(tmp_path):
     tall = Image.new("RGB", (300, 400))
     tall.save(tmp_path / "c.jpg", exif=exif)
     assert mv.exif_fov_x(str(tmp_path / "c.jpg")) < fov  # portrait: the short side is horizontal
+
+
+def test_candidates_are_judged_against_their_anchor_view(monkeypatch, tmp_path):
+    """A back view is chosen by how well it continues the 135° view it was drawn from, not by the
+    photo (they share nothing); views without an anchor are still judged against the photo."""
+    from PIL import Image
+
+    paths = {}
+    for name in ("photo", "a", "b0", "b1", "c0", "c1"):
+        paths[name] = str(tmp_path / f"{name}.png")
+        Image.new("RGB", (64, 48), (len(name) * 20, 0, 0)).save(paths[name])
+    items = [{"path": paths["photo"]}, {"path": paths["a"], "label": "135° right"},
+             {"path": paths["b0"], "label": "back", "candidates": [paths["b0"], paths["b1"]], "anchor": 1,
+              "anchor_deg": 45, "target_deg": 180},
+             {"path": paths["c0"], "label": "45° left", "candidates": [paths["c0"], paths["c1"]], "target_deg": 45}]
+    imgs = [mv.load_rgb(it["path"]) for it in items]
+    vin = [mv.vggt_input(im) for im in imgs]
+    seen = []
+
+    def fake_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None):
+        ref = next(k for k, v in enumerate(vin) if v[0] is ref_vin[0])
+        seen.append((ref, target_deg))
+        return float(cand_vin[0].mean()), 0.0, 45.0, 0.5
+
+    monkeypatch.setattr(mv, "rigidity_score", fake_score)
+    rep = mv.select_candidates(items, imgs, vin, None, None, None, 64)
+    assert seen[:2] == [(1, 45), (1, 45)]               # back: against the 135° view, 45° away from it
+    assert seen[2:] == [(0, 45), (0, 45)]               # no anchor: against the photo, 45° from it
+    assert rep[0]["judged_against"] == "135° right" and rep[1]["judged_against"] == "photo"
+    assert rep[0]["path"] == items[2]["path"]
+
+
+def test_angle_between_ring_views():
+    from twod2vr180.backends.generative import TRI_RINGS, angle_between
+
+    assert abs(angle_between((135, 0), (180, 0)) - 45) < 1e-9
+    assert abs(angle_between((270, 0), (315, 0)) - 45) < 1e-9
+    assert abs(angle_between((0, 30), (0, 0)) - 30) < 1e-9
+    labels = [lb for ring in TRI_RINGS for lb, *_ in ring]
+    for k, ring in enumerate(TRI_RINGS):              # references always come from an earlier ring
+        earlier = {lb for r in TRI_RINGS[:k] for lb, *_ in r}
+        assert all(set(refs) <= earlier for *_, refs in ring)
+    assert "back" in labels and len(labels) == len(set(labels)) == 8

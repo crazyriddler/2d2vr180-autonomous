@@ -62,6 +62,16 @@ class MultiViewBackend(Backend):
         views = [{"path": str(p), "generated": False, "weight": 1.0} for p in frames]
         return self.reconstruct(views, inp, ctx, options, progress, cancel)
 
+    def score(self, views: list[dict], inp: JobInput, ctx: BackendContext, options: dict, progress, cancel,
+              progress_range: tuple[float, float] = (0.0, 1.0)) -> list[dict]:
+        """Choose the most consistent candidate of every generated view (VGGT; no reconstruction)."""
+        req = {"images": views, "output_dir": str(inp.work_dir / "multiview_score"), "score_only": True,
+               "vggt_dir": str(ctx.models.model_dir("vggt-1b")), "max_side": int(options.get("max_side", 1024))}
+        out = run_worker(ctx.runtimes.python(self.runtime_id), self.worker_script, req, inp.work_dir / "worker",
+                         progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id), log=options.get("log"),
+                         progress_range=progress_range, timeout_s=3600)
+        return out["result"].get("candidate_selection") or []
+
     def reconstruct(self, views: list[dict], inp: JobInput, ctx: BackendContext, options: dict, progress, cancel,
                     progress_range: tuple[float, float] = (0.0, 0.95), extra_models: list[dict] | None = None,
                     extra_warnings: list[str] | None = None) -> BackendResult:

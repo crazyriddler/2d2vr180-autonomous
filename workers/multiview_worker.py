@@ -490,17 +490,23 @@ def rigidity_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None):
 
 
 def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side):
-    """For every view with several generated candidates keep the most rigid one (rigidity_score)."""
+    """For every view with several generated candidates keep the most rigid one (rigidity_score).
+    A view may name an "anchor" (index of an earlier item): it is then judged against that view
+    instead of the photo - a back view shares nothing with the photo, but much with the 135° view it
+    was drawn from ("anchor_deg": the camera move expected from the anchor)."""
     report = []
     for i, it in enumerate(items):
         cands = it.get("candidates") or []
         if len(cands) < 2:
             continue
+        a = int(it.get("anchor", 0))
+        a = a if 0 <= a < i else 0
+        target = it.get("anchor_deg") if a else it.get("target_deg")
         scored = []
         for path in cands:
             img = load_rgb(path, int(it.get("max_side") or max_side))
             cv = vggt_input(img)
-            sc, err, ang, ov = rigidity_score(model, vin[0], cv, dtype, torch, it.get("target_deg"))
+            sc, err, ang, ov = rigidity_score(model, vin[a], cv, dtype, torch, target)
             scored.append((sc, path, img, cv, err, ang, ov))
             log(f"view {i} ({it.get('label', '')}) candidate {os.path.basename(path)}: score {sc:.4f} "
                 f"(colour error {err if err is None else round(err, 4)}, camera moved {ang:.1f}°, "
@@ -508,7 +514,8 @@ def select_candidates(items, train_imgs, vin, model, dtype, torch, max_side):
         best = min(scored, key=lambda t: t[0])
         items[i] = dict(it, path=best[1])
         train_imgs[i], vin[i] = best[2], best[3]
-        report.append({"view": it.get("label", str(i)), "chosen": os.path.basename(best[1]),
+        report.append({"view": it.get("label", str(i)), "chosen": os.path.basename(best[1]), "path": best[1],
+                       "judged_against": "photo" if not a else items[a].get("label", str(a)),
                        "scores": {os.path.basename(t[1]): round(t[0], 4) for t in scored},
                        "camera_moved_deg": round(best[5], 1)})
         log(f"view {i} ({it.get('label', '')}): kept {os.path.basename(best[1])}")
@@ -567,6 +574,9 @@ def main(req):
     if any(len(it.get("candidates") or []) > 1 for it in items):
         progress(0.04, "choosing the most consistent generated views")
         selection = select_candidates(items, train_imgs, vin, model, dtype, torch, max_side)
+    if req.get("score_only"):          # between generation rounds: only choose the candidates
+        emit("result", outputs={}, candidate_selection=selection, vram_peak_mib=vram_peak_mib(torch))
+        return
     c2w_v, K_v, depth, conf = estimate_cameras(vin, model, dtype, torch, chunk, int(req.get("overlap", 8)))
     for i, f in fovs.items():                      # how far VGGT's own estimate is from the real lens
         log(f"view {i}: VGGT field of view {np.degrees(2 * np.arctan(VGGT_W / 2 / K_v[i][0][0])):.1f}°, "

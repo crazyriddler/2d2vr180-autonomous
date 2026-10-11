@@ -27,8 +27,9 @@ MODE_HELP = {
 # "What do you want to make?" — each preset sets the advanced reconstruction controls.
 PRESETS = {
     "real3d": ("Real 3D from one photo (recommended)",
-               "AI makes 3 more views (45° left, 45° right, from above), then the multi-view engine reconstructs "
-               "real volume and scale from all four. Needs the Qwen-Image-Edit and Multi-view components."),
+               "AI draws your subject ring by ring around it (45°, 90°, 135° and the back; Fast stops at 90°), each "
+               "view continuing the previous one, then the multi-view engine reconstructs real volume and scale. "
+               "Needs the Qwen-Image-Edit and Multi-view components."),
     "quick": ("Quick 3D",
               "Depth from the photo alone (MoGe-2 / SHARP). Seconds; sharp from the front, flat from the side."),
     "around": ("360° around the subject (experimental)",
@@ -247,7 +248,7 @@ class CreatePage(QWidget):
         gf.addRow("Backend", self.backend)
         self.generative = QComboBox()
         for label, val in (("Off — only what the photo shows", "off"),
-                           ("3 views (Qwen) — 45° left, 45° right, high angle → multi-view", "tri"),
+                           ("Real 3D views (Qwen) — rings around the subject, back included → multi-view", "tri"),
                            ("360° photo capture — 45°, 90°, 135°, 180°, 270°, above, below (Quality: more)",
                             "capture"),
                            ("Around the subject — sides, above and below (best for people)", "arc"),

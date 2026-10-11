@@ -428,15 +428,32 @@ def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypat
     job, rep, _ = run_job(ctx, rtx4080, photo, mode=mode, generative="tri", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     gen = job.dir / "generated_views"
-    enc = json.loads((gen / "stage_encode.json").read_text())
-    assert [(v["azimuth"], v["elevation"]) for v in enc["views"]] == [(315, 0), (45, 0), (0, 30)]
-    assert enc["angles_strength"] > 0 and enc["candidates"] == n_cand
-    assert len(list(gen.glob("view*.png"))) == 3 * n_cand
+    calls = json.loads((gen / "stage_calls.json").read_text())
+    rings = {"fast": 2, "auto": 4, "quality": 4}[mode]
+    assert [c["stage"] for c in calls] == ["encode", "generate"] * rings     # ring by ring
+    ring_views = [c["views"] for c in calls if c["stage"] == "generate"]
+    assert [(v["azimuth"], v["elevation"]) for v in ring_views[0]] == [(315, 0), (45, 0), (0, 30)]
+    assert [v["azimuth"] for v in ring_views[1]] == [270, 90]                # the sides ...
+    if rings == 4:
+        assert [v["azimuth"] for v in ring_views[2]] == [225, 135] and ring_views[3][0]["azimuth"] == 180  # ... and back
+    assert all(c["candidates"] == n_cand and c["angles_strength"] > 0 for c in calls)
+    # each later view is drawn from the photo AND the accepted neighbouring view of the previous ring
+    picked = "view00_c1.png" if n_cand == 2 else ("view00_c2.png" if n_cand == 3 else "view00.png")
+    r90 = ring_views[1][0]
+    assert r90["label"] == "90° left" and [r["label"] for r in r90["refs"]] == ["45° left"]
+    assert r90["refs"][0]["path"].endswith(picked)                          # the chosen candidate, not the first
+    assert ring_views[0][0]["refs"] == []
+    indices = [v["index"] for vs in ring_views for v in vs]
+    assert indices == list(range(len(indices)))                              # no file name collisions
+    scores = json.loads((job.dir / "fake_score_calls.json").read_text()) if n_cand > 1 else []
+    assert len(scores) == (rings if n_cand > 1 else 0)
+    if scores:
+        side = [v for v in scores[1] if v.get("label") == "90° left"][0]
+        assert scores[1][side["anchor"]]["label"] == "45° left" and abs(side["anchor_deg"] - 45) < 1e-6
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["assembly"] == "train" and len(mv["images"]) == 4      # the photo + exactly 3 views
-    assert not mv["images"][0]["generated"]
-    if n_cand > 1:
-        assert all(len(v["candidates"]) == n_cand and v["target_deg"] in (45, 30) for v in mv["images"][1:])
+    n_views = {"fast": 5, "auto": 8, "quality": 8}[mode]
+    assert mv["assembly"] == "train" and len(mv["images"]) == 1 + n_views
+    assert not mv["images"][0]["generated"] and not any(v.get("candidates") for v in mv["images"])
     assert rep["backend"]["extra"]["assembly"] == "train"
     # photo at its own detail, AI views at their native size, view-independent-ish colour (texture noise)
     photo_side = {"fast": 1280, "auto": 1600, "quality": 2048}[mode]

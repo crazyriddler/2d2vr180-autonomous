@@ -16,14 +16,18 @@ def main(req):
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, f"stage_{req['stage']}.json"), "w") as f:
         json.dump(req, f)
+    calls = os.path.join(out, "stage_calls.json")
+    prev = json.load(open(calls)) if os.path.exists(calls) else []
+    json.dump(prev + [req], open(calls, "w"))
     if req["stage"] == "encode":
         emit("result", stage="encode", views=len(req["views"]))
         return
     views = [{"path": req["image"], "generated": False}]
     for i, v in enumerate(req["views"]):
         paths = []
+        idx = int(v.get("index", i))
         for c in range(max(1, int(req.get("candidates", 1)))):
-            p = os.path.join(out, f"view{i:02d}.png" if c == 0 else f"view{i:02d}_c{c}.png")
+            p = os.path.join(out, f"view{idx:02d}.png" if c == 0 else f"view{idx:02d}_c{c}.png")
             shutil.copy(req["image"], p)
             paths.append(p)
         views.append({"path": paths[0], "candidates": paths, "generated": True, "key": True, **v})

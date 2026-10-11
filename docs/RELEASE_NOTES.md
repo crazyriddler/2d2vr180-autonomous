@@ -1,4 +1,26 @@
-# 2D2VR180 1.0.0-rc41 — rc19 plus cleaner textures and more accurate scale
+# 2D2VR180 1.0.0-rc42 — Real 3D all the way round: sides and back
+
+## What's new in rc42
+
+- **The back of your subject now exists.** rc19 never looked further than 45° to each side, so the back of
+  a person had no image at all. Real 3D now draws the subject in rings around it:
+  1. 45° left, 45° right and from above;
+  2. 90° left and right;
+  3. 135° left and right;
+  4. the back (180°).
+
+  Fast stops after the second ring (5 views); Auto and Quality draw all 8.
+- **Each view continues its neighbour.** From the second ring on, every view is drawn from your photo *and*
+  the neighbouring view already accepted (90° from 45°, 135° from 90°, the back from both 135° views), so
+  clothes, hair and proportions stay the same all the way round.
+- **Candidates are judged against their neighbour.** With 2–3 candidates per angle (Auto/Quality), the one
+  that best continues its neighbouring view is kept. A back view shares nothing with your photo, so rc19's
+  photo-based check would have rejected it. One candidate is still drawn from the photo alone, as a
+  fallback.
+- Training is unchanged from rc41.
+- Generation takes longer: 4 rounds of Qwen instead of 1.
+
+## rc41: rc19 plus cleaner textures and more accurate scale
 
 Built on rc19 (rc40), following `docs/research/from-rc19.md`. Only "Real 3D from one photo" changes.
 

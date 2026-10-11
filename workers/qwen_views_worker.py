@@ -15,6 +15,11 @@ Request:
    "gguf": "...", "lora_angles": "...", "lora_lightning": "...",
    "views": [{"label": "90°", "azimuth": 90, "elevation": 0}, ...], "distance": "medium shot",
    "megapixels": 1.0, "steps": 4, "seed": 42, "attempt": 0}
+
+Chained views (rc42): a view may carry "refs" ([{"path", "label"}], views generated in an earlier round) and
+"index" (its file number). Its candidates are then drawn from the photo *and* those references (the
+nearest accepted view keeps clothes, hair and proportions consistent around the subject); with more than
+one candidate, candidate 0 still comes from the photo alone, so the selection can fall back to it.
 """
 
 import json
@@ -113,19 +118,36 @@ def encode(req, torch, image):
     drop = 64
     cw, ch = calculate_dimensions(CONDITION_IMAGE_SIZE, image.width / image.height)
     cond = VaeImageProcessor(vae_scale_factor=16).resize(image, ch, cw)
-    out = []
-    views = req["views"]
-    for i, v in enumerate(views):
-        prompt = view_prompt(v, req.get("distance", "medium shot"))
-        txt = template.format("Picture 1: <|vision_start|><|image_pad|><|vision_end|>" + prompt)
-        inputs = processor(text=[txt], images=[cond], padding=True, return_tensors="pt").to(enc.device)
+    from PIL import Image, ImageOps
+
+    def embed(text, images):
+        pics = "".join(f"Picture {k + 1}: <|vision_start|><|image_pad|><|vision_end|>" for k in range(len(images)))
+        inputs = processor(text=[template.format(pics + text)], images=images, padding=True,
+                           return_tensors="pt").to(enc.device)
         with torch.no_grad():
             hs = enc(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask,
                      pixel_values=inputs.pixel_values, image_grid_thw=inputs.image_grid_thw,
                      output_hidden_states=True).hidden_states[-1]
         n = int(inputs.attention_mask[0].sum())
-        out.append({"prompt": prompt, "embeds": hs[0, :n][drop:].to("cpu", torch.bfloat16)})
-        progress((i + 1) / len(views), f"encoded view {i + 1}/{len(views)}: {prompt}")
+        return hs[0, :n][drop:].to("cpu", torch.bfloat16)
+
+    out = []
+    views = req["views"]
+    for i, v in enumerate(views):
+        prompt = view_prompt(v, req.get("distance", "medium shot"))
+        item = {"prompt": prompt, "embeds": embed(prompt, [cond])}
+        if v.get("refs"):
+            refs = []
+            for r in v["refs"]:
+                with Image.open(r["path"]) as im:
+                    ri = ImageOps.exif_transpose(im).convert("RGB")
+                rw, rh = calculate_dimensions(CONDITION_IMAGE_SIZE, ri.width / ri.height)
+                refs.append(VaeImageProcessor(vae_scale_factor=16).resize(ri, rh, rw))
+            names = " and ".join(f"Picture {k + 2} ({r.get('label', 'another view')})" for k, r in enumerate(v["refs"]))
+            item["embeds_ref"] = embed(f"{prompt}. The same subject, clothes and hair as in {names}.", [cond] + refs)
+        out.append(item)
+        progress((i + 1) / len(views), f"encoded view {i + 1}/{len(views)}: {prompt}"
+                 + (f" (+ {len(v['refs'])} reference view)" if v.get("refs") else ""))
     torch.save({"key": prompts_key(req), "views": out}, os.path.join(req["output_dir"], "qwen_prompts.pt"))
     emit("result", stage="encode", views=len(out), vram_peak_mib=vram_peak_mib(torch))
 
@@ -133,7 +155,8 @@ def encode(req, torch, image):
 def prompts_key(req):
     import hashlib
 
-    blob = json.dumps([req["image"], os.path.getsize(req["image"]), req["views"], req.get("distance")],
+    refs = [[r["path"], os.path.getsize(r["path"])] for v in req["views"] for r in v.get("refs") or []]
+    blob = json.dumps([req["image"], os.path.getsize(req["image"]), req["views"], req.get("distance"), refs],
                       sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
@@ -197,7 +220,7 @@ def load_pipeline(req, torch, placement):
 
 
 def generate(req, torch, image, env):
-    from PIL import Image  # noqa: F401
+    from PIL import Image, ImageOps
 
     out_dir = req["output_dir"]
     cache = os.path.join(out_dir, "qwen_prompts.pt")
@@ -219,9 +242,15 @@ def generate(req, torch, image, env):
     total = len(req["views"]) * n_cand
     for i, (v, enc) in enumerate(zip(req["views"], data["views"])):
         paths = []
+        idx = int(v.get("index", i))
+        ref_imgs = []
+        for r in v.get("refs") or []:
+            with Image.open(r["path"]) as im:
+                ref_imgs.append(ImageOps.exif_transpose(im).convert("RGB"))
         for c in range(n_cand):
             # candidate 0 keeps the old file name (results of earlier versions are reused)
-            p = os.path.join(out_dir, f"view{i:02d}.png" if c == 0 else f"view{i:02d}_c{c}.png")
+            p = os.path.join(out_dir, f"view{idx:02d}.png" if c == 0 else f"view{idx:02d}_c{c}.png")
+            use_refs = bool(ref_imgs) and (n_cand == 1 or c >= 1)
             paths.append(p)
             if os.path.exists(p):
                 log(f"view {i + 1} ({v.get('label')}) candidate {c + 1}: already generated, reused")
@@ -229,8 +258,8 @@ def generate(req, torch, image, env):
             if pipe is None:
                 pipe = load_pipeline(req, torch, placement)
             log(f"view {i + 1}/{len(req['views'])} ({v.get('label')}) candidate {c + 1}/{n_cand}: {enc['prompt']} · "
-                f"{w}x{h} · {placement}")
-            e = enc["embeds"][None].to("cuda", torch.bfloat16)
+                f"{w}x{h} · {placement}" + (" · with reference views" if use_refs else ""))
+            e = enc["embeds_ref" if use_refs else "embeds"][None].to("cuda", torch.bfloat16)
             mask = torch.ones(e.shape[:2], dtype=torch.long, device="cuda")
             done = i * n_cand + c
 
@@ -243,7 +272,7 @@ def generate(req, torch, image, env):
             oom = None
             try:
                 with torch.no_grad():
-                    img = pipe(image=[image], prompt_embeds=e, prompt_embeds_mask=mask, true_cfg_scale=1.0,
+                    img = pipe(image=[image] + (ref_imgs if use_refs else []), prompt_embeds=e, prompt_embeds_mask=mask, true_cfg_scale=1.0,
                                num_inference_steps=steps, width=w, height=h,
                                generator=torch.Generator("cuda").manual_seed(int(req.get("seed", 42)) + i + 1000 * c),
                                callback_on_step_end=on_step).images[0]
@@ -259,7 +288,8 @@ def generate(req, torch, image, env):
                 sys.exit(1)
             img.save(p)
         views.append({"path": paths[0], "candidates": paths, "generated": True, "key": True,
-                      "label": v.get("label"), "azimuth": v.get("azimuth", 0), "elevation": v.get("elevation", 0)})
+                      "label": v.get("label"), "azimuth": v.get("azimuth", 0), "elevation": v.get("elevation", 0),
+                      "refs": [r.get("label") for r in v.get("refs") or []]})
     with open(os.path.join(out_dir, "views.json"), "w") as f:
         json.dump(views, f)
     emit("result", stage="generate", views=views, size=[w, h], placement=placement,
