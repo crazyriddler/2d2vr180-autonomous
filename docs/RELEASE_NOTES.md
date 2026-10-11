@@ -1,4 +1,34 @@
-# 2D2VR180 1.0.0-rc50 — Smooth movement in 4D videos
+# 2D2VR180 1.0.0-rc51 — Real 3D no longer runs out of RAM
+
+Owner report (rc50, Real 3D on a 24 MP photo, RTX 4080, 32 GB RAM): the job failed after the first two AI
+views with `MemoryError: Unable to allocate 11.9 MiB`. The PC had run out of system memory (RAM), not GPU
+memory.
+
+## Fixes in rc51
+
+- **Qwen-Image-Edit no longer pins its weights on PCs with less than 48 GB of RAM.** Its 15 GB model lives in
+  RAM and moves to the GPU block by block.
+  - The faster "stream" mode page-locks every block on the way, which on 32 GB left too little memory for
+    everything else. Below 48 GB of RAM the blocks are now copied from ordinary memory: a little slower, with
+    no extra RAM.
+  - The log shows how much RAM is free and which mode is used.
+- **Running out of RAM is retried, not fatal.** The views already drawn are kept, and the next, lighter
+  setting runs in a fresh process. If nothing fits, the error says "out of system memory (RAM)" and suggests
+  closing other programs or enlarging the Windows page file.
+- **No more silent VRAM overflow.** Every GPU step limits itself to the VRAM that is really free, minus a
+  margin.
+  - Before, the limit was 92–94 % of the card's total. With the desktop and other programs using about
+    1.5 GB, that was more than was free.
+  - On Windows the driver then quietly backs the excess with system RAM: slower, and it eats the RAM.
+  - Now a full card raises a normal out-of-memory error, which every step already handles by retrying
+    smaller.
+- **Big photos cost less.** The AI views are about 1 megapixel, so the photo given to Qwen is reduced to
+  2048 px first instead of decoding all 24 MP. The 3D reconstruction still uses the photo at full detail.
+- The log line "Local DINOv3 NOT found. Attempting download" comes from the TRELLIS.2 fork's code. It loads
+  the model from the app's own folder, and that step runs with Hugging Face access switched off, so nothing
+  is downloaded.
+
+## rc50: Smooth movement in 4D videos
 
 In rc49 the people and animals that move in a video were rebuilt frame by frame, like a flip-book: a new set
 of splats every frame, with flicker between frames and nothing in between. Now they are **Gaussians that

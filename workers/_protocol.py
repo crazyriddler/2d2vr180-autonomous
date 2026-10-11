@@ -53,6 +53,18 @@ def torch_env(torch):
     return info
 
 
+def cap_vram(torch, wanted=0.92, reserve_mib=600):
+    """Limit this process to the VRAM that is really free (other programs and the desktop use some) minus a
+    margin. On Windows an allocation beyond the free VRAM does not fail: the driver silently backs it with
+    system RAM (much slower, and it can exhaust the RAM); a capped allocator raises a CUDA out-of-memory
+    error instead, which the workers handle. Returns the fraction set."""
+    free, total = torch.cuda.mem_get_info()
+    frac = max(0.3, min(wanted, (free - reserve_mib * 2**20) / total))
+    torch.cuda.set_per_process_memory_fraction(frac)
+    log(f"GPU memory: {free / 2**30:.1f} of {total / 2**30:.1f} GB free; this process may use {frac * total / 2**30:.1f} GB")
+    return frac
+
+
 def vram_peak_mib(torch):
     if torch.cuda.is_available():
         return int(torch.cuda.max_memory_allocated() // 2**20)
@@ -72,6 +84,9 @@ def run(main):
         code = "upstream_error"
         if "OutOfMemory" in name or "out of memory" in msg.lower():
             code = "oom"
+        elif isinstance(e, MemoryError):
+            code = "oom"
+            msg = f"out of system memory (RAM): {msg}. Close other programs or enlarge the Windows page file."
         elif isinstance(e, FileNotFoundError):
             code = "model_missing"
         emit("error", code=code, message=f"{name}: {msg}", traceback=traceback.format_exc()[-4000:])

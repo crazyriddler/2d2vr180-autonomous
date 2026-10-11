@@ -20,7 +20,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
+from _protocol import cap_vram, emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
 VGGT_W = 518
 PATCH = 14
@@ -754,7 +754,7 @@ def main(req):
                          init_points=int(req.get("init_points", 400000)))
     # Cap the allocator below the card's size: on Windows an over-full GPU silently spills into
     # shared system memory (10-50x slower); an out-of-memory error lets us retry smaller instead.
-    torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.94)))
+    cap_vram(torch, float(req.get("vram_fraction", 0.94)))
     # generated views may drift in exposure / white balance: learn a colour correction for each
     appearance = [bool(it.get("generated")) for it in items] if req.get("appearance", True) else None
     for attempt in range(3):

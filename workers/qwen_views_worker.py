@@ -22,13 +22,14 @@ nearest accepted view keeps clothes, hair and proportions consistent around the 
 one candidate, candidate 0 still comes from the photo alone, so the selection can fall back to it.
 """
 
+import gc
 import json
 import math
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
+from _protocol import cap_vram, emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
 AZIMUTHS = {0: "front view", 45: "front-right quarter view", 90: "right side view",
             135: "back-right quarter view", 180: "back view", 225: "back-left quarter view",
@@ -66,10 +67,38 @@ def output_size(w, h, megapixels):
     return max(256, int(round(w * s / 32)) * 32), max(256, int(round(h * s / 32)) * 32)
 
 
-def memory_attempts(vram_total_mib, megapixels):
-    """(placement, megapixels): the Q5 transformer (15 GB) only fits whole on 24 GB+ cards."""
+def system_ram_gib():
+    """(total, available) physical memory in GiB, or (None, None) when unknown."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            st = MEMORYSTATUSEX()
+            st.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st))
+            return st.ullTotalPhys / 2**30, st.ullAvailPhys / 2**30
+        page = os.sysconf("SC_PAGE_SIZE")
+        return os.sysconf("SC_PHYS_PAGES") * page / 2**30, os.sysconf("SC_AVPHYS_PAGES") * page / 2**30
+    except (AttributeError, OSError, ValueError):
+        return None, None
+
+
+def memory_attempts(vram_total_mib, megapixels, ram_total_gib=None):
+    """(placement, megapixels) to try in order. The Q5 transformer (15 GB) only fits whole on 24 GB+ cards;
+    otherwise its blocks are moved to the GPU as they are needed. 'stream' overlaps those copies with the
+    computation but page-locks (pins) every block on the way, which on a 32 GB PC exhausts system memory
+    next to the 15 GB of weights (rc50 report: MemoryError after two views), so it is only used with 48 GB+
+    of RAM; 'sync' copies from ordinary memory (a little slower, no extra RAM)."""
     whole = [("gpu", megapixels)] if vram_total_mib >= 24000 else []
-    return whole + [("stream", megapixels), ("stream", min(megapixels, 0.6))]
+    stream = [("stream", megapixels)] if ram_total_gib is None or ram_total_gib >= 48 else []
+    return whole + stream + [("sync", megapixels), ("sync", min(megapixels, 0.6))]
 
 
 # ----------------------------------------------------------------------------- stage 1
@@ -211,12 +240,24 @@ def load_pipeline(req, torch, placement):
     if placement == "gpu":
         pipe.to(dev)
     else:
-        # Blocks stream from RAM as they are needed; pinned on the fly (no second copy in RAM).
+        # Blocks move from RAM to the GPU as they are needed: 'stream' overlaps the copies with the
+        # computation (pinning each block on the way), 'sync' copies from ordinary memory (no extra RAM).
         transformer.enable_group_offload(onload_device=dev, offload_device=torch.device("cpu"),
-                                         offload_type="block_level", num_blocks_per_group=1, use_stream=True,
-                                         low_cpu_mem_usage=True)
+                                         offload_type="block_level", num_blocks_per_group=1,
+                                         use_stream=placement == "stream", low_cpu_mem_usage=True)
         vae.to(dev)
     return pipe
+
+
+def ram_retry(k, attempts, placement, w, h, ex):
+    """Out of system memory: retry in a fresh process with the next, lighter setting (finished views are
+    kept), or give up with a clear message."""
+    more = k + 1 < len(attempts)
+    emit("error", code="oom_retry" if more else "oom",
+         message=f"out of system memory (RAM) with '{placement}' at {w}x{h}: {type(ex).__name__}: {ex}"
+                 + ("; retrying with a lighter setting" if more else
+                    ". Close other programs or enlarge the Windows page file and try again."))
+    sys.exit(1)
 
 
 def generate(req, torch, image, env):
@@ -228,7 +269,8 @@ def generate(req, torch, image, env):
     if not data or data.get("key") != prompts_key(req):
         emit("error", code="bad_input", message="encoded prompts missing or stale: run the 'encode' stage first")
         sys.exit(1)
-    attempts = memory_attempts(env.get("vram_total_mib") or 16000, float(req.get("megapixels", 1.0)))
+    ram_total, ram_free = system_ram_gib()
+    attempts = memory_attempts(env.get("vram_total_mib") or 16000, float(req.get("megapixels", 1.0)), ram_total)
     k = int(req.get("attempt", 0))
     if k >= len(attempts):
         emit("error", code="oom", message="Qwen-Image-Edit does not fit in this GPU's memory at any setting.")
@@ -256,7 +298,12 @@ def generate(req, torch, image, env):
                 log(f"view {i + 1} ({v.get('label')}) candidate {c + 1}: already generated, reused")
                 continue
             if pipe is None:
-                pipe = load_pipeline(req, torch, placement)
+                if ram_free is not None:
+                    log(f"system memory: {ram_free:.1f} of {ram_total:.1f} GB free; transformer placement '{placement}'")
+                try:
+                    pipe = load_pipeline(req, torch, placement)
+                except MemoryError as ex:
+                    ram_retry(k, attempts, placement, w, h, ex)
             log(f"view {i + 1}/{len(req['views'])} ({v.get('label')}) candidate {c + 1}/{n_cand}: {enc['prompt']} · "
                 f"{w}x{h} · {placement}" + (" · with reference views" if use_refs else ""))
             e = enc["embeds_ref" if use_refs else "embeds"][None].to("cuda", torch.bfloat16)
@@ -280,6 +327,8 @@ def generate(req, torch, image, env):
                 if "out of memory" not in str(ex).lower():
                     raise
                 oom = str(ex).splitlines()[0][:300]
+            except MemoryError as ex:          # system RAM, not the GPU's
+                ram_retry(k, attempts, placement, w, h, ex)
             if oom:
                 more = k + 1 < len(attempts)
                 emit("error", code="oom_retry" if more else "oom",
@@ -287,6 +336,9 @@ def generate(req, torch, image, env):
                              ("; retrying with a lighter setting" if more else ""))
                 sys.exit(1)
             img.save(p)
+            del img
+            gc.collect()                       # keep RAM flat between candidates
+            torch.cuda.empty_cache()
         views.append({"path": paths[0], "candidates": paths, "generated": True, "key": True,
                       "label": v.get("label"), "azimuth": v.get("azimuth", 0), "elevation": v.get("elevation", 0),
                       "refs": [r.get("label") for r in v.get("refs") or []]})
@@ -307,7 +359,9 @@ def main(req):
     os.makedirs(req["output_dir"], exist_ok=True)
     with Image.open(req["image"]) as im:
         image = ImageOps.exif_transpose(im).convert("RGB")
-    torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.92)))
+    if max(image.size) > 2048:     # views are ~1 MP: a 24 MP photo only costs memory here
+        image.thumbnail((2048, 2048), Image.LANCZOS)
+    cap_vram(torch, float(req.get("vram_fraction", 0.92)))
     if req.get("stage") == "encode":
         encode(req, torch, image)
     else:

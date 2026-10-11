@@ -31,7 +31,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
+from _protocol import cap_vram, emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
 MASK_SIDE = 320          # motion is detected at this resolution
 INFERRED, OBSERVED = 1, 0
@@ -471,7 +471,7 @@ def main(req):
     cfg = st.TrainConfig(steps=int(req.get("steps", 9000)), sh_degree=int(req.get("sh_degree", 1)),
                          max_gaussians=int(req.get("max_gaussians", 1_500_000)),
                          init_points=int(req.get("init_points", 400000)))
-    torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.94)))
+    cap_vram(torch, float(req.get("vram_fraction", 0.94)))
     train_imgs = imgs
     for attempt in range(3):
         oom = False

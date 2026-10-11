@@ -18,7 +18,7 @@ import time
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
+from _protocol import cap_vram, emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
 TRAJECTORIES = ("capture", "capture_full", "explore")
 
@@ -372,7 +372,7 @@ def main(req):
     steps = int(req.get("steps", 50))
     plan = shots(kind, n)
     labels = shot_labels(kind)
-    torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.92)))
+    cap_vram(torch, float(req.get("vram_fraction", 0.92)))
     # One memory setting per process: a failed attempt's memory (VRAM and RAM) is only reliably
     # released when its process exits, so the app restarts the worker with the next attempt.
     # Finished shots and the encoded prompt are kept on disk and reused.
