@@ -714,6 +714,33 @@ def main(req):
             log(f"out of GPU memory while training; retrying with smaller images "
                 f"({train_imgs[0].shape[1]}x{train_imgs[0].shape[0]}) and at most {cfg.max_gaussians:,} splats")
 
+    # ------------------------------------------------------------ best-view colours
+    # The geometry is done. A short colour-only pass lets the best view of every surface decide its
+    # colour (the most frontal, highest-resolution view; the photo preferred) instead of an average of
+    # views that do not quite agree. Nothing moves and no splat is removed (owner: cleanup lost detail).
+    gen_any = any(it.get("generated") for it in items)
+    if req.get("best_view_colours", True) and 1 < n <= int(req.get("best_view_max_views", 24)):
+        try:
+            progress(0.86, "colours from the best view of each surface")
+            sizes0 = [(im.shape[1], im.shape[0]) for im in train_imgs]
+            bonus = [float(req.get("photo_colour_bonus", 1.5)) if not it.get("generated") or not gen_any else 1.0
+                     for it in items]
+            bv = st.best_view_weights(params, c2ws, Ks, sizes0, bonus=bonus)
+            bw = [b if pw is None else b * pw for b, pw in zip(bv, pixel_w or [None] * n)]
+            cfg2 = st.TrainConfig(steps=max(500, int(cfg.steps * float(req.get("colour_pass", 0.2)))),
+                                  sh_degree=cfg.sh_degree, densify=False, coarse_until=0.0, depth_weight=0.0,
+                                  colours_only=True, opacity_reg=0.0)
+            params, _ = st.train(train_imgs, c2ws, Ks, weights, None, None, cfg2, device="cuda", params=params,
+                                 progress=lambda v, m: progress(0.86 + 0.02 * v, "best-view colours: " + m),
+                                 pixel_weights=bw,
+                                 appearance=appearance if appearance and any(appearance) else None,
+                                 appearance_out=[])
+            log("best-view colours: " + ", ".join(f"view {i} decides {float((b > 0.5).mean()):.0%} of its pixels"
+                                                  for i, b in enumerate(bv)))
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:   # an improvement, not a requirement
+            log(f"best-view colour pass skipped: {str(e).splitlines()[0][:200]}")
+            torch.cuda.empty_cache()
+
     # ------------------------------------------------------------ provenance
     progress(0.88, "labelling observed / inferred / generated splats")
     real = [i for i, it in enumerate(items) if not it.get("generated")]

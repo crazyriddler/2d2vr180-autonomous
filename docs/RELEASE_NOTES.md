@@ -1,4 +1,19 @@
-# 2D2VR180 1.0.0-rc43 — The AI views' colour drift no longer stains the texture
+# 2D2VR180 1.0.0-rc44 — Each surface takes its colour from the view that sees it best
+
+## What's new in rc44
+
+- **Best-view colours.** Once the 3D shape is trained, a short final pass recalculates only the colours. Each
+  surface's colour now comes from the view that sees it best: the most head-on view, with the most pixels
+  on it. Your photo wins wherever it sees the surface.
+  - Before, the colour was an average of the photo and the AI views. They never agree exactly, so the
+    texture came out soft and noisy.
+  - Nothing moves and nothing is removed: positions, sizes, shapes and opacities of every splat stay exactly
+    as trained.
+  - The log shows how much of each view ended up deciding the colours.
+- Applies to every multi-view result with up to 24 images (Real 3D, several photos). Longer videos keep the
+  normal training.
+
+## rc43: The AI views' colour drift no longer stains the texture
 
 ## What's new in rc43
 

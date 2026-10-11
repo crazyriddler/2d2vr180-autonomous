@@ -49,6 +49,7 @@ class TrainConfig:
     log_every: int = 250
     depth_weight: float = 0.1      # monocular depth prior (relative L1), decays linearly to 0 ...
     depth_until: float = 0.6       # ... at this fraction of the steps
+    colours_only: bool = False     # optimise only colours (positions, sizes, rotations, opacities fixed)
     lr_appearance: float = 1e-3    # per-view colour correction (generated views only)
     appearance_reg: float = 0.05   # keeps that correction close to identity
 
@@ -147,21 +148,29 @@ def scene_scale(c2ws: np.ndarray, points: np.ndarray) -> float:
 def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.ndarray, colors: np.ndarray,
           cfg: TrainConfig | None = None, device="cuda", render_fn=None, progress=None, cancel=None,
           pixel_weights: list | None = None, depth_priors: list | None = None,
-          appearance: list | None = None, appearance_out: list | None = None):
+          appearance: list | None = None, appearance_out: list | None = None, params=None):
     """Optimise Gaussians. ``images``: list of (H,W,3) uint8 arrays (sizes may differ).
     ``pixel_weights``: per view None or an (H,W) float map in [0,1] (photometric confidence).
     ``depth_priors``: per view None or an (H,W) depth map in scene units (0 = unknown).
     ``appearance``: per view True to learn a colour correction (3x3 matrix + offset) applied to the
     render before the loss. Used for generated views, whose exposure / white balance drifts from the
     photo: the splats keep the photo's colours instead of averaging in the drift. ``appearance_out``
-    receives the learned corrections ([A, b] per view, None when not learned)."""
+    receives the learned corrections ([A, b] per view, None when not learned).
+    ``params``: continue from these Gaussians (a ParameterDict from an earlier call) instead of
+    initialising from points / colours."""
     import torch
     import torch.nn.functional as F
 
     cfg = cfg or TrainConfig()
     render_fn = render_fn or gsplat_render
     torch.manual_seed(cfg.seed)
-    params = init_params(points, colors, cfg, device)
+    if params is None:
+        params = init_params(points, colors, cfg, device)
+    else:
+        points = params["means"].detach().cpu().numpy()
+    if cfg.colours_only:
+        for k in ("means", "scales", "quats", "opacities"):
+            params[k].requires_grad_(False)
     scale = scene_scale(c2ws, points)
     opt = {
         "means": torch.optim.Adam([params["means"]], lr=cfg.lr_means * scale, eps=1e-15),
@@ -270,6 +279,65 @@ def train(images: list, c2ws: np.ndarray, Ks: np.ndarray, weights, points: np.nd
         appearance_out.extend([app_A[k].detach().cpu().tolist(), app_b[k].detach().cpu().tolist()] if app[k]
                               else None for k in range(len(images)))
     return params, history
+
+
+def best_view_weights(params, c2ws, Ks, sizes, render_fn=None, bonus=None, power=4.0, tol=0.03):
+    """Per view an (H, W) map in [0, 1]: how much this view should decide the colour of the surface
+    seen at each pixel. The surface (rendered depth, normals from its gradient) is looked at from every
+    view that sees it (depth test); a view's quality is its frontality |n.d| times its resolution there
+    (fx / z) times ``bonus`` (e.g. > 1 for the photo). The best view gets 1, the others
+    (quality / best) ** power - so colours come from the best view of each surface instead of an
+    average of views that do not quite agree. Pixels with no rendered surface get 1."""
+    import torch
+
+    render_fn = render_fn or gsplat_render
+    dev = params["means"].device
+    n = len(c2ws)
+    bonus = list(bonus) if bonus is not None else [1.0] * n
+    c2w = torch.as_tensor(np.asarray(c2ws), dtype=torch.float32, device=dev)
+    vm = torch.linalg.inv(c2w)
+    Kt = torch.as_tensor(np.asarray(Ks), dtype=torch.float32, device=dev)
+    depths = []
+    with torch.no_grad():
+        for v in range(n):
+            out, alpha, _ = render_fn(params, vm[v:v + 1], Kt[v:v + 1], sizes[v][0], sizes[v][1], 0, mode="ED")
+            d = out[..., 0] if out.dim() == 3 else out
+            depths.append(torch.where(alpha[..., 0] > 0.5, d, torch.zeros_like(d)))
+
+        def quality(X, nrm, k):
+            pc = (X - c2w[k, :3, 3]) @ c2w[k, :3, :3]
+            z = pc[..., 2]
+            zs = z.clamp_min(1e-6)
+            u = Kt[k, 0, 0] * pc[..., 0] / zs + Kt[k, 0, 2]
+            y = Kt[k, 1, 1] * pc[..., 1] / zs + Kt[k, 1, 2]
+            w, h = sizes[k]
+            inside = (z > 1e-6) & (u >= 0) & (u < w) & (y >= 0) & (y < h)
+            dk = depths[k][y.long().clamp(0, h - 1), u.long().clamp(0, w - 1)]
+            vis = inside & (dk > 0) & (z <= dk * (1 + tol))
+            to_cam = torch.nn.functional.normalize(c2w[k, :3, 3] - X, dim=-1)
+            front = (nrm * to_cam).sum(-1).abs()
+            return torch.where(vis, front * Kt[k, 0, 0] / zs * float(bonus[k]), torch.zeros_like(z))
+
+        maps = []
+        for i in range(n):
+            D = depths[i]
+            h, w = D.shape
+            ys, xs = torch.meshgrid(torch.arange(h, device=dev) + 0.5, torch.arange(w, device=dev) + 0.5,
+                                    indexing="ij")
+            cam = torch.stack([(xs - Kt[i, 0, 2]) / Kt[i, 0, 0] * D, (ys - Kt[i, 1, 2]) / Kt[i, 1, 1] * D, D], -1)
+            X = cam @ c2w[i, :3, :3].T + c2w[i, :3, 3]
+            dx = torch.zeros_like(X)
+            dy = torch.zeros_like(X)
+            dx[:, 1:-1] = X[:, 2:] - X[:, :-2]
+            dy[1:-1] = X[2:] - X[:-2]
+            nrm = torch.nn.functional.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
+            q = torch.stack([quality(X, nrm, k) for k in range(n)])
+            own = q[i]
+            best = q.max(0).values
+            wmap = torch.where(best > 0, (own / best.clamp_min(1e-12)).clamp(0, 1) ** power, torch.ones_like(own))
+            wmap = torch.where(D > 0, wmap, torch.ones_like(wmap))
+            maps.append(wmap.cpu().numpy().astype(np.float32))
+    return maps
 
 
 def visibility_counts(params, c2ws, Ks, sizes, view_ids, render_depth=None, tol: float = 0.05):

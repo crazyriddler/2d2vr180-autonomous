@@ -222,3 +222,35 @@ def test_colour_drift_of_generated_views_is_absorbed_by_appearance():
     assert corrected > base + 1.0
     assert out[0] is None and out[1] is not None
     assert out[1][0][2][2] < 0.95             # it learned to darken blue for the generated views
+
+
+def test_best_view_decides_the_colour_of_each_surface():
+    """A wall seen head-on by one camera and at a grazing angle by another: the head-on view decides
+    its colour (weight ~1), the grazing one only a little; the photo bonus tips a tie."""
+    ys, xs = np.mgrid[-6:7, -6:7] * 0.08
+    pts = np.stack([xs.ravel(), ys.ravel(), np.full(xs.size, 2.0)], 1).astype(np.float32)
+    cfg = st.TrainConfig(sh_degree=0)
+    p = st.init_params(pts, np.full_like(pts, 0.5), cfg, "cpu")
+    with torch.no_grad():
+        p["opacities"].fill_(4.0)
+        p["scales"].fill_(np.log(0.06))
+    K = np.array([[30.0, 0, 12], [0, 30.0, 12], [0, 0, 1]])
+    c2ws = np.stack([look_at(np.array([0.0, 0, 0]), [0, 0, 2]), look_at(np.array([1.6, 0, 0.8]), [0, 0, 2])])
+    wmaps = st.best_view_weights(p, c2ws, np.stack([K, K]), [(24, 24)] * 2, render_fn=ref_render)
+    assert wmaps[0][8:16, 8:16].mean() > 0.95          # head-on: decides
+    assert wmaps[1][8:16, 8:16].mean() < 0.5           # grazing: only a little
+    same = st.best_view_weights(p, c2ws[[0, 0]], np.stack([K, K]), [(24, 24)] * 2, render_fn=ref_render,
+                                bonus=[1.5, 1.0])
+    assert same[0][8:16, 8:16].mean() > 0.95 and same[1][8:16, 8:16].mean() < 0.3   # tie: the photo wins
+
+
+def test_colour_only_training_keeps_every_splat_where_it_is():
+    gt, pts, cols, c2ws, Ks, vm, Kt, imgs, _ = _scene()
+    cfg = st.TrainConfig(steps=20, sh_degree=0, densify=False, coarse_until=0.0, log_every=10)
+    p, _ = st.train(imgs, c2ws, Ks, [1, 1, 1, 1], pts, np.full_like(cols, 0.5), cfg, device="cpu", render_fn=ref_render)
+    before = {k: v.detach().clone() for k, v in p.items()}
+    cfg2 = st.TrainConfig(steps=20, sh_degree=0, densify=False, coarse_until=0.0, log_every=10, colours_only=True)
+    p2, _ = st.train(imgs, c2ws, Ks, [1, 1, 1, 1], None, None, cfg2, device="cpu", render_fn=ref_render, params=p)
+    for k in ("means", "scales", "quats", "opacities"):
+        assert torch.equal(p2[k].detach(), before[k])
+    assert len(p2["means"]) == len(before["means"]) and not torch.equal(p2["sh0"].detach(), before["sh0"])
