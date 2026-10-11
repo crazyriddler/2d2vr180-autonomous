@@ -207,3 +207,16 @@ def test_cropped_photos_do_not_use_the_exif_focal_length(tmp_path):
     assert mv.exif_fov_x(str(tmp_path / "crop.jpg")) is None
     Image.new("RGB", (400, 300)).save(tmp_path / "resized.jpg", exif=exif)   # only resized: still valid
     assert mv.exif_fov_x(str(tmp_path / "resized.jpg")) is not None
+
+
+def test_photo_geometry_from_moge3_and_its_metric_scale(tmp_path):
+    h, w = 60, 80
+    z = np.full((h, w), 2.0, np.float32)
+    K = np.array([[80.0, 0, 40], [0, 80.0, 30], [0, 0, 1]])
+    np.savez(tmp_path / "g.npz", points=np.stack([np.zeros((h, w)), np.zeros((h, w)), z], -1).astype(np.float32),
+             mask=np.ones((h, w), bool), intrinsics=K)
+    zz, ok, fov = mv.photo_geometry(str(tmp_path / "g.npz"), 120, 160)
+    assert zz.shape == (120, 160) and ok.all() and abs(fov - 2 * np.degrees(np.arctan(40 / 80))) < 1e-6
+    info = {"sx": 160 / mv.VGGT_W, "sy": 120 / 378, "crop": 0, "h": 378}
+    engine = np.full((378, mv.VGGT_W), 0.5)                     # the engine's scene is 4x too small
+    assert abs(mv.scale_from_photo(zz, ok, engine, np.ones_like(engine), info) - 4.0) < 1e-6

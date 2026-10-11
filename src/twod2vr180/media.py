@@ -364,18 +364,34 @@ def extract_frames_fps(path: Path, out_dir: Path, fps: float, max_frames: int,
 
 
 def exif_hfov_deg(path: Path) -> float | None:
-    """Horizontal field of view from EXIF 35 mm-equivalent focal length."""
+    """Horizontal field of view (degrees) of a photo as displayed (after its EXIF rotation), from the EXIF
+    35 mm-equivalent focal length (diagonal convention, as phones and cameras define it). None without
+    EXIF, for implausible values, or for photos cropped after shooting (the focal length then no longer
+    matches the frame). Same rule as workers/multiview_worker.exif_fov_x."""
+    import math
+
+    from PIL import ImageOps
+
     try:
         with Image.open(path) as im:
             exif = im.getexif()
-            f35 = exif.get_ifd(0x8769).get(0xA405) or exif.get(0xA405)
-            w, h = im.size
+            ifd = exif.get_ifd(0x8769)
+            f35 = ifd.get(0xA405) or exif.get(0xA405)
+            ew, eh = ifd.get(0xA002), ifd.get(0xA003)
+            sw, sh = im.size
+            w, h = ImageOps.exif_transpose(im).size
     except Exception:
         return None
-    if not f35:
+    try:
+        f35 = float(f35)
+    except (TypeError, ValueError):
         return None
-    # 35 mm equivalent refers to the 36 mm-wide frame along the long side.
-    hfov_long = 2 * np.degrees(np.arctan(36.0 / (2 * float(f35))))
-    if w >= h:
-        return float(hfov_long)
-    return float(2 * np.degrees(np.arctan(np.tan(np.radians(hfov_long) / 2) * w / h)))
+    if not 8 <= f35 <= 800:
+        return None
+    try:
+        if ew and eh and abs((float(ew) / float(eh)) / (sw / sh) - 1) > 0.01:
+            return None
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    width_mm = 43.2666 * w / math.hypot(w, h)
+    return float(math.degrees(2 * math.atan(width_mm / (2 * f35))))

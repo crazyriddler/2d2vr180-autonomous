@@ -372,12 +372,41 @@ def fit_prior(zm, valid, zv, inside, trusted, generated, reject=0.15):
     return np.where(keep, z, 0.0).astype(np.float32)
 
 
-def mono_priors(moge_path, imgs, vin, depth, conf, device, torch, fovs=None, generated=None, reject=0.15):
+def photo_geometry(npz_path, h, w):
+    """(depth, valid, horizontal field of view in degrees) of the photo from a MoGe-3 result
+    (moge_worker .npz), at (h, w)."""
+    import math
+
+    import numpy as np
+
+    d = np.load(npz_path)
+    z = d["points"][..., 2].astype(np.float32)
+    valid = d["mask"].astype(bool) & np.isfinite(z) & (z > 0)
+    fov = math.degrees(2 * math.atan(z.shape[1] / 2 / float(d["intrinsics"][0, 0])))
+    if z.shape != (h, w):
+        z, valid = resize_map(z, w, h), resize_map(valid.astype(np.uint8), w, h).astype(bool)
+    return np.where(valid, z, 0.0).astype(np.float32), valid, fov
+
+
+def scale_from_photo(z_metric, valid, depth0, conf0, info0):
+    """Metric factor for the engine's scene from the photo's own metric depth (MoGe-3 at full resolution):
+    median ratio over pixels the engine is confident about."""
+    import numpy as np
+
+    h, w = z_metric.shape
+    zv, inside = vggt_on_image(depth0, info0, h, w)
+    cv, _ = vggt_on_image(conf0, info0, h, w)
+    ok = valid & inside & (zv > 0) & (cv >= np.percentile(conf0, 50))
+    return float(np.median(z_metric[ok] / zv[ok])) if ok.sum() > 500 else None
+
+
+def mono_priors(moge_path, imgs, vin, depth, conf, device, torch, fovs=None, generated=None, reject=0.15,
+                fixed=None):
     """MoGe-2 depth of every view at its training resolution, aligned (scale and shift, robust) onto the
     view's VGGT depth. In generated views, pixels whose aligned depth still contradicts the joint geometry
     by more than ``reject`` (relative) are left unknown: one AI view's own depth guess must not pull the
     shape away from what all views agree on. Returns a list of (H, W) depth maps in scene units
-    (0 where unknown)."""
+    (0 where unknown). ``fixed``: {view: (depth, valid)} computed elsewhere (the photo by MoGe-3)."""
     import numpy as np
     from moge.model.v2 import MoGeModel
 
@@ -386,14 +415,17 @@ def mono_priors(moge_path, imgs, vin, depth, conf, device, torch, fovs=None, gen
     for i, img in enumerate(imgs):
         progress(0.33 + 0.02 * i / len(imgs), f"sharp depth priors (MoGe-2) {i + 1}/{len(imgs)}")
         h, w = img.shape[:2]
-        t = torch.from_numpy(img).to(device).float().div(255).permute(2, 0, 1)
-        with torch.no_grad():
-            res = model.infer(t, resolution_level=9, use_fp16=device == "cuda", fov_x=(fovs or {}).get(i))
-        zm = res["depth"].float().cpu().numpy()
-        valid = np.isfinite(zm) & (zm > 0)
-        if "mask" in res:
-            valid &= res["mask"].cpu().numpy().astype(bool)
-        del res, t
+        if fixed and i in fixed:
+            zm, valid = fixed[i]
+        else:
+            t = torch.from_numpy(img).to(device).float().div(255).permute(2, 0, 1)
+            with torch.no_grad():
+                res = model.infer(t, resolution_level=9, use_fp16=device == "cuda", fov_x=(fovs or {}).get(i))
+            zm = res["depth"].float().cpu().numpy()
+            valid = np.isfinite(zm) & (zm > 0)
+            if "mask" in res:
+                valid &= res["mask"].cpu().numpy().astype(bool)
+            del res, t
         zv, inside = vggt_on_image(depth[i], vin[i][1], h, w)
         cv, _ = vggt_on_image(conf[i], vin[i][1], h, w)
         out.append(fit_prior(zm, valid, zv, inside, inside & (cv >= np.percentile(conf[i], 50)),
@@ -562,7 +594,7 @@ def main(req):
     vin = [vggt_input(im) for im in train_imgs]
     fovs = {}
     for i, it in enumerate(items):
-        f = None if it.get("generated") else exif_fov_x(it["path"])
+        f = None if it.get("generated") else (it.get("fov_x") or exif_fov_x(it["path"]))
         if f:
             fovs[i] = f
     if fovs:
@@ -598,7 +630,21 @@ def main(req):
     free(torch)
 
     scale = None
-    if req.get("moge_path"):
+    fixed = {}
+    if req.get("photo_geometry") and not items[0].get("generated"):
+        try:      # the photo's geometry by MoGe-3: finer and more accurate than MoGe-2's
+            h0, w0 = train_imgs[0].shape[:2]
+            z0, ok0, fov0 = photo_geometry(req["photo_geometry"], h0, w0)
+            fixed[0] = (z0, ok0)
+            scale = scale_from_photo(z0, ok0, depth[0], conf[0], vin[0][1])
+            if 0 not in fovs:   # no EXIF: MoGe-3's field of view, so camera and depth use the same lens
+                fovs[0] = fov0
+                log(f"view 0: field of view from MoGe-3 ({fov0:.1f}°)")
+            log("photo geometry from MoGe-3" + (f"; metric scale from it: {scale:.4f}" if scale else ""))
+        except Exception as e:  # noqa: BLE001 - MoGe-2 below as before
+            log(f"MoGe-3 photo geometry unusable ({e}); using MoGe-2")
+            fixed, scale = {}, None
+    if req.get("moge_path") and not scale:
         progress(0.32, "metric scale (MoGe-2)")
         try:
             real = [i for i, it in enumerate(items) if not it.get("generated")]
@@ -620,7 +666,7 @@ def main(req):
             and not poses_only):
         try:
             priors = mono_priors(req["moge_path"], train_imgs, vin, depth, conf, device, torch, fovs=fovs,
-                                 generated=[bool(it.get("generated")) for it in items])
+                                 generated=[bool(it.get("generated")) for it in items], fixed=fixed)
             log("MoGe-2 depth priors: " + ", ".join("-" if p is None else "ok" for p in priors))
         except Exception as e:  # noqa: BLE001 - priors are an improvement, not a requirement
             log(f"depth priors unavailable: {e}")

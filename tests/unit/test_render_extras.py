@@ -78,7 +78,8 @@ def test_exif_hfov(tmp_path):
     exif.get_ifd(0x8769)[0xA405] = 26  # 26 mm equivalent (typical phone main camera)
     p = tmp_path / "e.jpg"
     im.save(p, exif=exif)
-    assert exif_hfov_deg(p) == pytest.approx(69.4, abs=0.5)
+    # 35 mm-equivalent focal lengths are defined on the diagonal: a 4:3 frame is narrower than 36 mm wide
+    assert exif_hfov_deg(p) == pytest.approx(67.3, abs=0.3)
     q = tmp_path / "n.jpg"
     im.save(q)
     assert exif_hfov_deg(q) is None

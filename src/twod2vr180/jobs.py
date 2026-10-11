@@ -331,7 +331,9 @@ class JobRunner:
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index,
                      "trajectory": opts.generative if opts.generative != "off" else None,
                      "engine": opts.gen_engine,
-                     "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
+                     "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None,
+                     # several photos: each one's field of view (the frames are PNG copies without EXIF)
+                     "hfov_list": [exif_hfov_deg(p) for p in job.inputs] if kind == "images" else None}
             if bopts["hfov_deg"]:
                 log(f"EXIF field of view: {bopts['hfov_deg']:.1f}°")
             backend.prepare(self.ctx, bopts)

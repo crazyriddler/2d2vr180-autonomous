@@ -55,6 +55,31 @@
    "notes": "Default Quality photo model and per-frame model for fixed-camera dynamic video."
   },
   {
+   "id": "moge-3-vitl",
+   "display_name": "MoGe-3 ViT-L — the photo's geometry for Real 3D (sharper, better scale and focal)",
+   "source": "https://huggingface.co/Ruicheng/moge-3-vitl",
+   "revision": "184008f877d7ad1ad4c2cd2182a9bd1f63d0e5be",
+   "license": "MIT (Hugging Face model card: license: mit)",
+   "license_url": "https://huggingface.co/Ruicheng/moge-3-vitl",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 6,
+   "backends": [
+    "generative"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "model.pt",
+     "url": "https://huggingface.co/Ruicheng/moge-3-vitl/resolve/184008f877d7ad1ad4c2cd2182a9bd1f63d0e5be/model.pt",
+     "sha256": "9b41b7b9f65ad80aab7ad686f5e9cc0d1fd33f1964022618dfbcd52fc1fb7925",
+     "size_bytes": 1481333394
+    }
+   ],
+   "notes": "Real 3D (rc48): depth, field of view and metric scale of the original photo; runs in photo-cu128 (FlexGEMM Triton kernels). MoGe-2 is used when it is not installed."
+  },
+  {
    "id": "depth-anything-v2-small",
    "display_name": "Depth-Anything-V2 Small — commercial-safe relative depth",
    "source": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf",

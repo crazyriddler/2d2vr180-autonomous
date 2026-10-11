@@ -95,6 +95,13 @@ SUBJECT_MODELS = ("trellis2-4b-shape", "trellis-image-large-ss-dec", "trellis2-i
 SUBJECT_PIPELINE = {"fast": "512", "auto": "1024_cascade", "quality": "1024_cascade"}
 
 
+MOGE3 = "moge-3-vitl"          # rc48: the photo's geometry by MoGe-3 when installed (MoGe-2 otherwise)
+
+
+def moge3_installed(ctx) -> bool:
+    return MOGE3 in ctx.models.entries and ctx.models.is_installed(MOGE3) and ctx.runtimes.is_installed("photo-cu128")
+
+
 def subject_installed(ctx) -> bool:
     return ctx.runtimes.is_installed(SUBJECT_RUNTIME) and all(
         m in ctx.models.entries and ctx.models.is_installed(m) for m in SUBJECT_MODELS)
@@ -135,6 +142,7 @@ class GenerativeSceneBackend(Backend):
     wan_script = "wan_worker.py"
     qwen_script = "qwen_views_worker.py"
     subject_script = "trellis_subject_worker.py"
+    geometry_script = "moge_worker.py"
     description = ("Generates the unseen sides of a photo with a camera-controlled diffusion model and trains a "
                    "real 3D Gaussian splat from the generated views. Invented content is labelled GENERATIVE.")
 
@@ -244,6 +252,8 @@ class GenerativeSceneBackend(Backend):
         # The real photo is sampled more often than any single generated view during training.
         w_in = max(4.0, len(views) / 10)
         mv_views = [{"path": v["path"], "generated": bool(v["generated"]), "weight": 1.0 if v["generated"] else w_in,
+                     # the photo's real lens (EXIF of the original file; the frame is a PNG copy without it)
+                     **({"fov_x": options["hfov_deg"]} if not v["generated"] and options.get("hfov_deg") else {}),
                      **({"candidates": v["candidates"], "label": v.get("label", ""),
                          "target_deg": target_angle(v)} if len(v.get("candidates") or []) > 1 else {})}
                     for v in views]
@@ -257,6 +267,12 @@ class GenerativeSceneBackend(Backend):
             if subject:
                 mv_opts.update(subject_mesh=subject["subject_mesh"], subject_mask=subject["subject_mask"])
                 gen_models += subject["models"]
+            geo = self._photo_geometry(inp, ctx, options, progress, cancel, log, ref, mode) \
+                if moge3_installed(ctx) else None
+            if geo:
+                mv_opts["photo_geometry"] = geo
+                gen_models.append({"id": MOGE3, **{k: ctx.models.status(MOGE3)[k]
+                                                   for k in ("revision", "license", "hash_status")}})
         res = self.mv.reconstruct(
             mv_views, inp, ctx, mv_opts, progress, cancel,
             progress_range=(0.5, 0.97), extra_models=gen_models,
@@ -271,6 +287,26 @@ class GenerativeSceneBackend(Backend):
             res.extra["candidate_selection"] = chain["selection"]
         res.worker_env = {"generation": (out if out is not None else chain)["env"], "reconstruction": res.worker_env}
         return res
+
+    def _photo_geometry(self, inp, ctx, options, progress, cancel, log, ref, mode):
+        """The photo's metric geometry by MoGe-3 (photo runtime), at its training size and with its real
+        field of view; None if it fails (MoGe-2 inside the multi-view worker is the fallback)."""
+        out = inp.work_dir / "photo_geometry"
+        out.mkdir(parents=True, exist_ok=True)
+        item = {"path": str(ref), "out": str(out / "photo.npz")}
+        if options.get("hfov_deg"):
+            item["fov_x"] = float(options["hfov_deg"])
+        req = {"model_path": str(ctx.models.paths(MOGE3)["model.pt"]), "version": "v3", "refine_steps": 3,
+               "max_side": TRI_PHOTO_SIDE.get(mode, 1600), "fp16": True, "images": [item]}
+        log("the photo's geometry: MoGe-3")
+        try:
+            run_worker(ctx.runtimes.python("photo-cu128"), self.geometry_script, req, inp.work_dir / "worker", progress,
+                       cancel, env=ctx.runtimes.worker_env("photo-cu128"), log=log, progress_range=(0.5, 0.52),
+                       timeout_s=1800)
+        except BackendError as e:
+            log(f"MoGe-3 unavailable ({e}); MoGe-2 is used")
+            return None
+        return item["out"]
 
     def _complete_subject(self, inp, ctx, options, progress, cancel, log, ref, mode):
         """TRELLIS.2 shape of the whole subject (back included), or None if it fails (Real 3D goes on

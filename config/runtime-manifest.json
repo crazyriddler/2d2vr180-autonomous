@@ -5,7 +5,7 @@
   "runtimes": [
     {
       "id": "photo-cu128",
-      "description": "Single-image backends: MoGe-2, Depth-Anything-V2 (RGB-D splats) and Apple SHARP",
+      "description": "Single-image backends: MoGe-2 / MoGe-3, Depth-Anything-V2 (RGB-D splats) and Apple SHARP",
       "python": "3.12",
       "torch_index": "https://download.pytorch.org/whl/cu128",
       "min_driver": "570.00",
@@ -27,9 +27,14 @@
         {
           "name": "sharp",
           "url": "https://github.com/apple/ml-sharp/archive/aed6527499ef91cba3b54c18d49a870f25947190.zip"
+        },
+        {
+          "name": "flex_gemm",
+          "url": "https://github.com/JeffreyXiang/FlexGEMM/archive/b2fadb29d41846c7981ade6801ffc689fae119cf.zip",
+          "copy_package": "flex_gemm"
         }
       ],
-      "smoke_test": "import torch, transformers, moge.model.v2, sharp; print('cuda', torch.cuda.is_available())",
+      "smoke_test": "import torch, transformers, moge.model.v2, moge.model.v3, flex_gemm, triton, sharp; print('cuda', torch.cuda.is_available())",
       "lock": "locks/photo-cu128.txt",
       "local_versions": {
         "torch": "+cu128",

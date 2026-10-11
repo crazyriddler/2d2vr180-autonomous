@@ -52,9 +52,13 @@ class MultiViewBackend(Backend):
     # ------------------------------------------------------------------ run
     def run(self, inp: JobInput, ctx: BackendContext, options: dict, progress, cancel) -> BackendResult:
         frames = list(inp.frames)
+        fovs = list(options.get("hfov_list") or [])
+        fovs = (fovs + [None] * len(frames))[:len(frames)]
         ref = min(int(options.get("reference_frame_index", 0)), len(frames) - 1)
         frames.insert(0, frames.pop(ref))  # the reference view defines the scene frame
-        views = [{"path": str(p), "generated": False, "weight": 1.0} for p in frames]
+        fovs.insert(0, fovs.pop(ref))
+        views = [{"path": str(p), "generated": False, "weight": 1.0, **({"fov_x": f} if f else {})}
+                 for p, f in zip(frames, fovs)]
         return self.reconstruct(views, inp, ctx, options, progress, cancel)
 
     def score(self, views: list[dict], inp: JobInput, ctx: BackendContext, options: dict, progress, cancel,
@@ -80,6 +84,8 @@ class MultiViewBackend(Backend):
                "max_gaussians": cap, "mesh": bool(options.get("mesh", True))}
         if options.get("sh_degree") is not None:
             req["sh_degree"] = int(options["sh_degree"])
+        if options.get("photo_geometry"):        # the photo's geometry by MoGe-3 (rc48)
+            req["photo_geometry"] = str(options["photo_geometry"])
         if options.get("subject_mesh"):          # TRELLIS.2 complete subject (shape prior for the AI views)
             req.update(subject_mesh=str(options["subject_mesh"]), subject_mask=str(options["subject_mask"]))
         ctx.models.paths("vggt-1b")  # clear error when missing

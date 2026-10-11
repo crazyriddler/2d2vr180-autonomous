@@ -49,7 +49,9 @@ class _RGBDBackend(Backend):
         model_id = self.model_ids(options)[0]
         geo = inp.work_dir / "geometry"
         geo.mkdir(parents=True, exist_ok=True)
-        images = [{"path": str(p), "out": str(geo / f"{Path(p).stem}.npz")} for p in inp.frames]
+        fov = options.get("hfov_deg") if len(inp.frames) == 1 else None    # one photo: its EXIF lens
+        images = [{"path": str(p), "out": str(geo / f"{Path(p).stem}.npz"), **({"fov_x": fov} if fov else {})}
+                  for p in inp.frames]
         req = self._request(ctx, options, images)
         req["allow_cpu"] = bool(getattr(ctx, "allow_cpu", False))
         out = run_worker(ctx.runtimes.python(self.runtime_id), self.worker_script, req, inp.work_dir / "worker",

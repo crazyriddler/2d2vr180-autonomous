@@ -469,3 +469,42 @@ def test_real3d_uses_the_complete_subject_when_trellis2_is_installed(ctx, rtx408
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     assert mv["subject_mesh"].endswith("subject.npz") and mv["subject_mask"].endswith("subject_mask.png")
     assert {m["id"] for m in rep["models"]} >= set(SUBJECT_MODELS)
+
+
+def test_the_photos_real_lens_reaches_the_reconstruction(ctx, rtx4080, tmp_path, monkeypatch):
+    """The job works on PNG copies of the photo (no EXIF): the field of view must be read from the
+    original file and travel with the photo's view (rc47 found it was silently lost)."""
+    from PIL import Image
+
+    from conftest import install_fake_model, synthetic_image
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    exif = Image.Exif()
+    exif.get_ifd(0x8769)[0xA405] = 26
+    p = tmp_path / "phone.jpg"
+    Image.fromarray(synthetic_image(seed=3)).save(p, exif=exif)
+    job, rep, _ = run_job(ctx, rtx4080, p, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert 55 < mv["images"][0]["fov_x"] < 75 and "fov_x" not in mv["images"][1]
+
+
+def test_real3d_takes_the_photos_geometry_from_moge3_when_installed(ctx, rtx4080, photo, monkeypatch):
+    from conftest import FAKE_WORKER, install_fake_model
+    from twod2vr180.backends.generative import MOGE3, GenerativeSceneBackend
+
+    _fake_generative(monkeypatch)
+    monkeypatch.setattr(GenerativeSceneBackend, "geometry_script", str(FAKE_WORKER))
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert rep["status"] == "succeeded" and "photo_geometry" not in mv        # not installed: MoGe-2 path
+    install_fake_model(ctx.models, MOGE3)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    assert mv["photo_geometry"].endswith("photo.npz") and Path(mv["photo_geometry"]).exists()
+    assert MOGE3 in {m["id"] for m in rep["models"]}

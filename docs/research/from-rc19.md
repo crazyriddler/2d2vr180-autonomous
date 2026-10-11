@@ -74,6 +74,12 @@ consistent geometry all around.
   shape error: a wrong FOV stretches or flattens the whole scene in depth.
 - **HunyuanWorld-Mirror** (Tencent, Oct 2025) takes camera, intrinsics and depth priors and outputs Gaussians.
   Its licence excludes the EU (the owner is in Spain); not used.
+- **MoGe-3 ViT-L** (Microsoft, MIT, July 2026; review of October 2026) — successor of MoGe-2 with finer
+  geometry, better focal estimation and metric scale; same `fov_x` input, plus refinement steps. It needs
+  FlexGEMM (sparse convolution); its Triton kernels run on Windows through `triton-windows`, so no compiled
+  extension is needed. Used from rc48 for the photo in Real 3D (depth prior, metric scale, FOV without EXIF);
+  MoGe-2 remains the fallback and the per-view prior for the AI views. The ViT-G variant (5 GB) is not used:
+  the gain over ViT-L is small for the VRAM it takes next to the rest of the pipeline.
 
 ### 3.4 Training settings (few views, 3DGS)
 
@@ -104,6 +110,8 @@ consistent geometry all around.
 | rc43 | Per-view colour correction of the AI views (exposure / white balance), colours only | No blotches from the views' colour drift |
 | rc44 | Best-view colour baking after training | Texture as sharp as the best view of each surface, no averaging noise |
 | rc45 | Optional TRELLIS.2 "complete subject" (Windows fork, shape only): aligned to the photo (silhouette + MoGe-2 + ICP), its depth replaces the AI views' monocular priors on the subject, its surface joins the initial points | Consistent shape all the way round, with a real back |
+| rc47 | Precise distances: EXIF intrinsics for the photo's camera, metric scale from real photos only, robust scale + shift alignment of every view's depth with rejection in AI views, a weak depth prior for the photo until the end | Less stretching/flattening; AI views cannot bend the shape |
+| rc48 | MoGe-3 for the photo's depth, scale and FOV; EXIF focal length carried from the original file (it was lost on the PNG copies) | Finer, better-scaled geometry of the real photo |
 | later | Qwen-Image-2.1 (confirmed on the resolver 2026-10-11: 7B transformer + 8B text encoder, research licence; official Turbo variant; akhaliq Multiple-Angles LoRA) + its angles LoRA; Difix3D+ repair pass | Higher-resolution, more consistent views |
 | after the image work | **Video → 4D Gaussian Splatting** with a player for 4D splats; the current VR180 video path is removed and rebuilt on top of 4DGS (owner, October 2026: today a video only yields one frame) | Moving scenes in 3D/VR |
 

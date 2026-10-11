@@ -1,4 +1,30 @@
-# 2D2VR180 1.0.0-rc47 — More precise distances
+# 2D2VR180 1.0.0-rc48 — MoGe-3 for your photo's geometry
+
+Reviewing which method computes distances most precisely today on an RTX 4080 found one better than
+MoGe-2: **MoGe-3** (Microsoft, MIT licence). Real 3D now uses it for your photo.
+
+## What's new in rc48
+
+- **MoGe-3 measures your photo.** It gives sharper depth, a better field of view and a better real-world
+  scale than MoGe-2. In Real 3D, it now provides three things for your photo:
+  - its depth, which guides the 3D shape;
+  - its real-world size (the metric scale of the whole scene);
+  - its field of view, when the photo has no EXIF focal length.
+  - It runs in the photo engine (about 1.5 GB download, about 6 GB of VRAM, a few seconds). Install
+    **MoGe-3 Large** in Models; it is recommended. Without it, Real 3D uses MoGe-2 as before. If MoGe-3 fails,
+    the job continues with MoGe-2 and the log says why.
+  - The report lists it in the models used.
+- **Your camera's real lens now actually reaches the 3D.** rc47 meant to use the EXIF focal length, but the
+  job works on PNG copies of your photo, which have no EXIF, so it was silently lost. The focal length is now
+  read from the original file and travels with the photo through the whole pipeline.
+- **Better focal length from EXIF.** The 35 mm-equivalent focal length is converted with the diagonal
+  convention used by camera makers, after rotating the photo upright, and cropped photos are detected.
+
+## Updating
+
+The photo engine is reinstalled once (it gains the FlexGEMM and Triton kernels MoGe-3 needs).
+
+## rc47: More precise distances
 
 A review of how distances are computed for the 3D found four weak points. All four are fixed in this
 version.
@@ -23,11 +49,6 @@ version.
 - **Your photo keeps guiding the depth until the end.** The depth guidance used to fade out completely at 60 %
   of the training, after which only colour shaped the 3D, and areas without texture (walls, smooth skin)
   could drift. Now your photo keeps a weak depth guidance to the end; the AI views still fade out as before.
-
-## Next
-
-MoGe-3 (Microsoft, July 2026) is the successor of MoGe-2, with finer geometry. It needs FlexGEMM built for
-Windows; that build is being prepared in CI for rc48.
 
 ## rc46: Cleanup: fewer engines, clearer menus
 

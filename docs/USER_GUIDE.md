@@ -32,6 +32,7 @@ need.
 |---|---|---|
 | Photo engine | every single-photo reconstruction, fixed-camera video, GPU VR180 renderer | ~5.5 GB |
 | MoGe-2 Large / Small | metric depth for photos and video; real-world scale for the multi-view engine | 1.3 / 0.14 GB |
+| MoGe-3 Large | Real 3D: depth, field of view and real-world scale of your photo (MoGe-2 is used without it) | 1.5 GB |
 | Apple SHARP | best direct single-photo 3D for Quick 3D (**research licence**) | ~2.5 GB |
 | Multi-view engine + VGGT-1B | Real 3D, several photos of one place, videos where the camera moves (**non-commercial**) | ~7 GB + 5 GB |
 | Generative engine + LaMa | the runtime for Qwen-Image-Edit and Wan 2.2; AI filling of the gaps behind objects in VR180 | ~6 GB + 0.2 GB |
@@ -91,7 +92,7 @@ When a job finishes, **Results** shows it. From there you can:
 | Input | What happens |
 |---|---|
 | Photo | Single-image 3D (SHARP if installed and allowed, otherwise MoGe-2, otherwise Depth-Anything). |
-| Photo + AI views (Real 3D) | Qwen-Image-Edit draws the other angles (Wan 2.2 if Qwen is not installed); VGGT places every view in 3D, MoGe-2 gives real-world scale and depth, TRELLIS.2 (if installed) the subject's complete shape; one 3D splat is trained on the photo and the views, and its colours are finally taken from the view that sees each surface best. |
+| Photo + AI views (Real 3D) | Qwen-Image-Edit draws the other angles (Wan 2.2 if Qwen is not installed); VGGT places every view in 3D, MoGe-3 (or MoGe-2) gives your photo's real-world scale and depth, TRELLIS.2 (if installed) the subject's complete shape; one 3D splat is trained on the photo and the views, and its colours are finally taken from the view that sees each surface best. |
 | Several photos | Multi-view engine: VGGT finds where each photo was taken, MoGe-2 gives real-world scale, a 3D Gaussian splat is trained on all photos. |
 | Video, camera moves | Multi-view engine on up to 80 keyframes of the whole video. |
 | Video, fixed camera, people/animals move | Each frame is reconstructed (depth stabilised over time) → a VR180 video of the motion, optional 4D sequence. |

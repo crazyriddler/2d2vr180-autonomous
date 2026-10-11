@@ -29,6 +29,9 @@ COMPONENTS: list[Component] = [
     Component("model-moge-l", "MoGe-2 Large — quality metric depth", "model", "moge-2-vitl-normal",
               "Quality mode for photos and fixed-camera video (metric scale, textured mesh); also gives the "
               "multi-view engine its real-world scale.", True, ("engine-photo",)),
+    Component("model-moge3", "MoGe-3 Large — the photo's geometry for Real 3D", "model", "moge-3-vitl",
+              "Sharper depth, field of view and real-world scale of your photo for Real 3D (MIT). Without it "
+              "Real 3D uses MoGe-2.", True, ("engine-photo",)),
     Component("model-moge-s", "MoGe-2 Small — fast metric depth", "model", "moge-2-vits-normal",
               "Fast mode for photos and fixed-camera video.", True, ("engine-photo",)),
     Component("model-da2", "Depth-Anything-V2 Small — commercial-safe depth", "model", "depth-anything-v2-small",
