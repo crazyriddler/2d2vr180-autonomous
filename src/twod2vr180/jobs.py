@@ -475,9 +475,9 @@ class JobRunner:
                 "renderer": "cpu-reference (opaque isotropic splats)", "resolution": [w, h]}
 
     def _stereo_frames(self, job: Job, scene, scene_ply: Path, so, heads: list, emit, lo: float, hi: float,
-                       warnings: list, check_cancel, label: str, s4=None, frame_ids: list | None = None):
+                       warnings: list, check_cancel, label: str, s4=None, times: list | None = None):
         """Yield StereoFrames for the given head poses, on the GPU (gsplat) when requested and available,
-        otherwise (or on failure) on the CPU. 4D scenes (``s4``): head i shows frame ``frame_ids[i]``."""
+        otherwise (or on failure) on the CPU. 4D scenes (``s4``): head i shows the scene at ``times[i]``."""
         from .gpu_render import GpuSplatRenderer, gpu_renderer_available
         from .vr180 import render_stereo
 
@@ -489,10 +489,9 @@ class JobRunner:
             use_gpu = ok
             if not ok and opts.renderer == "gpu":
                 warnings.append(f"GPU renderer unavailable ({why}); used the CPU reference renderer.")
-        dyn = times = None
+        dyn = None
         if s4 is not None:
-            frame_ids = frame_ids or [0] * n
-            times = [s4.time_of(k) for k in frame_ids]
+            times = times or [s4.time_of(0)] * n
             dyn = Path(job.dir / "export" / "_2d2vr180" / "dynamic.npz")
         if use_gpu:
             gpu = GpuSplatRenderer(self.ctx, job.dir / "gpu_render")
@@ -514,7 +513,7 @@ class JobRunner:
         for i, h in enumerate(heads):
             check_cancel()
             emit("progress", value=lo + (hi - lo) * i / max(n, 1), message=f"{label} {i + 1}/{n}")
-            yield render_stereo(scene if s4 is None else s4.frame(frame_ids[i]), so, head_c2w=h)
+            yield render_stereo(scene if s4 is None else s4.at(times[i]), so, head_c2w=h)
 
     def _vr180(self, job: Job, scene, inp: JobInput, result: BackendResult, kind: str, emit, warnings,
                check_cancel, s4=None, ref_index: int = 0) -> dict:
@@ -540,7 +539,8 @@ class JobRunner:
             so = self._stereo_options(opts, layout, opts.eye_resolution)
             lo = 0.75 + 0.05 * i
             fr = next(self._stereo_frames(job, scene, result.scene_ply, so, [head], emit, lo, lo + 0.05,
-                                          warnings, check_cancel, f"VR180 {layout.upper()} still", s4, [ref_index]))
+                                          warnings, check_cancel, f"VR180 {layout.upper()} still", s4,
+                                          [s4.time_of(ref_index)] if s4 is not None else None))
             if opts.fill_holes and opts.ai_hole_fill:
                 self._ai_fill(job, [fr], emit, lo + 0.04, warnings)
             saved = save_stereo_image(fr, so, vr_dir, job.input.stem)
@@ -584,28 +584,39 @@ class JobRunner:
         return StereoOptions(layout=layout, projection=projection or opts.projection, eye_resolution=res,
                              eye_separation_m=opts.eye_separation_m, fill_holes=opts.fill_holes)
 
+    VIDEO4D_FPS = 24.0           # smooth 4D scenes are rendered at this rate (they exist between frames)
+
     def _video4d(self, job, scene, result, s4, emit, check_cancel, ffmpeg, warnings) -> dict:
-        """VR180 video of a 4D scene: every frame rendered from where it was filmed (camera path smoothed
-        and levelled; a fixed camera stays put), the background together with what moved at that moment."""
+        """VR180 video of a 4D scene from where it was filmed (camera path smoothed and levelled; a fixed
+        camera stays put), the background together with what moved at that moment. A scene whose moving
+        parts move smoothly is rendered at 24 fps (camera and time interpolated); a per-frame one at the
+        rate its frames were taken."""
         from .align import level_c2w, smooth_c2ws
+        from .render import interpolate_poses
         from .vr180 import encode_video, output_suffix
 
         opts = job.options
         so = self._stereo_options(opts, opts.layouts[0], opts.video_eye_resolution, "equirect180")
         up = getattr(self, "_up", None)
         fixed = s4.meta.get("camera_motion") == "fixed"
+        smooth = s4.meta.get("playback") == "continuous"
         c2ws = [c.c2w for c in s4.cameras] or [np.eye(4)] * s4.frames
-        heads = [c2ws[0]] * s4.frames if fixed else smooth_c2ws(c2ws, sigma=max(1.0, s4.fps / 4))
+        path = [c2ws[0]] * s4.frames if fixed else smooth_c2ws(c2ws, sigma=max(1.0, s4.fps / 4))
+        fps = max(self.VIDEO4D_FPS, s4.fps) if smooth else s4.fps
+        n_out = max(1, int(round(s4.duration_s * fps))) if smooth else s4.frames
+        times = [(k + 0.5) / n_out for k in range(n_out)]
+        heads = path if n_out == len(path) else interpolate_poses(path, n_out)
         if up is not None:
             heads = [level_c2w(h, up) for h in heads]
         side = opts.video_eye_resolution
         w, h = (2 * side, side) if so.layout == "sbs" else (side, 2 * side)
         frames = (fr.image for fr in self._stereo_frames(job, scene, result.scene_ply, so, heads, emit, 0.85, 0.99,
-                                                          warnings, check_cancel, "VR180 4D video", s4,
-                                                          list(range(s4.frames))))
-        meta = encode_video(frames, w, h, s4.fps, job.dir / "export" / "vr180" /
+                                                          warnings, check_cancel, "VR180 4D video", s4, times))
+        meta = encode_video(frames, w, h, fps, job.dir / "export" / "vr180" /
                             f"{job.input.stem}_4d{output_suffix(so)}.mp4", so, ffmpeg)
-        meta["method"] = ("4D scene: the still background (trained once from all frames) with the moving parts of "
-                          "each frame, rendered from " + ("the fixed camera position" if fixed else
-                                                          "the smoothed, levelled camera path"))
+        meta["method"] = ("4D scene: the still background (trained once from all frames) with "
+                          + ("the moving parts moving smoothly between frames" if smooth else
+                             "the moving parts of each frame")
+                          + ", rendered from " + ("the fixed camera position" if fixed else
+                                                  "the smoothed, levelled camera path"))
         return meta

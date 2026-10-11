@@ -171,6 +171,23 @@ def test_dynamic_video_becomes_a_4d_scene_and_a_4d_vr180_video(ctx, rtx4080, vid
     assert (job.dir / "export" / "_2d2vr180" / "moving_preview.png").exists()
 
 
+def test_smooth_4d_motion_plays_continuously_and_renders_vr180_at_24_fps(ctx, rtx4080, videos, monkeypatch):
+    from twod2vr180.scene4d import Scene4D
+
+    monkeypatch.setenv("FAKE_4D_MOTION", "1")
+    job, rep, _ = run_job(ctx, rtx4080, videos["dynamic"], mode="fast", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    req = json.loads((job.dir / "worker" / "fake_video4d_worker_request.json").read_text())
+    assert req["motion"] is True and req["motion_steps"] == 2000
+    assert rep["backend"]["extra"]["moving_model"] == "motion"
+    s4 = Scene4D.load(Path(rep["outputs"]["scene4d"]))
+    assert s4.meta["playback"] == "continuous" and s4.dynamic.motion is not None
+    a, b = s4.dynamic.at(0.25).means[:, 0].mean(), s4.dynamic.at(0.75).means[:, 0].mean()
+    assert b > a + 0.1                                               # the box travels between frames
+    vid = rep["outputs"]["vr180"]["videos"][0]
+    assert vid["fps"] == 24.0 and vid["frames"] == 72 and "smoothly" in vid["method"]
+
+
 def test_video_options_choose_the_part_of_the_video(ctx, rtx4080, videos):
     job, rep, _ = run_job(ctx, rtx4080, videos["dynamic"], mode="fast", layouts=["sbs"], renderer="cpu",
                           vr180=False, video_seconds=1.0, video_fps=5.0, video_start_s=1.0)

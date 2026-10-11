@@ -10,8 +10,10 @@ All frames at a fixed rate →
   the depth of every frame is aligned again on its still pixels only (movers no longer bias it) →
   background: one 3D Gaussian splat trained on all frames with the moving pixels left out, so what a
   passer-by hides in one frame is filled in from the others →
-  moving parts: per frame, splats from that frame's aligned depth, in the same world, visible only at
-  that frame's time (front surface: what the camera saw) →
+  moving parts: Gaussians that live for a while and move (motion_trainer.py), seeded from the moving
+  splats of every second frame and optimised on all frames in front of the background - smooth at any
+  frame rate; if that fails, per-frame splats visible only at their frame's time (front surface: what
+  the camera saw) →
   background.ply (+ provenance), dynamic.npz (scene4d.DynamicSplats layout), cameras.json (one camera
   per frame), a TSDF mesh of the background and a preview of what was found to move.
 
@@ -19,7 +21,7 @@ Request:
   {"frames": ["frame_00001.png", ...], "fps": 12.0, "output_dir": "...", "vggt_dir": "...",
    "moge_path": ".../model.pt", "max_side": 960, "steps": 9000, "max_gaussians": 1500000,
    "fg_budget": 40000, "camera": "auto" | "fixed" | "moving", "mask_offsets_s": [0.5, 1.5, 3.0],
-   "mesh": true}
+   "motion": true, "motion_steps": 4000, "keyframe_stride": 2, "mesh": true}
 Coordinates: OpenCV, scene frame = the first frame's camera.
 """
 
@@ -270,6 +272,44 @@ def mask_preview(imgs, masks, path, count=6):
     Image.fromarray(np.concatenate(tiles, 1)).save(path)
 
 
+def moving_gaussians(bg_params, train_imgs, c2ws, Ks_train, Ks, imgs, depth, moving, n, fps, budget, req, torch):
+    """The moving parts as Gaussians that live for a while and move (motion_trainer), seeded from the moving
+    splats of every few frames and optimised on all frames in front of the trained background."""
+
+    import numpy as np
+
+    import motion_trainer as mt
+
+    cfg = mt.MotionConfig(steps=int(req.get("motion_steps", 4000)),
+                          keyframe_stride=max(1, int(req.get("keyframe_stride", 2))))
+    keys = list(range(0, n, cfg.keyframe_stride))
+    if keys[-1] != n - 1:
+        keys.append(n - 1)
+    kfs = []
+    for k in keys:
+        sp = frame_splats(imgs[k], depth[k], moving[k], Ks[k], c2ws[k], budget)
+        if sp is not None:
+            kfs.append({**sp, "t": (k + 0.5) / n})
+    if not kfs:
+        raise ValueError("no moving pixels with depth")
+    progress(0.88, f"moving parts in 4D: following {len(kfs)} keyframes")
+    seed, graph = mt.seed_motion(kfs, cfg, max_speed=float(req.get("max_speed_m_s", 15.0)) * n / fps)
+    params, t_center = mt.to_params(seed, "cuda")
+    log(f"moving parts in 4D: {len(seed['means']):,} Gaussians from {len(kfs)} keyframes")
+    tw, th = train_imgs[0].shape[1], train_imgs[0].shape[0]
+    masks = [resize_nearest(m, tw, th) for m in moving]
+    deps = [resize_nearest(d, tw, th) for d in depth]
+    bg = {k: bg_params[k].detach() for k in ("means", "quats", "scales", "opacities", "sh0", "shN")}
+    hist = mt.train_motion(params, t_center, graph, train_imgs, c2ws, Ks_train, [(i + 0.5) / n for i in range(n)],
+                           masks, deps, cfg, background=bg, device="cuda",
+                           progress=lambda v, m: progress(0.88 + 0.06 * v, m))
+    out = mt.export_motion(params, t_center)
+    first = float(np.mean([h[1] for h in hist[:4]]))
+    last = float(np.mean([h[1] for h in hist[-4:]]))
+    log(f"moving parts in 4D: {len(out['means']):,} Gaussians kept; loss {first:.4f} → {last:.4f}")
+    return out
+
+
 # ------------------------------------------------------------------ worker
 def main(req):
     import numpy as np
@@ -486,14 +526,28 @@ def main(req):
     bg_path = os.path.join(out_dir, "background.ply")
     count = st.write_ply(params, bg_path, codes)
     log(f"background: {count:,} splats; first-frame PSNR on still pixels {ref_psnr:.2f} dB")
+    budget = int(req.get("fg_budget", 40000))
+
+    # ------------------------------------------------------------ moving parts: smooth 4D motion
+    dyn, moving_model = None, "per_frame"
+    if req.get("motion", True) and any(m.any() for m in moving):
+        try:
+            dyn = moving_gaussians(params, train_imgs, c2ws, Ks_arr, Ks, imgs, depth, moving, n, fps, budget, req,
+                                   torch)
+            moving_model = "motion"
+        except Exception as e:  # noqa: BLE001 - the per-frame splats below are the fallback
+            log(f"smooth 4D motion not used ({type(e).__name__}: {str(e).splitlines()[0][:200]}); "
+                "moving parts are rebuilt frame by frame")
+            dyn = None
+            torch.cuda.empty_cache()
     params = None
     torch.cuda.empty_cache()
 
-    # ------------------------------------------------------------ moving parts
-    progress(0.9, "moving parts, frame by frame")
+    # ------------------------------------------------------------ moving parts: per frame (fallback)
     parts = []
-    budget = int(req.get("fg_budget", 40000))
-    for i in range(n):
+    for i in range(n if dyn is None else 0):
+        if i == 0:
+            progress(0.9, "moving parts, frame by frame")
         sp = frame_splats(imgs[i], depth[i], moving[i], Ks[i], c2w[i], budget)
         if sp is None:
             continue
@@ -502,13 +556,14 @@ def main(req):
         sp["t_scale"] = np.full(m, 0.45 / n, np.float32)
         parts.append(sp)
     keys = ("means", "scales", "quats", "opacity", "colors", "t_center", "t_scale")
-    dyn = {k: (np.concatenate([p[k] for p in parts]) if parts else
-               np.zeros((0,) + ((3,) if k in ("means", "scales", "colors") else (4,) if k == "quats" else ()),
-                        np.float32)) for k in keys}
+    if dyn is None:
+        dyn = {k: (np.concatenate([p[k] for p in parts]) if parts else
+                   np.zeros((0,) + ((3,) if k in ("means", "scales", "colors") else (4,) if k == "quats" else ()),
+                            np.float32)) for k in keys}
+        log(f"moving parts: {len(dyn['means']):,} splats over {len(parts)} frames")
     dyn["provenance"] = np.full(len(dyn["means"]), INFERRED, np.uint8)
     dyn_path = os.path.join(out_dir, "dynamic.npz")
     np.savez(dyn_path, **dyn)
-    log(f"moving parts: {len(dyn['means']):,} splats over {len(parts)} frames")
 
     cams = [{"width": w, "height": h, "fx": float(Ks[i][0, 0]), "fy": float(Ks[i][1, 1]), "cx": float(Ks[i][0, 2]),
              "cy": float(Ks[i][1, 2]), "c2w": c2ws[i].tolist(), "file": os.path.basename(paths[i]),
@@ -532,6 +587,7 @@ def main(req):
     codes_np = codes.cpu().numpy()
     emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), metric=bool(scale),
          metric_scale_factor=scale, frames=n, fps=fps, camera_motion="fixed" if fixed else "moving",
+         moving_model=moving_model,
          moving_fraction=[round(x, 4) for x in frac], background_splats=count,
          moving_splats=int(len(dyn["means"])), reference_psnr_db=round(ref_psnr, 2), mesh=mesh_info,
          loss_history=hist[-20:],

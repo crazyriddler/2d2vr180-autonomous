@@ -48,7 +48,7 @@ Target: RTX 4080 16 GB, 32 GB RAM, Windows 11, everything local.
 |---|---|---|
 | 1 | **4D player:** the app's 3D viewer and the WebXR (VR) viewer play a 4D scene (play/pause, timeline, loop) | **Done in rc49.** `.splatv` (splaTV format) with our own WebGL2/WebXR player derived from splaTV (MIT); the app's viewer plays the same scene with a timeline |
 | 2 | **Static background + moving foreground** in one world frame | **Done in rc49**, with VGGT instead of MegaSaM (see below) |
-| 3 | **True 4DGS for the moving parts:** evaluate 4DGT (feed-forward) and Shape of Motion (optimised) on the RTX 4080 | Next. The player and `.splatv` already carry per-splat motion (polynomial + rotation velocity + temporal opacity), so moving Gaussians need no new format |
+| 3 | **Moving Gaussians for the moving parts** | **rc50: Spacetime-Gaussian optimisation** (workers/motion_trainer.py, below). 4DGT was ruled out for now: flash-attn + apex (no practical Windows build), >= 16 GB *free* VRAM, inputs prepared from Aria recordings, non-commercial weights (14.5 GB). Shape of Motion needs 2D tracks (TAPIR / CoTracker), SAM masks and 20-60 min per clip: the next candidate for real volume (motion bases + tracks), after measuring rc50 on real footage |
 | 4 | **New VR180 video** from the 4D scene; old per-frame VR180 path removed | **Done in rc49** |
 
 ### What rc49 builds (workers/video4d_worker.py)
@@ -77,6 +77,21 @@ Target: RTX 4080 16 GB, 32 GB RAM, Windows 11, everything local.
    the moving masks.
 8. **VR180 video:** each frame rendered (gsplat, background + that frame's moving splats) from the levelled
    camera of that frame; a moving camera's path is smoothed (Gaussian, σ = fps / 4 frames).
+
+### rc50: smooth motion (workers/motion_trainer.py)
+
+- Seeds: the moving splats of every second frame (and the last). Each Gaussian lives about one keyframe
+  interval either side of its keyframe (temporal opacity), with a velocity from where its group went:
+  groups are separated by DBSCAN, moved centre to centre, refined by translation-only ICP, then matched
+  point by point (matches farther than 3x the point spacing are ignored). Monocular photometric optimisation
+  alone does not find the motion from zero velocity (verified on a synthetic test), so this seed is what
+  makes it work; Shape of Motion uses 2D tracks for the same reason.
+- Optimised on every frame, background fixed and drawn together: L1 + SSIM on the moving pixels (others
+  weighted 0.2), relative depth L1 on the moving pixels, local rigidity (8 neighbours from the seed keep
+  their distances at any time), small accelerations. Parameters: position, velocity, acceleration,
+  rotation + angular velocity, scale, opacity, colour, temporal scale. 2000 / 4000 / 6000 steps by mode.
+- Output in the .splatv motion layout (velocity, acceleration, cubic term 0); the scene plays continuously
+  and the VR180 video is rendered at 24 fps. Falls back to per-frame splats on any failure.
 
 Not yet measured on the RTX 4080: speed, VRAM, mask quality on real footage (shadows, reflections, lighting
 changes), and pose stability on videos where most of the image moves.

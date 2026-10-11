@@ -76,6 +76,17 @@ def _red_x(pg) -> float:
     return float(np.nonzero(red)[1].mean())
 
 
+def _settled_red_x(pg, timeout=8.0) -> float:
+    """The square's position once the page has re-sorted and redrawn (software GL is slow)."""
+    t0, last = time.time(), None
+    while True:
+        time.sleep(0.4)
+        x = _red_x(pg)
+        if last is not None and abs(x - last) < 1.0 or time.time() - t0 > timeout:
+            return x
+        last = x
+
+
 def test_player_page_is_the_4d_player_and_loads(player):
     assert "player4d.html" in player.url_used
     assert player.errors == []
@@ -88,8 +99,7 @@ def test_each_frame_shows_its_own_splats(player):
     xs = []
     for k in (0, 5):
         player.evaluate(f"player.play.clock = ({k} + 0.5) / player.play.fps")
-        time.sleep(1.0)
-        xs.append(_red_x(player))
+        xs.append(_settled_red_x(player))
     assert xs[1] - xs[0] > 150                     # the square moved 2 m to the right
 
 
@@ -100,3 +110,38 @@ def test_frame_step_keys_and_timeline(player):
     time.sleep(0.3)
     assert player.evaluate("Math.floor(player.play.clock * player.play.fps)") == 2
     assert "frame 3/6" in player.evaluate("document.getElementById('time').textContent")
+
+
+def test_moving_gaussians_play_continuously(player, tmp_path):
+    """Gaussians with a velocity (smooth 4D motion) are drawn where their motion puts them at any time."""
+    from twod2vr180.scene import Camera
+    from twod2vr180.scene4d import DynamicSplats, Scene4D, per_frame_splats
+    from twod2vr180.vr_server import VRViewerServer
+
+    sq = per_frame_splats(_plane(1.5, [1, 0.1, 0.1], 20, 0.3, (-1.0, 0)), 0, 1)
+    sq.t_center[:] = 0.5
+    sq.t_scale[:] = 100.0
+    sq.motion = np.zeros((len(sq), 9), np.float32)
+    sq.motion[:, 0] = 2.0                              # 2 m over the clip: x = -1 + 2 (t - 0.5)
+    s4 = Scene4D(_plane(3.0, [0.2, 0.4, 0.9], 60, 2.0), DynamicSplats.concat([sq]), 6.0, 6,
+                 [Camera(160, 120, 150, 150, 80, 60)] * 6, {"playback": "continuous"})
+    out = s4.save(tmp_path)
+    srv = VRViewerServer()
+    pg = player.context.browser.new_page(viewport={"width": 640, "height": 400})   # one Playwright session
+    try:
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(srv.share(Path(out["splatv"]), 2.0, "motion"))
+        pg.wait_for_function("window.player && window.player.play.frames === 6", timeout=60000)
+        pg.evaluate("document.getElementById('help').style.display = 'none'")
+        assert pg.evaluate("player.play.framesMode") is False
+        pg.keyboard.press(" ")
+        xs = []
+        for t in (0.3, 0.5, 0.7):                        # scene time = clock * fps / frames
+            pg.evaluate(f"player.play.clock = {t}")
+            xs.append(_settled_red_x(pg))
+        assert errors == []
+        assert xs[0] < xs[1] < xs[2] and xs[2] - xs[0] > 100
+    finally:
+        pg.close()
+        srv.stop()

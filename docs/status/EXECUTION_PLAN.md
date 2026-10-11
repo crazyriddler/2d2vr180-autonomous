@@ -22,7 +22,9 @@ Legend: ✅ done and tested here · 🟡 implemented, not verified on target har
   never run with the real models / GPU
 - 🟡 VR180 video from the 4D scene (GPU renderer draws the splats of each frame's time); old per-frame and
   camera-path VR180 code removed
-- ⬜ True 4DGS for the moving parts (4DGT / Shape of Motion evaluation)
+- 🟡 Moving parts as moving Gaussians (rc50, Spacetime-Gaussian optimisation seeded by group following; CPU-tested on
+  synthetic motion), continuous playback and 24 fps VR180
+- ⬜ Real volume for moving subjects (Shape of Motion-style motion bases + 2D tracks)
 
 ## Milestone 4 — viewer / export
 - ✅ PLY (INRIA 3DGS layout) + `.splat` + OBJ/MTL/texture; provenance sidecar; SHARP-style PLY import

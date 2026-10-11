@@ -64,6 +64,17 @@ def main(req):
         keys["t_scale"].append(np.full(k, 0.45 / n))
     shapes = {"means": (0, 3), "scales": (0, 3), "quats": (0, 4), "colors": (0, 3)}
     dyn = {k: (np.concatenate(v) if v else np.zeros(shapes.get(k, (0,)))).astype(np.float32) for k, v in keys.items()}
+    smooth = bool(req.get("motion")) and os.environ.get("FAKE_4D_MOTION") and len(keys["means"]) > 1
+    if smooth:     # "smooth motion": the first frame's movers travel to where the last frame's are
+        first, last = keys["means"][0], keys["means"][-1]
+        k = len(first)
+        dyn = {"means": first.astype(np.float32), "scales": keys["scales"][0].astype(np.float32),
+               "quats": keys["quats"][0].astype(np.float32), "opacity": keys["opacity"][0].astype(np.float32),
+               "colors": keys["colors"][0].astype(np.float32), "t_center": np.full(k, 0.5 / n, np.float32),
+               "t_scale": np.full(k, 10.0, np.float32), "omega": np.zeros((k, 4), np.float32)}
+        motion = np.zeros((k, 9), np.float32)
+        motion[:, :3] = (last.mean(0) - first.mean(0)) / ((n - 1) / n)
+        dyn["motion"] = motion
     dyn["provenance"] = np.ones(len(dyn["means"]), np.uint8)
     np.savez(os.path.join(out, "dynamic.npz"), **dyn)
     cams = []
@@ -82,6 +93,7 @@ def main(req):
                             "moving_preview": os.path.join(out, "moving_preview.png")},
          vram_peak_mib=None, metric=True, metric_scale_factor=1.0, frames=n, fps=req["fps"],
          camera_motion="moving" if moving else "fixed", moving_fraction=[round(x, 4) for x in fractions],
+         moving_model="motion" if smooth else "per_frame",
          background_splats=len(bg), moving_splats=int(len(dyn["means"])), reference_psnr_db=30.0, mesh=None,
          provenance={"observed": 0, "inferred": len(bg) + int(len(dyn["means"]))})
 

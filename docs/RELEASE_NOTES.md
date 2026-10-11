@@ -1,4 +1,37 @@
-# 2D2VR180 1.0.0-rc49 — Videos become 4D scenes
+# 2D2VR180 1.0.0-rc50 — Smooth movement in 4D videos
+
+In rc49 the people and animals that move in a video were rebuilt frame by frame, like a flip-book: a new set
+of splats every frame, with flicker between frames and nothing in between. Now they are **Gaussians that
+move**.
+
+## What's new in rc50
+
+- **Moving parts that move.** The moving parts of every second frame are the starting point. Each group
+  (a person, an animal) is followed to where it is in the next one: first as a whole, then point by point.
+  Then every Gaussian learns how it moves (speed, acceleration, turning) and for how long it is visible. The
+  optimisation uses every frame, in front of the trained background, and looks at:
+  - the colour of the moving pixels;
+  - their depth;
+  - local rigidity: neighbours keep their distances, so a body does not tear apart;
+  - smooth acceleration.
+- **Smooth everywhere.**
+  - The 4D player plays continuously, not frame by frame.
+  - The VR180 video is rendered at 24 fps, with the camera and the movement interpolated between the
+    video's frames, even when the video was sampled at 8–15 per second.
+  - The 4D file is smaller, because the same Gaussians serve several frames.
+- **Safe fallback.** If the motion optimisation fails (for example, out of memory), the moving parts are
+  rebuilt frame by frame as in rc49, and the log says why.
+- Still the side the camera saw. A person who turns round shows their other side only while it faces the
+  camera.
+
+## Not yet tested on your hardware
+
+The motion optimisation was tested on the CPU on a synthetic moving object. Seeded from every second
+frame, it halves the error of the frames in between and learns the right speed. The whole worker was run end
+to end with stand-ins for the models. Speed and quality on real videos on the RTX 4080 are still to be
+measured.
+
+## rc49: Videos become 4D scenes
 
 Until now a video only really used one frame. From this version every video becomes a **4D Gaussian splat
 scene**: 3D that changes over time. It comes with a player for the app and for VR, and the VR180 video is

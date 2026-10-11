@@ -26,6 +26,7 @@ QUALITY = {
     "auto": (12.0, 12.0, 9000, 960, 40_000, 1_500_000),
     "quality": (15.0, 15.0, 14000, 1280, 60_000, 2_000_000),
 }
+MOTION_STEPS = {"fast": 2000, "auto": 4000, "quality": 6000}   # smooth 4D motion of the moving parts
 
 
 def video_plan(mode: str, fps: float | None = None, seconds: float | None = None) -> tuple[float, float]:
@@ -72,7 +73,8 @@ class Video4DBackend(Backend):
                "vggt_dir": str(ctx.models.model_dir("vggt-1b")),
                "moge_path": str(ctx.models.paths("moge-2-vitl-normal")["model.pt"]),
                "max_side": int(options.get("max_side", side)), "steps": int(options.get("train_steps", steps)),
-               "max_gaussians": cap, "fg_budget": fg_budget, "camera": hint, "mesh": bool(options.get("mesh", True))}
+               "max_gaussians": cap, "fg_budget": fg_budget, "camera": hint, "mesh": bool(options.get("mesh", True)),
+               "motion": bool(options.get("motion", True)), "motion_steps": MOTION_STEPS.get(mode, 4000)}
         ctx.models.paths("vggt-1b")  # clear error when missing
         out = run_worker(ctx.runtimes.python(self.runtime_id), self.worker_script, req, inp.work_dir / "worker",
                          progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id), log=options.get("log"),
@@ -84,9 +86,11 @@ class Video4DBackend(Backend):
         bg = read_gaussian_ply(Path(files["background"]))
         bg.cameras = cams[:1]
         bg.metric_scale = bool(res.get("metric"))
+        smooth = res.get("moving_model") == "motion"
         s4 = Scene4D(bg, DynamicSplats.load(Path(files["dynamic"])), float(res.get("fps", fps)),
                      int(res.get("frames", len(cams))), cams,
-                     {"playback": "frames", "camera_motion": res.get("camera_motion"), "source": inp.path.name})
+                     {"playback": "continuous" if smooth else "frames", "camera_motion": res.get("camera_motion"),
+                      "moving_model": res.get("moving_model", "per_frame"), "source": inp.path.name})
         exp = inp.work_dir / "export"
         saved = s4.save(exp)
         splat = write_splat(bg, exp / "scene.splat")
@@ -105,8 +109,8 @@ class Video4DBackend(Backend):
                 + ("one viewpoint (fixed camera), its depth is INFERRED; what moving people/objects hid in one "
                    "frame was filled in from other frames" if fixed else
                    f"splats seen from two or more camera positions are OBSERVED ({p.get('observed', 0):,})")
-                + f". Moving parts ({res.get('moving_splats', 0):,} splats): INFERRED per frame, the side the camera "
-                "saw only.")
+                + f". Moving parts ({res.get('moving_splats', 0):,} splats): INFERRED, the side the camera saw only; "
+                + ("Gaussians that move smoothly between frames." if smooth else "rebuilt frame by frame."))
         warnings = []
         if not res.get("metric"):
             warnings.append("Metric scale could not be estimated; stereo depth may need the eye-separation setting.")
@@ -121,6 +125,7 @@ class Video4DBackend(Backend):
             cameras=[c.to_dict() for c in cams], metric_scale=bg.metric_scale, provenance_note=note,
             vram_peak_mib=res.get("vram_peak_mib"), worker_env=out["env"], models_used=models, warnings=warnings,
             extra={"scene4d": saved["scene4d"], "splatv": saved.get("splatv"), "frames": s4.frames, "fps": s4.fps,
+                   "moving_model": s4.meta["moving_model"],
                    "duration_s": round(s4.duration_s, 3), "camera_motion": res.get("camera_motion"),
                    "moving_fraction_mean": round(sum(moving) / len(moving), 4) if moving else 0.0,
                    "moving_fraction_max": round(max(moving), 4) if moving else 0.0,
