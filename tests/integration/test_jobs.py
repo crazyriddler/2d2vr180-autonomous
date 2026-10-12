@@ -402,8 +402,8 @@ def test_qwen_cannot_explore_falls_back_to_wan(ctx, rtx4080, photo, monkeypatch)
     assert rep["backend"]["extra"]["engine"] == "wan"
 
 
-@pytest.mark.parametrize("mode,n_cand", [("fast", 1), ("auto", 2), ("quality", 3)])
-def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypatch, mode, n_cand):
+@pytest.mark.parametrize("mode", ["fast", "auto", "quality"])
+def test_real3d_without_sharp_trains_the_three_views(ctx, rtx4080, photo, monkeypatch, mode):
     from conftest import install_fake_model
 
     _fake_generative(monkeypatch)
@@ -411,26 +411,87 @@ def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypat
         install_fake_model(ctx.models, mid)
     job, rep, _ = run_job(ctx, rtx4080, photo, mode=mode, generative="tri", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
+    assert "Apple SHARP is not installed" in (job.dir / "job.log").read_text(encoding="utf-8")
     gen = job.dir / "generated_views"
     calls = json.loads((gen / "stage_calls.json").read_text())
-    assert [c["stage"] for c in calls] == ["encode", "generate"]          # one round: fast (rc54)
+    assert [c["stage"] for c in calls] == ["encode", "generate"]          # one round: fast
     views = calls[1]["views"]
-    front = [(315, 0), (45, 0), (0, 30)] + ([] if mode == "fast" else [(0, -30)])
-    assert [(v["azimuth"], v["elevation"]) for v in views] == front        # in front of the subject only
+    # exactly 3 views in every mode, one attempt each (owner, rc55)
+    assert [(v["azimuth"], v["elevation"]) for v in views] == [(315, 0), (45, 0), (0, 30)]
     assert all(not v.get("refs") for v in views)                            # each drawn from the photo
-    assert all(c["candidates"] == n_cand and c["angles_strength"] > 0 for c in calls)
-    assert not (job.dir / "fake_score_calls.json").exists()                 # no separate scoring passes
+    assert all(c["candidates"] == 1 and c["angles_strength"] > 0 for c in calls)
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert len(mv["images"]) == 1 + len(front)
-    assert not mv["images"][0]["generated"]
-    # several candidates: the multi-view engine keeps the most rigid one of each view
-    assert all(len(v.get("candidates") or []) == (n_cand if n_cand > 1 else 0) for v in mv["images"][1:])
+    assert len(mv["images"]) == 4 and not mv["images"][0]["generated"]
+    assert all(not v.get("candidates") for v in mv["images"][1:])
     assert rep["backend"]["extra"]["assembly"] == "train"
-    # photo at its own detail, AI views at their native size, view-independent-ish colour (texture noise)
     photo_side = {"fast": 1280, "auto": 1600, "quality": 2048}[mode]
     assert mv["images"][0]["max_side"] == photo_side and all(v["max_side"] == 1328 for v in mv["images"][1:])
     assert mv["sh_degree"] == 1 and mv["steps"] == {"fast": 5000, "auto": 9000, "quality": 15000}[mode]
-    assert "subject_mesh" not in mv
+
+
+def _fake_sharp(ctx, monkeypatch):
+    from conftest import REPO, install_fake_model
+    from twod2vr180.backends.generative import GenerativeSceneBackend
+
+    monkeypatch.setattr(GenerativeSceneBackend, "sharp_script", str(REPO / "tests" / "fakes" / "fake_sharp_worker.py"))
+    install_fake_model(ctx.models, "sharp")
+
+
+def test_real3d_gives_the_photo_and_three_views_volume_with_sharp_and_joins_them(ctx, rtx4080, tmp_path,
+                                                                                  monkeypatch):
+    """The owner's design (rc55): 3 views, one attempt each; SHARP on the photo and the 3 views; one splat."""
+    from PIL import Image
+
+    from conftest import install_fake_model, synthetic_image
+    from twod2vr180.scene import read_gaussian_ply
+
+    _fake_generative(monkeypatch)
+    _fake_sharp(ctx, monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    exif = Image.Exif()
+    exif.get_ifd(0x8769)[0xA405] = 26                     # a phone's 26 mm lens
+    p = tmp_path / "phone.jpg"
+    Image.fromarray(synthetic_image(seed=3)).save(p, exif=exif)
+    job, rep, _ = run_job(ctx, rtx4080, p, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    log = (job.dir / "job.log").read_text(encoding="utf-8")
+    calls = json.loads((job.dir / "generated_views" / "stage_calls.json").read_text())
+    assert len(calls[1]["views"]) == 3 and calls[1]["candidates"] == 1
+    # SHARP ran once over the photo and the 3 views, each carrying the photo's lens for SHARP to read
+    sreq = json.loads((job.dir / "sharp_views" / "fake_sharp_request.json").read_text())
+    ins = sorted((Path(sreq["input_dir"])).iterdir())
+    assert [f.name for f in ins] == ["00.png", "01.png", "02.png", "03.png"]
+    for f in ins:
+        with Image.open(f) as im:
+            assert 24 < float(im.getexif().get_ifd(0x8769)[0x920A]) < 28
+    # the camera engine only placed the cameras: no training
+    assert (job.dir / "sharp_views" / "fake_poses_request.json").exists()
+    assert not (job.dir / "worker" / "fake_multiview_worker_request.json").exists() or \
+        "poses_npz" in json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
+    ex = rep["backend"]["extra"]
+    assert ex["assembly"] == "sharp" and ex["generated_views"] == 3 and ex["poses_from"] == "camera engine"
+    assert [r["view"] for r in ex["fusion"]] == ["photo", "45° left", "45° right", "high angle"]
+    assert len(ex["view_cameras"]) == ex["views_used"]
+    assert {"sharp", "vggt-1b"} <= {m["id"] for m in rep["models"]}
+    sc = read_gaussian_ply(job.dir / "export" / "scene.ply")
+    assert len(sc) >= 80 * 60 and len(sc.cameras) == 1
+    assert "SHARP lens: 2" in log and "photo EXIF" in log
+
+
+def test_real3d_with_sharp_when_the_camera_engine_fails_uses_the_requested_orbit(ctx, rtx4080, photo, monkeypatch):
+    from conftest import FAKE_WORKER, install_fake_model
+    from twod2vr180.backends.multiview import MultiViewBackend
+
+    _fake_generative(monkeypatch)
+    _fake_sharp(ctx, monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    monkeypatch.setattr(MultiViewBackend, "worker_script", str(FAKE_WORKER))     # answers with a bad request
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["extra"]["poses_from"] == "requested orbit"
+    assert "SHARP lens: 30 mm" in (job.dir / "job.log").read_text(encoding="utf-8")
 
 
 def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, photo, monkeypatch):

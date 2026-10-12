@@ -52,14 +52,17 @@ verified (SHA256) before use.
    photo alone), *360° capture* (more angles at once) or *Custom*. **Advanced options** show every setting:
    - **VR180 output** — layouts (side-by-side, top/bottom) and projection.
    - **One photo**
-     - **AI views** — *Real 3D* (the default) draws your subject from nearby angles, straight from your photo:
-       45° left, 45° right and from above (Auto and Quality add one from below). In Auto/Quality 2-3 candidates
-       per angle are made and the one that is most exactly your photo seen from there is kept. It is made for
-       looking around from the front (VR): no back is invented.
+     - **AI views** — *Real 3D* (the default) draws your subject from exactly 3 nearby angles, straight from
+       your photo and one attempt each: 45° left, 45° right and from above. Apple SHARP then gives your photo and
+       each view volume, and the four are joined into one 3D splat: your photo's splats exactly as SHARP made
+       them, and from each view only what your photo cannot show (the sides of the subject and what it hides),
+       placed with the camera engine (VGGT) and laid onto your photo's surfaces, its colours matched to your
+       photo. No training, so it is fast. It is made for looking around from the front (VR): no back is
+       invented. Without Apple SHARP installed, the photo and the views are reconstructed by training instead.
        *360° capture* draws 45°, 90°, 135°, 180°, 270°, overhead and from below at once (Quality adds 225°,
        315° and raised diagonals). *Explore the surroundings* (Wan 2.2) films the view around the photo's
-       position so a VR180 is filled. *Off* uses only what the photo shows. In every case the photo and the views
-       are reconstructed together into one trained 3D splat.
+       position so a VR180 is filled. *Off* uses only what the photo shows. These are reconstructed together with
+       the photo into one trained 3D splat.
      - **AI model for the views** — *Qwen-Image-Edit* (recommended) draws every angle as a sharp ~1 megapixel
        image; *Wan 2.2* films the camera moving (smoother, 704 px); *Automatic* uses Qwen when installed.
      - **Reconstruction engine** — *Automatic* picks the best one for the input.

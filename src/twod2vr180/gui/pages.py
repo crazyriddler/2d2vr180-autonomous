@@ -27,9 +27,10 @@ MODE_HELP = {
 # "What do you want to make?" — each preset sets the advanced reconstruction controls.
 PRESETS = {
     "real3d": ("Real 3D from one photo (recommended)",
-               "AI draws your subject from 3-4 nearby angles (45° to each side, from above and from below) and one 3D "
-               "splat is trained from your photo and those views: real depth and scale for looking around from the "
-               "front, as in VR. A few minutes. Needs Qwen-Image-Edit and the Multi-view engine."),
+               "AI draws your subject from 3 nearby angles (45° to each side and from above); Apple SHARP gives your "
+               "photo and each view volume and they are joined into one 3D splat: real depth for looking around "
+               "from the front, as in VR. A few minutes. Needs Qwen-Image-Edit, Apple SHARP and the Multi-view "
+               "engine."),
     "quick": ("Quick 3D",
               "Depth from the photo alone (MoGe-2 / SHARP). Seconds. Sharp from the front, nothing behind objects."),
     "around": ("360° capture (experimental)",
@@ -380,6 +381,12 @@ class CreatePage(QWidget):
                             else "Qwen-Image-Edit or Wan 2.2")
             if not all(m in ctx.models.entries and ctx.models.is_installed(m) for m in ("vggt-1b", "moge-2-vitl-normal")):
                 need.append("the multi-view models (VGGT, MoGe-2 Large)")
+            if self.preset() == "real3d" and not need:
+                from ..backends.generative import sharp_installed
+
+                if not sharp_installed(ctx):
+                    msgs.append("Real 3D works best with Apple SHARP installed (Components); without it the views "
+                                "are reconstructed by slower training.")
             if need:
                 msgs.append(f"'{PRESETS[self.preset()][0]}' needs {' and '.join(need)} — until they are installed, "
                             "Quick 3D is used.")

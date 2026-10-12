@@ -99,7 +99,7 @@
    "entry_point": "sharp predict -i DIR -o DIR -c sharp_2572gikvuh.pt -> <stem>.ply (OpenCV convention, sRGB SH DC)",
    "model_url": "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt",
    "gpu_smoke_test": "not run",
-   "integration": "backend 'sharp' (research profile only; user downloads weights after accepting the Apple license)"
+   "integration": "backend 'sharp' (Quick 3D) and Real 3D (rc55): SHARP on the photo and each of the 3 Qwen views, joined by src/twod2vr180/fusion.py; research profile only; user downloads weights after accepting the Apple license"
   },
   {
    "name": "longsplat",

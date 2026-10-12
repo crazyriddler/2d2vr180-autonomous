@@ -30,6 +30,16 @@ def main(req):
         json.dump(prev + [views], open(calls, "w"))
         emit("result", outputs={}, candidate_selection=sel, vram_peak_mib=None)
         return
+    if req.get("poses_npz"):       # SHARP fusion: cameras on a small orbit, a flat scene 3 m away
+        n = len(views)
+        c2ws = np.stack([orbit_c2w(np.array([0, 0, 3.0]), 3.0, -10 + 20 * i / max(n - 1, 1), 0) for i in range(n)])
+        c2ws = np.stack([np.linalg.inv(c2ws[0]) @ m for m in c2ws])
+        np.savez(req["poses_npz"], c2ws=c2ws, sizes=np.array([(64, 48)] * n),
+                 **{f"depth_{i}": np.full((48, 64), 1.5, np.float32) for i in range(n)})
+        with open(os.path.join(os.path.dirname(req["poses_npz"]), "fake_poses_request.json"), "w") as fh:
+            json.dump(req, fh)
+        emit("result", outputs={"poses": req["poses_npz"]}, views=n, vram_peak_mib=None)
+        return
     frames = [os.path.basename(v["path"]) for v in views]
     h, w, f = 90, 120, 100.0
     ys, xs = np.mgrid[0:h, 0:w]

@@ -39,7 +39,8 @@ COMPONENTS: list[Component] = [
               "commercial use.", False,
               ("engine-photo",)),
     Component("model-sharp", "Apple SHARP — best direct single-photo 3D (research only)", "model", "sharp",
-              "Feed-forward 3D Gaussians from one photo. Apple research licence: non-commercial.", True,
+              "Feed-forward 3D Gaussians from one photo: Quick 3D, and the volume of the photo and of each AI view "
+              "in Real 3D. Apple research licence: non-commercial.", True,
               ("engine-photo",)),
     # ---------------------------------------------------------------- multi-view
     Component("engine-video", "Multi-view and 4D video engine (several photos, videos)", "runtime", "recon3d-cu124",
@@ -60,11 +61,12 @@ COMPONENTS: list[Component] = [
               "surroundings for VR180, or for Real 3D when Qwen-Image-Edit is not installed. ~25 GB; needs ~32 GB "
               "of RAM.", False, ("engine-gen", "engine-video", "model-vggt", "model-moge-l")),
     Component("model-qwen", "Qwen-Image-Edit-2511 + Multiple-Angles — the views of Real 3D (Apache-2.0)", "model",
-              "qwen-image-edit-2511-q5", "Image model that redraws your photo from other camera angles (45°, 90°, "
-              "135°, the back, above, below) at about 1 megapixel. Real 3D, the recommended way to make 3D from one "
-              "photo, needs it. ~33 GB with its text encoder and LoRAs; needs ~32 GB of RAM.", True,
+              "qwen-image-edit-2511-q5", "Image model that redraws your photo from other camera angles at about 1 "
+              "megapixel. Real 3D, the recommended way to make 3D from one photo, draws 3 views with it and gives "
+              "them volume with Apple SHARP (installed with it). ~33 GB with its text encoder and LoRAs; needs "
+              "~32 GB of RAM.", True,
               ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning", "engine-video",
-               "model-vggt", "model-moge-l")),
+               "model-vggt", "model-moge-l", "model-sharp")),
     Component("model-qwen-base", "Qwen-Image-Edit-2511 text encoder and VAE (for Qwen views)", "model",
               "qwen-image-edit-2511-base", "Qwen2.5-VL-7B text/image encoder, VAE and configuration.", True,
               ("engine-gen",)),

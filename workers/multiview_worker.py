@@ -628,6 +628,17 @@ def main(req):
             f"EXIF {f:.1f}°")
     del model
     free(torch)
+    if req.get("poses_npz"):          # Real 3D by SHARP fusion: only the cameras and depth of each image
+        maps = {}
+        for i, im in enumerate(train_imgs):
+            h_i, w_i = im.shape[:2]
+            d, inside = vggt_on_image(depth[i], vin[i][1], h_i, w_i)
+            c, _ = vggt_on_image(conf[i], vin[i][1], h_i, w_i)
+            maps[f"depth_{i}"] = np.where(inside & (c > np.percentile(conf[i], 30)), d, np.nan).astype(np.float32)
+        np.savez(req["poses_npz"], c2ws=np.stack(c2w_v), sizes=np.array([(im.shape[1], im.shape[0])
+                                                                          for im in train_imgs]), **maps)
+        emit("result", outputs={"poses": req["poses_npz"]}, views=len(items), vram_peak_mib=vram_peak_mib(torch))
+        return
 
     scale = None
     fixed = {}

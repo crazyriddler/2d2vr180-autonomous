@@ -1,3 +1,51 @@
+# 2D2VR180 1.0.0-rc55 — Real 3D by Apple SHARP: the photo and 3 views given volume and joined
+
+Owner verdict on rc54: still worse than rc19. Owner design for rc55:
+- generate 3 and only 3 images, one attempt each, from the agreed angles (45° left, 45° right, from above);
+- give the photo and each of those images volume with Apple SHARP;
+- make the splat from those four;
+- make it the default.
+
+## How Real 3D works now
+
+1. **3 views.** Qwen-Image-Edit draws 45° left, 45° right and from above, straight from the photo. There is
+   one attempt per view in every mode: no candidates, no view from below.
+2. **SHARP on four images.** Apple SHARP runs once over the photo and the 3 views. SHARP reads the lens from
+   EXIF, so each image it gets carries the photo's real focal length. The app's working copy of the photo
+   is a PNG without EXIF; without a lens, SHARP assumes 30 mm.
+3. **Where each view was taken.** The camera engine (VGGT) poses the four images; only the poses are used,
+   with no training. Each view's SHARP splat is scaled so its depth matches the camera engine's, in the
+   photo's SHARP metres. Without the engine, the views start from the requested orbit around the subject,
+   trying both turning directions.
+4. **Laid onto the photo.** A coloured ICP fits a robust similarity, coarse to fine. Each view point is
+   matched to the nearby photo surface point that is closest in space and colour. Colour stops a view
+   sliding along flat surfaces. A fit that has to turn the camera more than 20° or resize the view more
+   than 1.5× is rejected. A view that still does not line up with the photo is left out, with a warning.
+5. **Only what the photo cannot show is added.**
+   - The photo's splats are kept exactly as SHARP made them.
+   - A view splat is dropped if the photo, or an earlier view, already has a surface there.
+   - It is also dropped if it would sit in front of what the photo sees, or if it is one of SHARP's
+     "rubber sheet" splats stretched across a depth edge of its own image.
+   - What remains is the sides of the subject and what it hides, labelled GENERATIVE.
+   - Each view's colours are matched to the photo, per-channel gain on the shared surfaces.
+6. **The default.** Real 3D is the default preset, and the SHARP path is the default inside it. Installing
+   Qwen-Image-Edit (the Real 3D component) now installs Apple SHARP too. Without SHARP, Real 3D falls back
+   to the rc54 training path, with a log line saying so.
+
+`run_report.json` records, per view:
+- where its pose came from;
+- the scale;
+- how far the refinement turned it;
+- how much of it lies on the photo's surfaces;
+- how many splats it adds or drops, and why;
+- its colour gain.
+
+New code:
+- `src/twod2vr180/fusion.py` (pure numpy, runs in the app);
+- a `poses_npz` mode in `workers/multiview_worker.py`;
+- `tests/unit/test_fusion.py`, with a synthetic box in front of a wall, views at the wrong scale, and both
+  pose sources.
+
 # 2D2VR180 1.0.0-rc54 — Real 3D: back to the front, faster and better than rc19
 
 Owner verdict on rc53's Real 3D: worse and much slower than before. It did make a back, but:

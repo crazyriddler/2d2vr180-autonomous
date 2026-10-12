@@ -12,6 +12,9 @@ Legend: ✅ done and tested here · 🟡 implemented, not verified on target har
 ## Milestone 2 — photo backend
 - 🟡 `moge_rgbd`: MoGe-2 point map → surface-aligned Gaussians + textured OBJ (conversion tested; model never run)
 - 🟡 `sharp`: Apple SHARP adapter (research profile only)
+- 🟡 Real 3D (rc55, default): 3 Qwen views (one attempt each) + SHARP on the photo and each view, joined by
+  `fusion.py` (VGGT poses or requested orbit, coloured ICP, photo-first dedup, rubber-sheet filter, colour gain).
+  Fusion unit-tested on synthetic scenes; job path tested with fake workers; not yet run on the RTX 4080
 
 ## Milestone 3 — video (rebuilt on 4D in rc49)
 - ✅ Video analysis: fixed vs moving camera (phase correlation), moving subjects, scene cuts, best frame

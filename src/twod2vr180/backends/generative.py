@@ -1,24 +1,33 @@
-"""Photo -> generated views from other angles -> one trained 3D Gaussian splat.
+"""Photo -> generated views from other angles -> one 3D Gaussian splat.
 
 Two generation engines:
   * Qwen-Image-Edit-2511 + Multiple-Angles LoRA (Alibaba Qwen / fal, Apache-2.0) - an image model that
     redraws the photo from a requested camera position; each view is a sharp ~1 MP image. Real 3D draws
-    3-4 views in front of the subject (45° each side, above, below), each straight from the photo;
+    exactly 3 views in front of the subject (45° to each side and from above), one attempt each;
   * Wan 2.2 Fun 5B Control-Camera (Alibaba PAI, Apache-2.0) - a video model that films camera moves
     starting at the photo (used to explore the surroundings for VR180, or when Qwen is not installed).
-The views and the photo are then reconstructed by the multi-view engine (VGGT cameras, MoGe-2 scale and
-depth priors, gsplat training). Photo pixels are INFERRED, the rest GENERATIVE.
+Real 3D (rc55, the owner's design): Apple SHARP gives the photo and each of the 3 views volume, and the
+four SHARP splats are joined into one (fusion.py) - the photo's exactly as SHARP made it, the views adding
+only what the photo cannot show. Without SHARP, and for the other paths, the views and the photo are
+reconstructed by the multi-view engine (VGGT cameras, MoGe-2 scale and depth priors, gsplat training).
+Photo pixels are INFERRED, the rest GENERATIVE.
 """
 
 from __future__ import annotations
+
+import math
+import shutil
+from pathlib import Path
+
+from PIL import Image, ImageOps
 
 from .base import (NOVEL_VIEW_COMPLETION, SCENE_STATIC, SINGLE_VIEW, Availability, Backend, BackendContext,
                    BackendError, BackendResult, Estimate, JobInput, run_worker)
 from .multiview import MultiViewBackend
 
 TRAJECTORIES = {
-    "tri": "Real 3D: views in front of the subject - 45° to each side and from above (Auto and Quality add one "
-           "from below) - reconstructed with the photo into one 3D splat for looking around from the front",
+    "tri": "Real 3D: 3 views in front of the subject - 45° to each side and from above - given volume by Apple "
+           "SHARP with the photo and joined into one 3D splat for looking around from the front",
     "capture": "360° capture: 45°, 90°, 135°, 180° and 270°, overhead and from below (Quality adds 225°, 315° "
                "and raised diagonals)",
     "explore": "explore the surroundings from where the photo was taken, with a little head movement "
@@ -40,15 +49,13 @@ _CAPTURE = [("45°", 45, 0), ("90°", 90, 0), ("135°", 135, 0), ("180°", 180, 
             ("overhead", 0, 60), ("from below", 0, -30)]
 QWEN_VIEWS = {
     "tri": [("45° left", 315, 0), ("45° right", 45, 0), ("high angle", 0, 30)],
-    "tri4": [("45° left", 315, 0), ("45° right", 45, 0), ("high angle", 0, 30), ("low angle", 0, -30)],
     "capture": _CAPTURE,
     "capture_full": _CAPTURE + [("225°", 225, 0), ("315°", 315, 0), ("45° raised", 45, 30), ("135° raised", 135, 30),
                                 ("225° raised", 225, 30), ("315° raised", 315, 30)],
 }
 QWEN_MEGAPIXELS = {"fast": 0.75, "auto": 1.0, "quality": 1.0}
 
-# Candidates generated per view (the most rigid one - a pure camera move of the photo - is kept).
-QWEN_CANDIDATES = {"fast": 1, "auto": 2, "quality": 3}
+# One attempt per view (owner, rc55): Real 3D no longer draws candidates to choose from.
 # Real 3D training (photo + views), per mode: the photo at its own detail, the AI views at their native
 # size (~1 MP, enlarging adds nothing), more steps for the larger photo. SH degree 1: with a handful of
 # views, higher degrees memorise the views' small disagreements as view-dependent colour, which shows
@@ -99,12 +106,39 @@ def target_angle(view: dict) -> float:
 
 
 def detailed(traj: str, mode: str) -> str:
-    """360° capture in Quality mode adds the intermediate angles; Real 3D adds a low angle in Auto/Quality."""
+    """360° capture in Quality mode adds the intermediate angles; Real 3D is always the same 3 views."""
     if traj == "capture" and mode == "quality":
         return "capture_full"
-    if traj == "tri" and mode in ("auto", "quality"):
-        return "tri4"
     return traj
+
+
+SHARP = "sharp"
+SHARP_RUNTIME = "photo-cu128"
+
+
+def sharp_installed(ctx) -> bool:
+    return SHARP in ctx.models.entries and ctx.models.is_installed(SHARP) and ctx.runtimes.is_installed(SHARP_RUNTIME)
+
+
+def focal_35mm(hfov_deg: float, width: int, height: int) -> float:
+    """35 mm-equivalent focal length (diagonal convention, as SHARP reads it) of a horizontal field of view."""
+    fx = (width / 2) / math.tan(math.radians(hfov_deg) / 2)
+    return fx * math.hypot(36, 24) / math.hypot(width, height)
+
+
+def image_for_sharp(src: str, dst: Path, f35: float | None) -> tuple[int, int]:
+    """Copy an image for SHARP, which takes the lens from EXIF (30 mm when there is none): the photo's
+    real lens is written into the photo and every AI view (the image model keeps the photo's framing)."""
+    from PIL import Image, ImageOps
+
+    with Image.open(src) as im:
+        im = ImageOps.exif_transpose(im).convert("RGB")
+        exif = Image.Exif()
+        if f35:
+            exif.get_ifd(0x8769)[0x920A] = float(max(10.0, f35))    # FocalLength (>= 10 mm: read as 35 mm)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        im.save(dst, exif=exif.tobytes())     # PNG keeps EXIF only as bytes
+        return im.size
 
 
 class GenerativeSceneBackend(Backend):
@@ -119,6 +153,7 @@ class GenerativeSceneBackend(Backend):
     wan_script = "wan_worker.py"
     qwen_script = "qwen_views_worker.py"
     geometry_script = "moge_worker.py"
+    sharp_script = "sharp_worker.py"
     description = ("Generates the unseen sides of a photo with a camera-controlled diffusion model and trains a "
                    "real 3D Gaussian splat from the generated views. Invented content is labelled GENERATIVE.")
 
@@ -208,7 +243,7 @@ class GenerativeSceneBackend(Backend):
                    "lora_angles": str(next(iter(paths["qwen-edit-2511-angles-lora"].values()))),
                    "lora_lightning": str(next(iter(paths["qwen-edit-2511-lightning"].values()))),
                    "views": [{"label": lb, "azimuth": az, "elevation": el} for lb, az, el in QWEN_VIEWS[plan]],
-                   "angles_strength": 0.9, "candidates": QWEN_CANDIDATES.get(mode, 1) if traj == "tri" else 1,
+                   "angles_strength": 0.9, "candidates": 1,
                    "distance": options.get("qwen_distance", "medium shot"),
                    "megapixels": QWEN_MEGAPIXELS.get(mode, 1.0), "steps": 4, "seed": int(options.get("seed", 42))}
             self._run_attempts(ctx, self.qwen_script, {**req, "stage": "encode"}, inp, progress, cancel, log,
@@ -233,6 +268,14 @@ class GenerativeSceneBackend(Backend):
                     for v in views]
         gen_models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
                       for m in models]
+        if traj == "tri" and engine == "qwen" and options.get("real3d_assembly", "sharp") == "sharp":
+            if sharp_installed(ctx):
+                res = self._sharp_fusion(views, inp, ctx, options, progress, cancel, log, gen_models, name)
+                res.extra.update({"generation_vram_peak_mib": out["result"].get("vram_peak_mib")})
+                res.worker_env = {"generation": out["env"], **res.worker_env}
+                return res
+            log("Apple SHARP is not installed: the views are reconstructed by training instead (install "
+                "'Apple SHARP' for the faster, sharper Real 3D)")
         mv_opts = {**options, "max_side": 1024}
         if traj == "tri":
             for v in mv_views:
@@ -256,6 +299,107 @@ class GenerativeSceneBackend(Backend):
                           "generation_vram_peak_mib": out["result"].get("vram_peak_mib")})
         res.worker_env = {"generation": out["env"], "reconstruction": res.worker_env}
         return res
+
+    def _sharp_fusion(self, views, inp, ctx, options, progress, cancel, log, gen_models, name) -> BackendResult:
+        """SHARP on the photo and on each AI view, then one splat from the four (fusion.py)."""
+        import numpy as np
+
+        from ..fusion import FusionView, fuse, poses_from_engine
+        from ..scene import Camera, read_gaussian_ply, write_gaussian_ply, write_splat
+
+        work = inp.work_dir / "sharp_views"
+        src, dst = work / "in", work / "out"
+        shutil.rmtree(dst, ignore_errors=True)
+        dst.mkdir(parents=True, exist_ok=True)
+        with Image.open(views[0]["path"]) as im:
+            pw, ph = ImageOps.exif_transpose(im).size
+        f35 = focal_35mm(float(options["hfov_deg"]), pw, ph) if options.get("hfov_deg") else None
+        log(f"SHARP lens: {f'{f35:.1f} mm (the photo EXIF)' if f35 else '30 mm (SHARP default; the photo has no EXIF lens)'}")
+        files = []
+        for i, v in enumerate(views):
+            files.append(src / f"{i:02d}.png")
+            image_for_sharp(v["path"], files[-1], f35)
+        models_used = list(gen_models)
+
+        # camera engine: where each view was taken (optional - the requested orbit otherwise)
+        engine_poses = None
+        if ctx.runtimes.is_installed(self.mv.runtime_id) and ctx.models.is_installed("vggt-1b"):
+            try:
+                npz = work / "poses.npz"
+                run_worker(ctx.runtimes.python(self.mv.runtime_id), self.mv.worker_script,
+                           {"images": [{"path": str(f), "generated": bool(v["generated"]), "label": v.get("label", "")}
+                                       for f, v in zip(files, views)],
+                            "vggt_dir": str(ctx.models.model_dir("vggt-1b")), "output_dir": str(work / "poses"),
+                            "max_side": 640, "poses_npz": str(npz)},
+                           inp.work_dir / "worker", progress, cancel, env=ctx.runtimes.worker_env(self.mv.runtime_id),
+                           log=log, progress_range=(0.5, 0.62), timeout_s=1800)
+                engine_poses = dict(np.load(npz))
+                models_used.append({"id": "vggt-1b", **{k: ctx.models.status("vggt-1b")[k]
+                                                         for k in ("revision", "license", "hash_status")}})
+            except BackendError as e:
+                if e.code == "cancelled":
+                    raise
+                log(f"camera engine unavailable ({e}); the views are placed on the requested orbit")
+
+        # SHARP: one run over the four images
+        out = run_worker(ctx.runtimes.python(SHARP_RUNTIME), self.sharp_script,
+                         {"checkpoint": str(ctx.models.paths(SHARP)["sharp_2572gikvuh.pt"]), "input_dir": str(src),
+                          "output_dir": str(dst), "allow_cpu": bool(getattr(ctx, "allow_cpu", False))},
+                         inp.work_dir / "worker", progress, cancel, env=ctx.runtimes.worker_env(SHARP_RUNTIME),
+                         log=log, progress_range=(0.62, 0.88), timeout_s=1800)
+        plys = {Path(p).stem: Path(p) for p in out["result"]["outputs"]}
+        fviews = []
+        for i, (f, v) in enumerate(zip(files, views)):
+            if f.stem not in plys:
+                raise BackendError(f"SHARP wrote no splat for image {f.name}", code="upstream_error")
+            sc = read_gaussian_ply(plys[f.stem])
+            if sc.cameras:
+                cam = sc.cameras[0]
+            else:                                   # SHARP's default lens
+                with Image.open(f) as im:
+                    w, h = im.size
+                fp = (f35 or 30.0) * math.hypot(w, h) / math.hypot(36, 24)
+                cam = Camera(w, h, fp, fp, w / 2, h / 2)
+            fviews.append(FusionView(sc, cam, bool(v["generated"]), v.get("label") or ("photo" if i == 0 else f"view {i}"),
+                                     float(v.get("azimuth", 0)), float(v.get("elevation", 0))))
+        if engine_poses is not None:
+            n = len(fviews)
+            init = poses_from_engine(fviews, engine_poses["c2ws"], [tuple(s) for s in engine_poses["sizes"]],
+                                     [engine_poses[f"depth_{i}"] for i in range(n)])
+            for fv, p in zip(fviews[1:], init[1:]):
+                fv.pose = p
+        progress(0.9, "joining the four splats")
+        # without camera engine poses the fusion starts from the requested orbit (trying both directions:
+        # which way the image model turns for "45° right" is not documented)
+        fused = fuse(fviews, log=log)
+        scene = fused.scene
+        cams = list(scene.cameras)
+        scene.cameras = cams[:1]
+        exp = inp.work_dir / "export"
+        ply = write_gaussian_ply(scene, exp / "scene.ply", include_provenance=True)
+        splat = write_splat(scene, exp / "scene.splat")
+        progress(1.0, "done")
+        added = int(sum(r.get("kept", 0) for r in fused.report[1:]))
+        used = sum(1 for r in fused.report[1:] if r.get("kept"))
+        st = ctx.models.status(SHARP)
+        models_used.append({"id": SHARP, "revision": st["revision"], "license": st["license"],
+                            "hash_status": st["hash_status"]})
+        warnings = [f"Generative completion: {len(views) - 1} views were invented by {name}; the {added:,} splats "
+                    "they add (the sides of the subject and what it hides) are labelled GENERATIVE - plausible, "
+                    "not measured.", "OBJ mesh is not available for SHARP output."]
+        for r in fused.report[1:]:
+            if r.get("skipped"):
+                warnings.append(f"View '{r['view']}' was not used: {r['skipped']}.")
+        return BackendResult(
+            backend=self.id, scene_ply=ply, splat=splat, obj=None, cameras=[cams[0].to_dict()], metric_scale=True,
+            provenance_note=(f"The photo's splats are INFERRED by Apple SHARP ({len(fviews[0].scene):,}); "
+                             f"{used} AI views given volume by SHARP add {added:,} GENERATIVE splats where the photo "
+                             "shows nothing."),
+            worker_env={"sharp": out["env"]}, models_used=models_used, warnings=warnings,
+            extra={"gaussians": len(scene), "trajectory": "tri", "engine": "qwen", "assembly": "sharp",
+                   "generated_views": len(views) - 1, "views_used": used,
+                   "poses_from": "camera engine" if engine_poses is not None else "requested orbit",
+                   "fusion": fused.report, "view_cameras": [c.to_dict() for c in cams[1:]]})
 
     def _photo_geometry(self, inp, ctx, options, progress, cancel, log, ref, mode):
         """The photo's metric geometry by MoGe-3 (photo runtime), at its training size and with its real
