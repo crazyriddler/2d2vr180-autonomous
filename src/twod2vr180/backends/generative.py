@@ -186,8 +186,13 @@ class GenerativeSceneBackend(Backend):
     def _run_attempts(self, ctx, script, req, inp, progress, cancel, log, progress_range):
         """Each memory setting runs in a fresh process (only an exiting process reliably frees VRAM and
         RAM); the worker reports 'oom_retry' while a lighter setting is left and reuses finished work."""
+        from ..sysmem import memory_status
+
         for attempt in range(8):
             req["attempt"] = attempt
+            st = memory_status()
+            if st is not None and log:
+                log(f"memory: {st.summary()}")
             try:
                 return run_worker(ctx.runtimes.python(self.runtime_id), script, req, inp.work_dir / "worker",
                                   progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id), log=log,

@@ -218,6 +218,7 @@ class JobRunner:
             hw = self.hw or probe(job.dir)
             self._hw = hw
             report["hardware"] = hw.to_dict()
+            self._memory_check(report, log, warnings)
             stage("hardware")
 
             # ---------------------------------------------------- ingest
@@ -445,6 +446,29 @@ class JobRunner:
         return report
 
     # ------------------------------------------------------------------ helpers
+    @staticmethod
+    def _memory_check(report: dict, log, warnings: list) -> None:
+        """Stop worker processes left over from earlier jobs and say how much memory is left (Windows needs
+        RAM + page file for GPU allocations too; when it runs out, models fail in confusing ways)."""
+        from .paths import app_paths
+        from .sysmem import low_memory_warning, memory_status, stop_stray_workers
+
+        try:
+            stray = stop_stray_workers(app_paths().runtimes, log)
+        except Exception:  # noqa: BLE001 - a diagnostic, never a reason to fail the job
+            stray = []
+        st = memory_status()
+        if st is not None:
+            log("memory before the job: " + st.summary())
+            report["hardware"]["memory"] = {"ram_free_gib": round(st.ram_free_gib, 2),
+                                            "commit_limit_gib": round(st.commit_limit_gib, 2),
+                                            "commit_free_gib": round(st.commit_free_gib, 2),
+                                            "stray_workers_stopped": len(stray)}
+        w = low_memory_warning(st)
+        if w:
+            warnings.append(w)
+            log("WARNING: " + w)
+
     def _check_disk(self, hw: HardwareReport, input_path: Path) -> None:
         need_mib = 512 + 20 * input_path.stat().st_size / 2**20
         if hw.disk_free_mib is not None and hw.disk_free_mib < need_mib:

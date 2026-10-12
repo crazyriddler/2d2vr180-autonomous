@@ -1,4 +1,30 @@
-# 2D2VR180 1.0.0-rc52 — Real 3D memory fix, second try
+# 2D2VR180 1.0.0-rc53 — Memory check before every job
+
+The owner tested rc52. Two failures happened right at the start of Real 3D, in steps that had worked in the
+two runs before:
+
+- TRELLIS.2: "CUDA out of memory" asking for 0.96 GB with 12.3 GB of VRAM free;
+- loading Qwen's text encoder: the process crashed with Windows error 0xC0000005.
+
+On Windows, GPU memory also needs "commit": room in RAM plus the page file. When that runs out, these are
+exactly the symptoms. Free disk space had also dropped by 29 GB since the previous run, which fits a growing
+page file. Something was holding a lot of memory before the job started: worker processes left over from
+earlier failed jobs, or other programs.
+
+## What's new in rc53
+
+- **Leftover workers are stopped.** At the start of every job the app stops any of its own worker processes
+  still running from earlier jobs. The queue runs one job at a time, so they are never needed. The log
+  names each one and its memory.
+- **Memory is reported.**
+  - The log shows free RAM and free "memory for programs" (RAM + page file) before the job, and before
+    every AI model step.
+  - The report stores the same figures under `hardware.memory`.
+- **A clear warning when memory is short.** With less than 24 GB free, the job says so, and what to do:
+  close other programs, restart the PC if it stays low, and let Windows manage the page file on a drive with
+  20 GB or more free.
+
+## rc52: Real 3D memory fix, second try
 
 The owner tested rc51. Real 3D now crashed at the first step of the first AI view, with Windows error
 0xC0000005 (access violation) and no message. The mode rc51 introduced for PCs with 32 GB of RAM ("sync":
