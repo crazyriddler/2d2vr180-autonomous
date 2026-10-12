@@ -37,7 +37,6 @@ need.
 | Multi-view engine + VGGT-1B | Real 3D, several photos of one place, videos where the camera moves (**non-commercial**) | ~7 GB + 5 GB |
 | Generative engine + LaMa | the runtime for Qwen-Image-Edit and Wan 2.2; AI filling of the gaps behind objects in VR180 | ~6 GB + 0.2 GB |
 | Qwen-Image-Edit-2511 + Multiple-Angles + Lightning | **Real 3D**: redraws your photo from other camera angles, sharp ~1 MP stills (Apache-2.0) | ~33 GB (needs ~32 GB RAM) |
-| TRELLIS.2 *(optional)* | Real 3D: the subject's complete shape, back included (MIT; its helpers DINOv3/RMBG-2.0 non-commercial) | ~5 GB runtime + ~11 GB |
 | Wan 2.2 Fun 5B Control-Camera *(optional)* | exploring the surroundings for VR180; Real 3D when Qwen is not installed (Apache-2.0) | ~25 GB (needs ~32 GB RAM) |
 | Depth-Anything-V2 Small *(optional)* | depth model for the Commercial licence profile (Apache-2.0) | 0.1 GB |
 
@@ -53,10 +52,10 @@ verified (SHA256) before use.
    photo alone), *360° capture* (more angles at once) or *Custom*. **Advanced options** show every setting:
    - **VR180 output** — layouts (side-by-side, top/bottom) and projection.
    - **One photo**
-     - **AI views** — *Real 3D* draws your subject ring by ring: 45° left, 45° right and from above; then 90° to
-       each side; then 135° to each side and the back (Fast stops at 90°). Each view is drawn from your photo
-       *and* the neighbouring view already accepted, so clothes and hair stay the same all the way round; in
-       Auto/Quality 2-3 candidates per angle are made and the one that best continues its neighbour is kept.
+     - **AI views** — *Real 3D* (the default) draws your subject from nearby angles, straight from your photo:
+       45° left, 45° right and from above (Auto and Quality add one from below). In Auto/Quality 2-3 candidates
+       per angle are made and the one that is most exactly your photo seen from there is kept. It is made for
+       looking around from the front (VR): no back is invented.
        *360° capture* draws 45°, 90°, 135°, 180°, 270°, overhead and from below at once (Quality adds 225°,
        315° and raised diagonals). *Explore the surroundings* (Wan 2.2) films the view around the photo's
        position so a VR180 is filled. *Off* uses only what the photo shows. In every case the photo and the views
@@ -96,7 +95,7 @@ When a job finishes, **Results** shows it. From there you can:
 | Input | What happens |
 |---|---|
 | Photo | Single-image 3D (SHARP if installed and allowed, otherwise MoGe-2, otherwise Depth-Anything). |
-| Photo + AI views (Real 3D) | Qwen-Image-Edit draws the other angles (Wan 2.2 if Qwen is not installed); VGGT places every view in 3D, MoGe-3 (or MoGe-2) gives your photo's real-world scale and depth, TRELLIS.2 (if installed) the subject's complete shape; one 3D splat is trained on the photo and the views, and its colours are finally taken from the view that sees each surface best. |
+| Photo + AI views (Real 3D) | Qwen-Image-Edit draws the other angles (Wan 2.2 if Qwen is not installed); VGGT places every view in 3D, MoGe-3 (or MoGe-2) gives your photo's real-world scale and depth; one 3D splat is trained on the photo and the views, and its colours are finally taken from the view that sees each surface best. |
 | Several photos | Multi-view engine: VGGT finds where each photo was taken, MoGe-2 gives real-world scale, a 3D Gaussian splat is trained on all photos. |
 | Video (any) | **4D scene**: VGGT places every frame's camera, MoGe-2 gives every frame's depth at real-world scale; what moves is found by comparing each frame in 3D with frames before and after it; the still surroundings are trained once as one 3D splat from all frames (what someone hides in one frame is filled in from the others) and the moving parts become Gaussians that move smoothly between frames (frame by frame if that fails). Then a VR180 video is rendered from the 4D scene, from where the camera was (path smoothed and levelled). |
 | Video, 4D engine not available | The sharpest frame is reconstructed as a photo (the report says why). |

@@ -102,49 +102,6 @@
         "torch": "+cu128",
         "torchvision": "+cu128"
       }
-    },
-    {
-      "id": "subject3d-cu128",
-      "description": "Complete subject: TRELLIS.2-4B builds the whole subject of a photo in 3D (back included) as a shape prior for Real 3D",
-      "python": "3.11",
-      "torch_index": "https://download.pytorch.org/whl/cu128",
-      "min_driver": "570.00",
-      "approx_size_gb": 5.0,
-      "status": "unverified: Windows CUDA extensions are the TRELLIS.2-stableprojectorz fork's prebuilt cp311 wheels; install and GPU smoke test not yet run on the RTX 4080",
-      "archives_no_deps": [
-        {
-          "name": "cumesh",
-          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/raw/d5d38f1e033a881e2c00e3137822ef8aa4e193de/whl/cumesh-0.0.1-cp311-cp311-win_amd64.whl"
-        },
-        {
-          "name": "flex_gemm",
-          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/raw/d5d38f1e033a881e2c00e3137822ef8aa4e193de/whl/flex_gemm-0.0.1-cp311-cp311-win_amd64.whl"
-        },
-        {
-          "name": "nvdiffrast",
-          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/raw/d5d38f1e033a881e2c00e3137822ef8aa4e193de/whl/nvdiffrast-0.4.0-cp311-cp311-win_amd64.whl"
-        },
-        {
-          "name": "nvdiffrec_render",
-          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/raw/d5d38f1e033a881e2c00e3137822ef8aa4e193de/whl/nvdiffrec_render-0.0.0-cp311-cp311-win_amd64.whl"
-        },
-        {
-          "name": "o_voxel",
-          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/raw/d5d38f1e033a881e2c00e3137822ef8aa4e193de/whl/o_voxel-0.0.1-cp311-cp311-win_amd64.whl"
-        },
-        {
-          "name": "trellis2",
-          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/archive/d5d38f1e033a881e2c00e3137822ef8aa4e193de.zip",
-          "copy_package": "trellis2"
-        }
-      ],
-      "smoke_test": "import os; os.environ['ATTN_BACKEND']='xformers'; import torch, xformers, cumesh, flex_gemm, o_voxel, trimesh, kornia, timm; from trellis2.pipelines import Trellis2ImageTo3DPipeline; print('cuda', torch.cuda.is_available())",
-      "network_at_inference": false,
-      "lock": "locks/subject3d-cu128.txt",
-      "local_versions": {
-        "torch": "+cu128",
-        "torchvision": "+cu128"
-      }
     }
   ]
 }

@@ -72,18 +72,6 @@ COMPONENTS: list[Component] = [
               "Camera-angle control: 8 directions × 4 heights × 3 distances.", True, ("engine-gen",)),
     Component("model-qwen-lightning", "Qwen-Image-Edit Lightning LoRA (4 steps)", "model", "qwen-edit-2511-lightning",
               "Makes each Qwen view take 4 sampling steps instead of 40.", True, ("engine-gen",)),
-    Component("engine-subject", "Complete-subject engine (TRELLIS.2)", "runtime", "subject3d-cu128",
-              "Builds the whole subject of your photo in 3D - back included - so Real 3D gets the correct shape "
-              "all the way round (PyTorch + TRELLIS.2's CUDA extensions, installed privately).", False),
-    Component("model-trellis2", "TRELLIS.2 — the whole subject in 3D, back included (MIT)", "model", "trellis2-4b-shape",
-              "Used automatically by Real 3D when installed: the subject's complete shape guides the AI views' depth, "
-              "so sides and back have consistent geometry. ~11 GB; about 1-2 minutes per photo.", False,
-              ("engine-subject", "model-trellis-ssdec", "model-trellis-encoders", "model-qwen")),
-    Component("model-trellis-ssdec", "TRELLIS sparse-structure decoder (for TRELLIS.2)", "model",
-              "trellis-image-large-ss-dec", "Small decoder shared with the original TRELLIS.", False, ("engine-subject",)),
-    Component("model-trellis-encoders", "DINOv3 and RMBG-2.0 (for TRELLIS.2, non-commercial)", "model",
-              "trellis2-image-encoders", "Image encoder and background removal used by TRELLIS.2.", False,
-              ("engine-subject",)),
 ]
 
 

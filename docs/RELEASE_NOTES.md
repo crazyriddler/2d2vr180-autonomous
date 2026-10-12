@@ -1,4 +1,53 @@
-# 2D2VR180 1.0.0-rc53 — Memory check before every job
+# 2D2VR180 1.0.0-rc54 — Real 3D: back to the front, faster and better than rc19
+
+Owner verdict on rc53's Real 3D: worse and much slower than before. It did make a back, but:
+- the back sat metres away from the subject;
+- the subject looked distorted from every angle;
+- parts of the back showed through the front.
+
+The good version was rc19: good geometry, detail and scale when you don't turn your head too far. Owner
+request: 3-4 AI views, a splat like rc19's but done properly, no back view, and fast.
+
+## What went wrong and what was right
+
+- **What rc19 got right.** Its three views (45° to each side and from above) are close to the photo, so the
+  AI draws them consistently. The camera engine (VGGT) places them correctly, and geometry and scale come out
+  right.
+- **What rc19 got wrong: noisy texture.** The AI views do not quite agree with the photo in colour and detail.
+  The training (spherical harmonics degree 3) memorised those disagreements, and the photo was trained at a
+  low resolution.
+- **What broke rc42-rc53: the invented back.**
+  - The views at 90°, 135° and 180° were each drawn from the previous one, so they drifted. They no longer
+    fitted the photo, so the camera engine put them metres away and their surfaces showed through the front.
+  - TRELLIS.2's model of the whole subject did not fit the photo either.
+  - Together with four rounds of drawing, all this made a job several times slower.
+
+## What's new in rc54
+
+- **Real 3D (the default) stays in front of the subject.** It draws 45° left, 45° right and from above; Auto
+  and Quality add one from below. Every view is drawn straight from the photo, in one round.
+- **Candidates are chosen inside the reconstruction.** In Auto/Quality, 2-3 candidates per view are drawn,
+  and the reconstruction itself keeps the one that most exactly shows the photo from that angle, as in rc19.
+  There is no separate scoring pass.
+- **Kept from rc41-rc48**, everything that fixed the texture and the measurements:
+  - spherical harmonics degree 1 (no memorised colour noise);
+  - the photo trained at 1280 / 1600 / 2048 px;
+  - colour correction of the AI views;
+  - colours taken from the view that sees each surface best;
+  - the camera's real focal length (EXIF);
+  - real-world scale from the photo only;
+  - robust depth alignment that leaves contradicting AI depth unguided;
+  - MoGe-3 for the photo when it is installed.
+- **Faster.**
+  - One round of 3-4 views instead of four rounds of up to 8.
+  - No TRELLIS.2 step.
+  - Training at 5000 / 9000 / 15000 steps, as in rc19.
+- **TRELLIS.2 removed.** Its engine, models and code are gone, so the Components page no longer offers them.
+  If you installed it, you can delete the `subject3d-cu128` runtime folder and the `trellis*` model folders to
+  free about 16 GB.
+- *360° capture* still exists, for when you want the back and accept invented geometry.
+
+## rc53: Memory check before every job
 
 The owner tested rc52. Two failures happened right at the start of Real 3D, in steps that had worked in the
 two runs before:

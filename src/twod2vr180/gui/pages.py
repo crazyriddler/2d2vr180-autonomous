@@ -27,9 +27,9 @@ MODE_HELP = {
 # "What do you want to make?" — each preset sets the advanced reconstruction controls.
 PRESETS = {
     "real3d": ("Real 3D from one photo (recommended)",
-               "AI draws your subject all the way round - sides and back, each view continuing the previous one - "
-               "and one 3D splat is trained from your photo and those views. Several minutes. Needs Qwen-Image-Edit "
-               "and the Multi-view engine; TRELLIS.2 (optional) adds the subject's complete shape."),
+               "AI draws your subject from 3-4 nearby angles (45° to each side, from above and from below) and one 3D "
+               "splat is trained from your photo and those views: real depth and scale for looking around from the "
+               "front, as in VR. A few minutes. Needs Qwen-Image-Edit and the Multi-view engine."),
     "quick": ("Quick 3D",
               "Depth from the photo alone (MoGe-2 / SHARP). Seconds. Sharp from the front, nothing behind objects."),
     "around": ("360° capture (experimental)",

@@ -85,7 +85,7 @@ class WelcomeDialog(QDialog):
             "Real 3D from one photo, where AI draws the parts the photo does not show.</p><p>Before the first run, "
             "the app downloads its AI engines (about 5–7 GB each) and the recommended models (about 45 GB, most "
             "of it the Qwen-Image-Edit model that draws the other views) from their original publishers — plan "
-            "for ~70 GB of free disk space (TRELLIS.2, optional, adds ~16 GB). You will see each model's licence "
+            "for ~70 GB of free disk space. You will see each model's licence "
             "before it is downloaded.</p>")
         body.setWordWrap(True)
         body.setTextFormat(Qt.RichText)

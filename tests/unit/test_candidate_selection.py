@@ -129,19 +129,6 @@ def test_candidates_are_judged_against_their_anchor_view(monkeypatch, tmp_path):
     assert rep[0]["path"] == items[2]["path"]
 
 
-def test_angle_between_ring_views():
-    from twod2vr180.backends.generative import TRI_RINGS, angle_between
-
-    assert abs(angle_between((135, 0), (180, 0)) - 45) < 1e-9
-    assert abs(angle_between((270, 0), (315, 0)) - 45) < 1e-9
-    assert abs(angle_between((0, 30), (0, 0)) - 30) < 1e-9
-    labels = [lb for ring in TRI_RINGS for lb, *_ in ring]
-    for k, ring in enumerate(TRI_RINGS):              # references always come from an earlier ring
-        earlier = {lb for r in TRI_RINGS[:k] for lb, *_ in r}
-        assert all(set(refs) <= earlier for *_, refs in ring)
-    assert "back" in labels and len(labels) == len(set(labels)) == 8
-
-
 def test_align_scale_is_robust():
     rng = np.random.default_rng(0)
     z = rng.uniform(1, 5, (50, 50))
