@@ -672,29 +672,6 @@ def main(req):
             log(f"depth priors unavailable: {e}")
             priors = None
 
-    # ------------------------------------------------------------ complete subject (TRELLIS.2, optional)
-    # The whole subject, back included, generated in 3D from the photo: aligned to the photo's depth, its
-    # depth replaces the per-view monocular priors of the AI views (consistent all the way round) and
-    # its surface joins the initial points.
-    subject_pts = None
-    if req.get("subject_mesh") and priors is not None and priors[0] is not None and not poses_only:
-        try:
-            import subject_align as sa
-            from PIL import Image
-
-            progress(0.345, "placing the complete subject (TRELLIS.2)")
-            h0, w0 = priors[0].shape
-            with Image.open(req["subject_mask"]) as im:
-                smask = np.asarray(im.convert("L").resize((w0, h0), Image.NEAREST)) > 127
-            cams = [(Ks[i], c2w_v[i], (train_imgs[i].shape[1], train_imgs[i].shape[0])) for i in range(n)]
-            align, subject_pts, subject_cols = sa.place_subject(req["subject_mesh"], smask, priors[0], Ks[0], cams,
-                                                                priors, [bool(it.get("generated")) for it in items])
-            log(f"complete subject placed: scale {align['scale']:.3f}, fit score {align['score']:.2f}; its depth "
-                "guides " + ", ".join(f"view {i} {r:.0%}" for i, r in enumerate(align["replaced"]) if r))
-        except Exception as e:  # noqa: BLE001 - an improvement, not a requirement
-            log(f"complete subject not used: {type(e).__name__}: {e}")
-            subject_pts = None
-
     # ------------------------------------------------------------ initial points
     progress(0.35, "building the initial point cloud")
     per_view = max(2000, int(req.get("init_points", 400000) * 1.5 / n))
@@ -723,11 +700,6 @@ def main(req):
             yy, xx = yy[sel], xx[sel]
         pts.append(unproject(d, Kc, c2w_v[i])[yy, xx])
         cols.append(a[yy, xx])
-    if subject_pts is not None:
-        k = min(len(subject_pts), per_view)
-        pick = rng.choice(len(subject_pts), k, replace=False)
-        pts.append(subject_pts[pick])
-        cols.append(subject_cols[pick])
     points = np.concatenate(pts).astype(np.float32)
     colors = np.concatenate(cols).astype(np.float32)
     log(f"{len(points):,} initial points from {n} views")

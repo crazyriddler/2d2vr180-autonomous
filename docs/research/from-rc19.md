@@ -125,3 +125,16 @@ consistent geometry all around.
 - Lyra: https://github.com/nv-tlabs/lyra (arXiv 2509.19296)
 - HunyuanWorld-Mirror: https://huggingface.co/tencent/HunyuanWorld-Mirror (arXiv 2510.10726)
 - LHM: ICCV 2025, https://openaccess.thecvf.com/content/ICCV2025/html/Qiu_LHM_Large_Animatable_Human_Reconstruction_Model_for_Single_Image_to_ICCV_2025_paper.html
+
+## Outcome (rc54, owner test of rc53)
+
+The views behind the subject (rc42) and the TRELLIS.2 complete subject (rc45) made Real 3D worse, not better:
+- the back sat metres away;
+- the subject was distorted from every angle;
+- back surfaces showed through the front;
+- a job took several times longer.
+
+Views drawn from earlier AI views drift from the photo, and the camera engine cannot place them consistently;
+a generated full-subject mesh does not match the photo's own geometry either. Real 3D is front-only again
+(45° each side, above, and below in Auto/Quality, each drawn straight from the photo, one round), keeping the
+texture and measurement work of rc41, rc43, rc44, rc47 and rc48. TRELLIS.2 was removed.

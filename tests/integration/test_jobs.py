@@ -413,36 +413,24 @@ def test_qwen_three_views_go_to_trained_multiview(ctx, rtx4080, photo, monkeypat
     assert rep["status"] == "succeeded", rep.get("error")
     gen = job.dir / "generated_views"
     calls = json.loads((gen / "stage_calls.json").read_text())
-    rings = {"fast": 2, "auto": 4, "quality": 4}[mode]
-    assert [c["stage"] for c in calls] == ["encode", "generate"] * rings     # ring by ring
-    ring_views = [c["views"] for c in calls if c["stage"] == "generate"]
-    assert [(v["azimuth"], v["elevation"]) for v in ring_views[0]] == [(315, 0), (45, 0), (0, 30)]
-    assert [v["azimuth"] for v in ring_views[1]] == [270, 90]                # the sides ...
-    if rings == 4:
-        assert [v["azimuth"] for v in ring_views[2]] == [225, 135] and ring_views[3][0]["azimuth"] == 180  # ... and back
+    assert [c["stage"] for c in calls] == ["encode", "generate"]          # one round: fast (rc54)
+    views = calls[1]["views"]
+    front = [(315, 0), (45, 0), (0, 30)] + ([] if mode == "fast" else [(0, -30)])
+    assert [(v["azimuth"], v["elevation"]) for v in views] == front        # in front of the subject only
+    assert all(not v.get("refs") for v in views)                            # each drawn from the photo
     assert all(c["candidates"] == n_cand and c["angles_strength"] > 0 for c in calls)
-    # each later view is drawn from the photo AND the accepted neighbouring view of the previous ring
-    picked = "view00_c1.png" if n_cand == 2 else ("view00_c2.png" if n_cand == 3 else "view00.png")
-    r90 = ring_views[1][0]
-    assert r90["label"] == "90° left" and [r["label"] for r in r90["refs"]] == ["45° left"]
-    assert r90["refs"][0]["path"].endswith(picked)                          # the chosen candidate, not the first
-    assert ring_views[0][0]["refs"] == []
-    indices = [v["index"] for vs in ring_views for v in vs]
-    assert indices == list(range(len(indices)))                              # no file name collisions
-    scores = json.loads((job.dir / "fake_score_calls.json").read_text()) if n_cand > 1 else []
-    assert len(scores) == (rings if n_cand > 1 else 0)
-    if scores:
-        side = [v for v in scores[1] if v.get("label") == "90° left"][0]
-        assert scores[1][side["anchor"]]["label"] == "45° left" and abs(side["anchor_deg"] - 45) < 1e-6
+    assert not (job.dir / "fake_score_calls.json").exists()                 # no separate scoring passes
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    n_views = {"fast": 5, "auto": 8, "quality": 8}[mode]
-    assert len(mv["images"]) == 1 + n_views
-    assert not mv["images"][0]["generated"] and not any(v.get("candidates") for v in mv["images"])
+    assert len(mv["images"]) == 1 + len(front)
+    assert not mv["images"][0]["generated"]
+    # several candidates: the multi-view engine keeps the most rigid one of each view
+    assert all(len(v.get("candidates") or []) == (n_cand if n_cand > 1 else 0) for v in mv["images"][1:])
     assert rep["backend"]["extra"]["assembly"] == "train"
     # photo at its own detail, AI views at their native size, view-independent-ish colour (texture noise)
     photo_side = {"fast": 1280, "auto": 1600, "quality": 2048}[mode]
     assert mv["images"][0]["max_side"] == photo_side and all(v["max_side"] == 1328 for v in mv["images"][1:])
-    assert mv["sh_degree"] == 1 and mv["steps"] == {"fast": 6000, "auto": 12000, "quality": 20000}[mode]
+    assert mv["sh_degree"] == 1 and mv["steps"] == {"fast": 5000, "auto": 9000, "quality": 15000}[mode]
+    assert "subject_mesh" not in mv
 
 
 def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, photo, monkeypatch):
@@ -461,28 +449,6 @@ def test_multiview_backend_on_one_photo_generates_views_first(ctx, rtx4080, phot
 def test_multiview_backend_on_one_photo_without_generation_explains(ctx, rtx4080, photo):
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", backend="multiview", layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "failed" and "generative mode" in rep["error"]["message"]
-
-
-def test_real3d_uses_the_complete_subject_when_trellis2_is_installed(ctx, rtx4080, photo, monkeypatch):
-    from conftest import REPO, install_fake_model
-    from twod2vr180.backends.generative import SUBJECT_MODELS, GenerativeSceneBackend
-
-    _fake_generative(monkeypatch)
-    monkeypatch.setattr(GenerativeSceneBackend, "subject_script", str(REPO / "tests" / "fakes" / "fake_trellis_worker.py"))
-    for mid in QWEN_IDS:
-        install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
-    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert rep["status"] == "succeeded" and "subject_mesh" not in mv          # not installed: plain Real 3D
-    for mid in SUBJECT_MODELS:
-        install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
-    assert rep["status"] == "succeeded", rep.get("error")
-    req = json.loads((job.dir / "complete_subject" / "request.json").read_text())
-    assert req["pipeline_type"] == "512" and req["dinov3_zip"].endswith("dinov3.zip")
-    mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
-    assert mv["subject_mesh"].endswith("subject.npz") and mv["subject_mask"].endswith("subject_mask.png")
-    assert {m["id"] for m in rep["models"]} >= set(SUBJECT_MODELS)
 
 
 def test_the_photos_real_lens_reaches_the_reconstruction(ctx, rtx4080, tmp_path, monkeypatch):

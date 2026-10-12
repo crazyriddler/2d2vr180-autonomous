@@ -3,7 +3,7 @@
 Two generation engines:
   * Qwen-Image-Edit-2511 + Multiple-Angles LoRA (Alibaba Qwen / fal, Apache-2.0) - an image model that
     redraws the photo from a requested camera position; each view is a sharp ~1 MP image. Real 3D draws
-    them ring by ring around the subject, each view conditioned on its accepted neighbour;
+    3-4 views in front of the subject (45° each side, above, below), each straight from the photo;
   * Wan 2.2 Fun 5B Control-Camera (Alibaba PAI, Apache-2.0) - a video model that films camera moves
     starting at the photo (used to explore the surroundings for VR180, or when Qwen is not installed).
 The views and the photo are then reconstructed by the multi-view engine (VGGT cameras, MoGe-2 scale and
@@ -17,8 +17,8 @@ from .base import (NOVEL_VIEW_COMPLETION, SCENE_STATIC, SINGLE_VIEW, Availabilit
 from .multiview import MultiViewBackend
 
 TRAJECTORIES = {
-    "tri": "Real 3D: rings of views around the subject (45° each side and from above, then 90°, 135° and the "
-           "back; Fast stops at 90°), each drawn from the photo and its neighbouring view",
+    "tri": "Real 3D: views in front of the subject - 45° to each side and from above (Auto and Quality add one "
+           "from below) - reconstructed with the photo into one 3D splat for looking around from the front",
     "capture": "360° capture: 45°, 90°, 135°, 180° and 270°, overhead and from below (Quality adds 225°, 315° "
                "and raised diagonals)",
     "explore": "explore the surroundings from where the photo was taken, with a little head movement "
@@ -40,6 +40,7 @@ _CAPTURE = [("45°", 45, 0), ("90°", 90, 0), ("135°", 135, 0), ("180°", 180, 
             ("overhead", 0, 60), ("from below", 0, -30)]
 QWEN_VIEWS = {
     "tri": [("45° left", 315, 0), ("45° right", 45, 0), ("high angle", 0, 30)],
+    "tri4": [("45° left", 315, 0), ("45° right", 45, 0), ("high angle", 0, 30), ("low angle", 0, -30)],
     "capture": _CAPTURE,
     "capture_full": _CAPTURE + [("225°", 225, 0), ("315°", 315, 0), ("45° raised", 45, 30), ("135° raised", 135, 30),
                                 ("225° raised", 225, 30), ("315° raised", 315, 30)],
@@ -54,7 +55,7 @@ QWEN_CANDIDATES = {"fast": 1, "auto": 2, "quality": 3}
 # as texture noise (docs/research/from-rc19.md).
 TRI_PHOTO_SIDE = {"fast": 1280, "auto": 1600, "quality": 2048}
 TRI_VIEW_SIDE = 1328
-TRI_STEPS = {"fast": 6000, "auto": 12000, "quality": 20000}
+TRI_STEPS = {"fast": 5000, "auto": 9000, "quality": 15000}
 TRI_SH_DEGREE = 1
 
 
@@ -77,22 +78,11 @@ def generation_engine(ctx, preferred: str | None = None, trajectory: str | None 
     return None
 
 
-# Real 3D views drawn in rings around the subject (rc42). Each ring is generated after the previous one
-# and every view in it is drawn from the photo AND the neighbouring view already accepted ("refs"), so
-# clothes, hair and proportions stay consistent all the way round, and the back finally exists (rc19 never
-# looked further than 45°). (label, azimuth°, elevation°, reference labels: the first one is also the view
-# it is judged against when choosing candidates).
-TRI_RINGS = [
-    [("45° left", 315, 0, ()), ("45° right", 45, 0, ()), ("high angle", 0, 30, ())],
-    [("90° left", 270, 0, ("45° left",)), ("90° right", 90, 0, ("45° right",))],
-    [("135° left", 225, 0, ("90° left",)), ("135° right", 135, 0, ("90° right",))],
-    [("back", 180, 0, ("135° right", "135° left"))],
-]
-TRI_RING_COUNT = {"fast": 2, "auto": 4, "quality": 4}
-# Optional complete subject (TRELLIS.2 shape, rc45): runtime + models; Fast uses the 512 pipeline
-SUBJECT_RUNTIME = "subject3d-cu128"
-SUBJECT_MODELS = ("trellis2-4b-shape", "trellis-image-large-ss-dec", "trellis2-image-encoders")
-SUBJECT_PIPELINE = {"fast": "512", "auto": "1024_cascade", "quality": "1024_cascade"}
+# Real 3D stays in front of the subject (rc54). rc42-rc53 also drew 90°, 135° and the back, each from its
+# neighbour, and placed a TRELLIS.2 model of the whole subject: invented backs did not agree with the photo,
+# so the camera engine put them metres away and back surfaces showed through the front, and it was several
+# times slower (owner, rc53). Views within 45° of the photo agree with it, which is what made rc19's
+# geometry and scale good; rc41-rc48 keep improving texture and measurement on top of that.
 
 
 MOGE3 = "moge-3-vitl"          # rc48: the photo's geometry by MoGe-3 when installed (MoGe-2 otherwise)
@@ -102,23 +92,6 @@ def moge3_installed(ctx) -> bool:
     return MOGE3 in ctx.models.entries and ctx.models.is_installed(MOGE3) and ctx.runtimes.is_installed("photo-cu128")
 
 
-def subject_installed(ctx) -> bool:
-    return ctx.runtimes.is_installed(SUBJECT_RUNTIME) and all(
-        m in ctx.models.entries and ctx.models.is_installed(m) for m in SUBJECT_MODELS)
-
-
-def angle_between(a: tuple[float, float], b: tuple[float, float]) -> float:
-    """Degrees between two camera directions given as (azimuth, elevation) around the subject."""
-    import math
-
-    def vec(az, el):
-        az, el = math.radians(az), math.radians(el)
-        return (math.cos(el) * math.sin(az), math.sin(el), math.cos(el) * math.cos(az))
-
-    u, v = vec(*a), vec(*b)
-    return math.degrees(math.acos(max(-1.0, min(1.0, sum(x * y for x, y in zip(u, v))))))
-
-
 def target_angle(view: dict) -> float:
     """Camera change asked for a generated view, in degrees (for checking that it really moved)."""
     az = float(view.get("azimuth", 0)) % 360
@@ -126,8 +99,12 @@ def target_angle(view: dict) -> float:
 
 
 def detailed(traj: str, mode: str) -> str:
-    """360° capture in Quality mode adds the intermediate angles."""
-    return "capture_full" if traj == "capture" and mode == "quality" else traj
+    """360° capture in Quality mode adds the intermediate angles; Real 3D adds a low angle in Auto/Quality."""
+    if traj == "capture" and mode == "quality":
+        return "capture_full"
+    if traj == "tri" and mode in ("auto", "quality"):
+        return "tri4"
+    return traj
 
 
 class GenerativeSceneBackend(Backend):
@@ -141,7 +118,6 @@ class GenerativeSceneBackend(Backend):
     commercial_use = False  # VGGT-1B (reconstruction) weights are non-commercial
     wan_script = "wan_worker.py"
     qwen_script = "qwen_views_worker.py"
-    subject_script = "trellis_subject_worker.py"
     geometry_script = "moge_worker.py"
     description = ("Generates the unseen sides of a photo with a camera-controlled diffusion model and trains a "
                    "real 3D Gaussian splat from the generated views. Invented content is labelled GENERATIVE.")
@@ -224,14 +200,7 @@ class GenerativeSceneBackend(Backend):
         log(f"generating views with {name}: {TRAJECTORIES[traj]}")
         for m in models:
             ctx.models.paths(m)  # clear error when missing
-        subject = None
-        if engine == "qwen" and traj == "tri":
-            out = None
-            if options.get("complete_subject", True) and subject_installed(ctx):
-                subject = self._complete_subject(inp, ctx, options, progress, cancel, log, ref, mode)
-            chain = self._qwen_rings(inp, ctx, options, progress, cancel, log, ref, out_dir, mode,
-                                     start=0.08 if subject else 0.0)
-        elif engine == "qwen":
+        if engine == "qwen":
             paths = {m: ctx.models.paths(m) for m in QWEN_MODELS}
             req = {"image": str(ref), "output_dir": out_dir,
                    "base_dir": str(ctx.models.model_dir("qwen-image-edit-2511-base")),
@@ -253,7 +222,7 @@ class GenerativeSceneBackend(Backend):
                    "seed": int(options.get("seed", 42)), "model_dir": str(ctx.models.model_dir(WAN_MODELS[0])),
                    "every": 2}
             out = self._run_attempts(ctx, self.wan_script, req, inp, progress, cancel, log, (0.0, 0.5))
-        views = out["result"]["views"] if out is not None else chain["views"]
+        views = out["result"]["views"]
         # The real photo is sampled more often than any single generated view during training.
         w_in = max(4.0, len(views) / 10)
         mv_views = [{"path": v["path"], "generated": bool(v["generated"]), "weight": 1.0 if v["generated"] else w_in,
@@ -269,9 +238,6 @@ class GenerativeSceneBackend(Backend):
             for v in mv_views:
                 v["max_side"] = TRI_VIEW_SIDE if v["generated"] else TRI_PHOTO_SIDE.get(mode, 1600)
             mv_opts.update(sh_degree=TRI_SH_DEGREE, train_steps=TRI_STEPS.get(mode, 12000))
-            if subject:
-                mv_opts.update(subject_mesh=subject["subject_mesh"], subject_mask=subject["subject_mask"])
-                gen_models += subject["models"]
             geo = self._photo_geometry(inp, ctx, options, progress, cancel, log, ref, mode) \
                 if moge3_installed(ctx) else None
             if geo:
@@ -287,10 +253,8 @@ class GenerativeSceneBackend(Backend):
         res.backend = self.id
         res.extra.update({"trajectory": traj, "engine": engine, "assembly": "train",
                           "generated_views": len(views) - 1,
-                          "generation_vram_peak_mib": (out["result"] if out is not None else chain).get("vram_peak_mib")})
-        if out is None:
-            res.extra["candidate_selection"] = chain["selection"]
-        res.worker_env = {"generation": (out if out is not None else chain)["env"], "reconstruction": res.worker_env}
+                          "generation_vram_peak_mib": out["result"].get("vram_peak_mib")})
+        res.worker_env = {"generation": out["env"], "reconstruction": res.worker_env}
         return res
 
     def _photo_geometry(self, inp, ctx, options, progress, cancel, log, ref, mode):
@@ -312,93 +276,3 @@ class GenerativeSceneBackend(Backend):
             log(f"MoGe-3 unavailable ({e}); MoGe-2 is used")
             return None
         return item["out"]
-
-    def _complete_subject(self, inp, ctx, options, progress, cancel, log, ref, mode):
-        """TRELLIS.2 shape of the whole subject (back included), or None if it fails (Real 3D goes on
-        without it). Its mesh guides the depth of the AI views in the multi-view worker."""
-        p = {m: ctx.models.paths(m) for m in SUBJECT_MODELS}
-        shape_dir = ctx.models.model_dir("trellis2-4b-shape")
-        req = {"image": str(ref), "output_dir": str(inp.work_dir / "complete_subject"),
-               "model_dir": str(shape_dir), "image_large_dir": str(ctx.models.model_dir("trellis-image-large-ss-dec")),
-               "dinov3_zip": str(p["trellis2-image-encoders"]["dinov3.zip"]),
-               "rmbg_zip": str(p["trellis2-image-encoders"]["RMBG-2.0.zip"]),
-               "pipeline_type": SUBJECT_PIPELINE.get(mode, "1024_cascade"), "seed": int(options.get("seed", 42))}
-        log(f"complete subject: TRELLIS.2 ({req['pipeline_type']})")
-        try:
-            out = run_worker(ctx.runtimes.python(SUBJECT_RUNTIME), self.subject_script, req, inp.work_dir / "worker",
-                             progress, cancel, env=ctx.runtimes.worker_env(SUBJECT_RUNTIME), log=log,
-                             progress_range=(0.0, 0.08), timeout_s=3600)
-        except BackendError as e:
-            log(f"complete subject unavailable ({e}); Real 3D continues without it")
-            return None
-        files = out["result"]["outputs"]
-        return {"subject_mesh": files["mesh"], "subject_mask": files["mask"],
-                "models": [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
-                           for m in SUBJECT_MODELS]}
-
-    def _qwen_rings(self, inp, ctx, options, progress, cancel, log, ref, out_dir, mode, start=0.0):
-        """Real 3D views, ring by ring (TRI_RINGS): generate a ring (each view from the photo + its
-        neighbouring accepted view), choose the most consistent candidate of each view (judged against
-        that neighbour, VGGT score-only pass), then the next ring uses those choices as references."""
-        paths = {m: ctx.models.paths(m) for m in QWEN_MODELS}
-        n_cand = QWEN_CANDIDATES.get(mode, 1)
-        base = {"image": str(ref), "output_dir": out_dir,
-                "base_dir": str(ctx.models.model_dir("qwen-image-edit-2511-base")),
-                "gguf": str(next(iter(paths["qwen-image-edit-2511-q5"].values()))),
-                "lora_angles": str(next(iter(paths["qwen-edit-2511-angles-lora"].values()))),
-                "lora_lightning": str(next(iter(paths["qwen-edit-2511-lightning"].values()))),
-                "angles_strength": 0.9, "candidates": n_cand,
-                "distance": options.get("qwen_distance", "medium shot"),
-                "megapixels": QWEN_MEGAPIXELS.get(mode, 1.0), "steps": 4, "seed": int(options.get("seed", 42))}
-        rings = TRI_RINGS[:TRI_RING_COUNT.get(mode, 4)]
-        chosen: dict[str, dict] = {}            # label -> accepted view (path, azimuth, elevation)
-        selection, peak, index = [], None, 0
-        span = (0.5 - start) / len(rings)
-        for r, ring in enumerate(rings):
-            lo = start + r * span
-            views = []
-            for label, az, el, refs in ring:
-                views.append({"label": label, "azimuth": az, "elevation": el, "index": index,
-                              "refs": [{"path": chosen[x]["path"], "label": x} for x in refs if x in chosen]})
-                index += 1
-            req = {**base, "views": views}
-            log(f"ring {r + 1}/{len(rings)}: " + ", ".join(
-                v["label"] + (f" (with {', '.join(x['label'] for x in v['refs'])})" if v["refs"] else "")
-                for v in views))
-            self._run_attempts(ctx, self.qwen_script, {**req, "stage": "encode"}, inp, progress, cancel, log,
-                               (lo, lo + span * 0.2))
-            out = self._run_attempts(ctx, self.qwen_script, {**req, "stage": "generate"}, inp, progress, cancel,
-                                     log, (lo + span * 0.2, lo + span * 0.8))
-            peak = max(filter(None, [peak, out["result"].get("vram_peak_mib")]), default=None)
-            gen = [v for v in out["result"]["views"] if v.get("generated")]
-            picks = {v["label"]: v["path"] for v in gen}
-            if n_cand > 1:
-                order = [ref]
-                items = [{"path": str(ref), "generated": False}]
-                for lb, v in chosen.items():
-                    items.append({"path": v["path"], "generated": True, "label": lb})
-                    order.append(lb)
-                for v, (label, az, el, refs) in zip(gen, ring):
-                    anchor = refs[0] if refs and refs[0] in chosen else None
-                    items.append({"path": v["path"], "generated": True, "label": label,
-                                  "candidates": v["candidates"], "max_side": TRI_VIEW_SIDE,
-                                  "target_deg": target_angle({"azimuth": az, "elevation": el}),
-                                  **({"anchor": order.index(anchor),
-                                      "anchor_deg": angle_between((az, el), (chosen[anchor]["azimuth"],
-                                                                             chosen[anchor]["elevation"]))}
-                                     if anchor else {})})
-                try:
-                    sel = self.mv.score(items, inp, ctx, options, progress, cancel, (lo + span * 0.8, lo + span))
-                except BackendError as e:
-                    log(f"could not score ring {r + 1} ({e}); keeping the first candidates")
-                    sel = []
-                for s in sel:
-                    if s.get("path"):
-                        picks[s["view"]] = s["path"]
-                selection += sel
-            for v, (label, az, el, _) in zip(gen, ring):
-                chosen[label] = {"path": picks.get(label, v["path"]), "azimuth": az, "elevation": el}
-        views = [{"path": str(ref), "generated": False}] + [
-            {"path": v["path"], "generated": True, "key": True, "label": lb, "azimuth": v["azimuth"],
-             "elevation": v["elevation"]} for lb, v in chosen.items()]
-        return {"views": views, "selection": selection, "vram_peak_mib": peak, "env": out["env"]}
