@@ -316,13 +316,13 @@ def analyze_frames(frames: list[np.ndarray], sample_fps: float, src_fps: float,
     elif dynamic:
         kind = "static_camera_dynamic"
         keyframes = src_idx[:]  # every sample; per-frame processing
-        notes.append("Fixed camera with moving subjects: static multi-view reconstruction would be "
-                     "invalid; per-frame processing is used and background is shared.")
+        notes.append("Fixed camera with moving subjects: the 4D engine trains the background once from all "
+                     "frames and rebuilds what moves frame by frame.")
     else:
         kind = "static_scene"
         keyframes = [best]
-        notes.append(f"Fixed camera and static scene: {n - 1} of {n} sampled frames are redundant; "
-                     "the sharpest frame is reconstructed as a photo.")
+        notes.append(f"Fixed camera and static scene: {n - 1} of {n} sampled frames show the same view; all of "
+                     "them refine one background (Real 3D on a video uses its sharpest frame).")
     redundant = 1.0 - len(keyframes) / n
     return VideoAnalysis(info={}, sampled_frames=n, sample_fps=sample_fps,
                          camera_motion="moving" if moving else "static",
@@ -347,15 +347,15 @@ def analyze_video(path: Path, max_samples: int = 120, analysis_width: int = 192,
 
 
 def extract_frames_fps(path: Path, out_dir: Path, fps: float, max_frames: int,
-                       max_side: int | None = None) -> list[Path]:
-    """Extract frames at a fixed rate in a single FFmpeg pass."""
+                       max_side: int | None = None, start_s: float = 0.0) -> list[Path]:
+    """Extract frames at a fixed rate in a single FFmpeg pass, from ``start_s`` seconds on."""
     ff = require_ffmpeg()
     out_dir.mkdir(parents=True, exist_ok=True)
     vf = f"fps={fps}"
     if max_side:
         vf += f",scale='if(gt(iw,ih),min({max_side},iw),-2)':'if(gt(iw,ih),-2,min({max_side},ih))'"
-    cmd = [ff, "-hide_banner", "-loglevel", "error", "-y", "-i", str(path), "-vf", vf,
-           "-frames:v", str(max_frames), str(out_dir / "frame_%05d.png")]
+    cmd = [ff, "-hide_banner", "-loglevel", "error", "-y"] + (["-ss", f"{start_s:.3f}"] if start_s > 0 else []) + \
+        ["-i", str(path), "-vf", vf, "-frames:v", str(max_frames), str(out_dir / "frame_%05d.png")]
     r = subprocess.run(cmd, capture_output=True, text=True, creationflags=_NO_WINDOW)
     frames = sorted(out_dir.glob("frame_*.png"))
     if r.returncode != 0 or not frames:
@@ -364,18 +364,34 @@ def extract_frames_fps(path: Path, out_dir: Path, fps: float, max_frames: int,
 
 
 def exif_hfov_deg(path: Path) -> float | None:
-    """Horizontal field of view from EXIF 35 mm-equivalent focal length."""
+    """Horizontal field of view (degrees) of a photo as displayed (after its EXIF rotation), from the EXIF
+    35 mm-equivalent focal length (diagonal convention, as phones and cameras define it). None without
+    EXIF, for implausible values, or for photos cropped after shooting (the focal length then no longer
+    matches the frame). Same rule as workers/multiview_worker.exif_fov_x."""
+    import math
+
+    from PIL import ImageOps
+
     try:
         with Image.open(path) as im:
             exif = im.getexif()
-            f35 = exif.get_ifd(0x8769).get(0xA405) or exif.get(0xA405)
-            w, h = im.size
+            ifd = exif.get_ifd(0x8769)
+            f35 = ifd.get(0xA405) or exif.get(0xA405)
+            ew, eh = ifd.get(0xA002), ifd.get(0xA003)
+            sw, sh = im.size
+            w, h = ImageOps.exif_transpose(im).size
     except Exception:
         return None
-    if not f35:
+    try:
+        f35 = float(f35)
+    except (TypeError, ValueError):
         return None
-    # 35 mm equivalent refers to the 36 mm-wide frame along the long side.
-    hfov_long = 2 * np.degrees(np.arctan(36.0 / (2 * float(f35))))
-    if w >= h:
-        return float(hfov_long)
-    return float(2 * np.degrees(np.arctan(np.tan(np.radians(hfov_long) / 2) * w / h)))
+    if not 8 <= f35 <= 800:
+        return None
+    try:
+        if ew and eh and abs((float(ew) / float(eh)) / (sw / sh) - 1) > 0.01:
+            return None
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    width_mm = 43.2666 * w / math.hypot(w, h)
+    return float(math.degrees(2 * math.atan(width_mm / (2 * f35))))

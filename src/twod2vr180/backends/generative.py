@@ -1,15 +1,13 @@
-"""Photo → generated views from other angles → one 3D scene.
+"""Photo -> generated views from other angles -> one trained 3D Gaussian splat.
 
-Three generation engines:
+Two generation engines:
   * Qwen-Image-Edit-2511 + Multiple-Angles LoRA (Alibaba Qwen / fal, Apache-2.0) - an image model that
-    redraws the photo from a requested camera position; each view is a sharp ~1 MP image;
+    redraws the photo from a requested camera position; each view is a sharp ~1 MP image. Real 3D draws
+    them ring by ring around the subject, each view conditioned on its accepted neighbour;
   * Wan 2.2 Fun 5B Control-Camera (Alibaba PAI, Apache-2.0) - a video model that films camera moves
-    starting at the photo; key frames at the requested angles are used; keeps people intact;
-  * Stable Virtual Camera (Stability AI, non-commercial) - multi-view diffusion; scenes and objects.
-The views are then assembled into one 3D scene, by default with *sharp fusion*: VGGT poses the
-views, MoGe-2 gives each one crisp per-pixel geometry, and only surfaces the photo does not show are
-added from the generated views (no optimisation, so nothing is blurred). The alternative, *trained*,
-optimises one splat against every generated frame. Photo pixels are INFERRED, the rest GENERATIVE.
+    starting at the photo (used to explore the surroundings for VR180, or when Qwen is not installed).
+The views and the photo are then reconstructed by the multi-view engine (VGGT cameras, MoGe-2 scale and
+depth priors, gsplat training). Photo pixels are INFERRED, the rest GENERATIVE.
 """
 
 from __future__ import annotations
@@ -19,40 +17,22 @@ from .base import (NOVEL_VIEW_COMPLETION, SCENE_STATIC, SINGLE_VIEW, Availabilit
 from .multiview import MultiViewBackend
 
 TRAJECTORIES = {
-    "tri": "3 views: 45° to the left, 45° to the right and a high-angle shot from above, reconstructed with the "
-           "photo by the multi-view engine (trained splat)",
-    "capture": "360° photo capture: 45°, 90°, 135°, 180° and 270°, overhead and from below (Quality adds 225°, "
-               "315° and raised diagonals)",
-    "arc": "around the subject: 45° to each side, from above and from below",
-    "orbit": "wide orbit around the main subject (±100°, above and below with Wan 2.2; 360° with Stable "
-             "Virtual Camera)",
-    "explore": "look around from where the photo was taken, with a little head movement (best for VR180)",
-    "spiral": "small forward-facing spiral (most faithful, least new content)",
+    "tri": "Real 3D: rings of views around the subject (45° each side and from above, then 90°, 135° and the "
+           "back; Fast stops at 90°), each drawn from the photo and its neighbouring view",
+    "capture": "360° capture: 45°, 90°, 135°, 180° and 270°, overhead and from below (Quality adds 225°, 315° "
+               "and raised diagonals)",
+    "explore": "explore the surroundings from where the photo was taken, with a little head movement "
+               "(Wan 2.2; best for VR180)",
 }
-FRAMES = {"fast": 48, "auto": 80, "quality": 110}          # Stable Virtual Camera views
-# Wan: (frames per shot (4k+1), sampling steps). Sharp fusion only uses a few key views per shot, so its
-# shots can be shorter; a trained splat wants many frames. 360° capture orbits up to 180° in one shot.
-WAN_SETTINGS = {"fusion": {"fast": (25, 25), "auto": (33, 30), "quality": (49, 40)},
-                "train": {"fast": (49, 30), "auto": (81, 50), "quality": (81, 50)},
+# Wan: (frames per shot (4k+1), sampling steps); 360° capture orbits up to 180° in one shot.
+WAN_SETTINGS = {"train": {"fast": (49, 30), "auto": (81, 50), "quality": (81, 50)},
                 "capture": {"fast": (33, 25), "auto": (49, 30), "quality": (49, 40)}}
-FUSION_SEVA_VIEWS = 16
-SEVA_MODELS = ("seva-1.1", "sd21-vae", "clip-vit-h-14")
 WAN_MODELS = ("wan2.2-fun-5b-camera",)
 QWEN_MODELS = ("qwen-image-edit-2511-q5", "qwen-image-edit-2511-base", "qwen-edit-2511-angles-lora",
                "qwen-edit-2511-lightning")
-QWEN_LIGHTNING_8 = "qwen-edit-2511-lightning-8"   # optional: Quality mode samples 8 steps with it
-FLASHWORLD_MODELS = ("flashworld", "wan2.2-ti2v-5b-base")
-ENGINE_MODELS = {"qwen": QWEN_MODELS, "wan": WAN_MODELS, "seva": SEVA_MODELS, "flashworld": FLASHWORLD_MODELS}
-ENGINE_NAMES = {"flashworld": "FlashWorld (3D Gaussians generated directly, Wan2.2-TI2V-5B)",
-                "qwen": "Qwen-Image-Edit-2511 + Multiple-Angles LoRA", "wan": "Wan 2.2 Fun 5B Control-Camera",
-                "seva": "Stable Virtual Camera"}
-ENGINE_TRAJECTORIES = {"qwen": ("tri", "capture", "arc", "orbit"), "wan": tuple(TRAJECTORIES),
-                       "seva": ("arc", "orbit", "explore", "spiral", "capture")}
-ENGINE_TRAJECTORIES["wan"] = tuple(t for t in TRAJECTORIES if t != "tri")
-# FlashWorld generates the whole 3D at once (no separate views): it serves "Real 3D from one photo"
-ENGINE_TRAJECTORIES["flashworld"] = ("tri",)
-# FlashWorld per quality mode: (swing either side in degrees, max splats)
-FLASHWORLD_SETTINGS = {"fast": (25, 1_500_000), "auto": (30, 3_000_000), "quality": (35, 4_000_000)}
+ENGINE_MODELS = {"qwen": QWEN_MODELS, "wan": WAN_MODELS}
+ENGINE_NAMES = {"qwen": "Qwen-Image-Edit-2511 + Multiple-Angles LoRA", "wan": "Wan 2.2 Fun 5B Control-Camera"}
+ENGINE_TRAJECTORIES = {"qwen": ("tri", "capture"), "wan": ("capture", "explore")}
 
 # Qwen views: (label, azimuth°, elevation°). Azimuth clockwise seen from above (90 = right side,
 # 180 = back); elevation + = camera above. The LoRA knows 8 azimuths and -30/0/30/60° elevations.
@@ -63,19 +43,19 @@ QWEN_VIEWS = {
     "capture": _CAPTURE,
     "capture_full": _CAPTURE + [("225°", 225, 0), ("315°", 315, 0), ("45° raised", 45, 30), ("135° raised", 135, 30),
                                 ("225° raised", 225, 30), ("315° raised", 315, 30)],
-    "arc": [("45°", 45, 0), ("315°", 315, 0), ("above", 0, 30), ("below", 0, -30), ("45° raised", 45, 30),
-            ("315° raised", 315, 30)],
-    "orbit": [(f"{a}°", a, 0) for a in (45, 90, 135, 180, 225, 270, 315)] + [("overhead", 0, 60),
-                                                                                ("from below", 0, -30)],
 }
 QWEN_MEGAPIXELS = {"fast": 0.75, "auto": 1.0, "quality": 1.0}
-TRI_SIDE = {"fast": 960, "auto": 1280, "quality": 1600}      # training resolution for photo + 3 views
 
 # Candidates generated per view (the most rigid one - a pure camera move of the photo - is kept).
 QWEN_CANDIDATES = {"fast": 1, "auto": 2, "quality": 3}
-# A '3 views' angle whose best candidate scores above this gets RETRY_EXTRA more candidates (once).
-RETRY_THRESHOLD = 0.45
-RETRY_EXTRA = 2
+# Real 3D training (photo + views), per mode: the photo at its own detail, the AI views at their native
+# size (~1 MP, enlarging adds nothing), more steps for the larger photo. SH degree 1: with a handful of
+# views, higher degrees memorise the views' small disagreements as view-dependent colour, which shows
+# as texture noise (docs/research/from-rc19.md).
+TRI_PHOTO_SIDE = {"fast": 1280, "auto": 1600, "quality": 2048}
+TRI_VIEW_SIDE = 1328
+TRI_STEPS = {"fast": 6000, "auto": 12000, "quality": 20000}
+TRI_SH_DEGREE = 1
 
 
 def installed(ctx, engine: str) -> bool:
@@ -84,8 +64,8 @@ def installed(ctx, engine: str) -> bool:
 
 def generation_engine(ctx, preferred: str | None = None, trajectory: str | None = None) -> str | None:
     """The engine to use: the preferred one if installed (and able to do the trajectory), else the
-    first installed of FlashWorld (only for "tri"), Qwen, Wan, Stable Virtual Camera."""
-    order = ["flashworld", "qwen", "wan", "seva"]
+    first installed of Qwen, Wan."""
+    order = ["qwen", "wan"]
     if preferred in order:
         order.remove(preferred)
         order.insert(0, preferred)
@@ -97,54 +77,46 @@ def generation_engine(ctx, preferred: str | None = None, trajectory: str | None 
     return None
 
 
-def contact_sheet(photo, views: list[dict], selection: list[dict], out_path, thumb: int = 300):
-    """One image to judge the generated views: the photo, then one row per angle with every candidate,
-    its consistency score (lower = more like a pure camera move) and which one was used or dropped."""
-    from pathlib import Path
+# Real 3D views drawn in rings around the subject (rc42). Each ring is generated after the previous one
+# and every view in it is drawn from the photo AND the neighbouring view already accepted ("refs"), so
+# clothes, hair and proportions stay consistent all the way round, and the back finally exists (rc19 never
+# looked further than 45°). (label, azimuth°, elevation°, reference labels: the first one is also the view
+# it is judged against when choosing candidates).
+TRI_RINGS = [
+    [("45° left", 315, 0, ()), ("45° right", 45, 0, ()), ("high angle", 0, 30, ())],
+    [("90° left", 270, 0, ("45° left",)), ("90° right", 90, 0, ("45° right",))],
+    [("135° left", 225, 0, ("90° left",)), ("135° right", 135, 0, ("90° right",))],
+    [("back", 180, 0, ("135° right", "135° left"))],
+]
+TRI_RING_COUNT = {"fast": 2, "auto": 4, "quality": 4}
+# Optional complete subject (TRELLIS.2 shape, rc45): runtime + models; Fast uses the 512 pipeline
+SUBJECT_RUNTIME = "subject3d-cu128"
+SUBJECT_MODELS = ("trellis2-4b-shape", "trellis-image-large-ss-dec", "trellis2-image-encoders")
+SUBJECT_PIPELINE = {"fast": "512", "auto": "1024_cascade", "quality": "1024_cascade"}
 
-    from PIL import Image, ImageDraw, ImageOps
 
-    sel = {s.get("view"): s for s in selection or []}
-    gen = [v for v in views if v.get("generated")]
-    if not gen:
-        return None
-    ncol = max(len(v.get("candidates") or [v["path"]]) for v in gen)
-    label_h, pad = 34, 8
-    W = pad + ncol * (thumb + pad)
-    H = pad + (1 + len(gen)) * (thumb + label_h + pad)
-    sheet = Image.new("RGB", (max(W, thumb + 2 * pad), H), (24, 26, 31))
-    d = ImageDraw.Draw(sheet)
+MOGE3 = "moge-3-vitl"          # rc48: the photo's geometry by MoGe-3 when installed (MoGe-2 otherwise)
 
-    def put(path, x, y, caption, colour=(230, 232, 238), border=None):
-        try:
-            with Image.open(path) as im:
-                im = ImageOps.contain(ImageOps.exif_transpose(im).convert("RGB"), (thumb, thumb))
-        except OSError:
-            return
-        sheet.paste(im, (x, y + label_h))
-        if border:
-            d.rectangle([x - 3, y + label_h - 3, x + im.width + 2, y + label_h + im.height + 2], outline=border,
-                        width=4)
-        d.text((x, y + 8), caption, fill=colour)
 
-    put(photo, pad, pad, "your photo (reference)")
-    for r, v in enumerate(gen, start=1):
-        s = sel.get(v.get("label"), {})
-        y = pad + r * (thumb + label_h + pad)
-        for c, path in enumerate(v.get("candidates") or [v["path"]]):
-            name = Path(path).name
-            score = (s.get("scores") or {}).get(name)
-            chosen = s.get("chosen") == name or (not s and c == 0)
-            dropped = chosen and s.get("dropped")
-            tag = "DROPPED" if dropped else ("USED" if chosen else "")
-            cap = f"{v.get('label', '')} · {name}" + (f" · score {score:.3f}" if score is not None else "") + \
-                (f" · {tag}" if tag else "")
-            put(path, pad + c * (thumb + pad), y, cap,
-                border=(220, 70, 70) if dropped else ((70, 200, 110) if chosen else None))
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    sheet.save(out_path, quality=90)
-    return out_path
+def moge3_installed(ctx) -> bool:
+    return MOGE3 in ctx.models.entries and ctx.models.is_installed(MOGE3) and ctx.runtimes.is_installed("photo-cu128")
+
+
+def subject_installed(ctx) -> bool:
+    return ctx.runtimes.is_installed(SUBJECT_RUNTIME) and all(
+        m in ctx.models.entries and ctx.models.is_installed(m) for m in SUBJECT_MODELS)
+
+
+def angle_between(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Degrees between two camera directions given as (azimuth, elevation) around the subject."""
+    import math
+
+    def vec(az, el):
+        az, el = math.radians(az), math.radians(el)
+        return (math.cos(el) * math.sin(az), math.sin(el), math.cos(el) * math.cos(az))
+
+    u, v = vec(*a), vec(*b)
+    return math.degrees(math.acos(max(-1.0, min(1.0, sum(x * y for x, y in zip(u, v))))))
 
 
 def target_angle(view: dict) -> float:
@@ -160,16 +132,17 @@ def detailed(traj: str, mode: str) -> str:
 
 class GenerativeSceneBackend(Backend):
     id = "generative_scene"
-    display_name = "Generative 3D from one photo (Qwen-Image-Edit / Wan 2.2 / Stable Virtual Camera + fusion)"
+    display_name = "Generative 3D from one photo (Qwen-Image-Edit / Wan 2.2 + multi-view)"
     inputs = ("photo", "video:static_scene")
     capabilities = frozenset({SINGLE_VIEW, SCENE_STATIC, NOVEL_VIEW_COMPLETION})
     runtime_id = "gen-cu128"
     maturity = "experimental"
-    upstream = ["qwen-image-edit", "videox-fun", "stable-virtual-camera", "vggt", "moge", "gsplat"]
-    commercial_use = False  # VGGT-1B (reconstruction) and Stable Virtual Camera weights are non-commercial
-    worker_script = "seva_worker.py"
+    upstream = ["qwen-image-edit", "videox-fun", "vggt", "moge", "gsplat"]
+    commercial_use = False  # VGGT-1B (reconstruction) weights are non-commercial
     wan_script = "wan_worker.py"
     qwen_script = "qwen_views_worker.py"
+    subject_script = "trellis_subject_worker.py"
+    geometry_script = "moge_worker.py"
     description = ("Generates the unseen sides of a photo with a camera-controlled diffusion model and trains a "
                    "real 3D Gaussian splat from the generated views. Invented content is labelled GENERATIVE.")
 
@@ -177,13 +150,16 @@ class GenerativeSceneBackend(Backend):
         self.mv = MultiViewBackend()
 
     def model_ids(self, options: dict) -> list[str]:
-        engine = options.get("engine") or getattr(self, "_engine", None) or "wan"
-        return list(ENGINE_MODELS.get(engine, WAN_MODELS)) + self.mv.model_ids(options)
+        engine = options.get("engine") or getattr(self, "_engine", None) or "qwen"
+        return list(ENGINE_MODELS.get(engine, QWEN_MODELS)) + self.mv.model_ids(options)
 
     def _pick(self, ctx, options: dict) -> str:
         pref = options.get("engine")
-        return generation_engine(ctx, pref if pref != "auto" else None, options.get("trajectory")) or \
-            (pref if pref in ENGINE_MODELS else "wan")
+        pref = pref if pref != "auto" else None
+        traj = options.get("trajectory")
+        # Real 3D without Qwen-Image-Edit: Wan 2.2's 360° capture instead (see run())
+        return generation_engine(ctx, pref, traj) or (generation_engine(ctx, pref, "capture") if traj == "tri"
+                                                      else None) or (pref if pref in ENGINE_MODELS else "qwen")
 
     def prepare(self, ctx: BackendContext, options: dict) -> None:
         self._engine = self._pick(ctx, options)
@@ -203,15 +179,20 @@ class GenerativeSceneBackend(Backend):
         return av
 
     def estimate(self, inp: JobInput, hw, options: dict) -> Estimate:
-        n = FRAMES.get(options.get("mode", "auto"), 80)
-        return Estimate(seconds=120 + n * 6 + 400, vram_gb=12, disk_gb=1.0,
+        n = {"fast": 5, "auto": 16, "quality": 24}.get(options.get("mode", "auto"), 16)   # Qwen images
+        return Estimate(seconds=180 + n * 25 + 600, vram_gb=12, disk_gb=1.0,
                         notes=["estimate; not yet benchmarked on RTX 4080"])
 
     def _run_attempts(self, ctx, script, req, inp, progress, cancel, log, progress_range):
         """Each memory setting runs in a fresh process (only an exiting process reliably frees VRAM and
         RAM); the worker reports 'oom_retry' while a lighter setting is left and reuses finished work."""
+        from ..sysmem import memory_status
+
         for attempt in range(8):
             req["attempt"] = attempt
+            st = memory_status()
+            if st is not None and log:
+                log(f"memory: {st.summary()}")
             try:
                 return run_worker(ctx.runtimes.python(self.runtime_id), script, req, inp.work_dir / "worker",
                                   progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id), log=log,
@@ -223,30 +204,34 @@ class GenerativeSceneBackend(Backend):
         raise BackendError("no memory setting worked", code="oom")
 
     def run(self, inp: JobInput, ctx: BackendContext, options: dict, progress, cancel) -> BackendResult:
-        traj = options.get("trajectory") or "capture"
+        traj = options.get("trajectory") or "tri"
         if traj not in TRAJECTORIES:
-            traj = "capture"
+            traj = "tri"
         engine = getattr(self, "_engine", None) or self._pick(ctx, options)
-        if traj not in ENGINE_TRAJECTORIES[engine]:
-            raise BackendError(f"{ENGINE_NAMES[engine]} cannot do the '{traj}' path; choose 360° capture, Around "
-                               "the subject or Wide orbit, or install Wan 2.2.", code="unsupported")
-        if engine == "flashworld":
-            return self._run_flashworld(inp, ctx, options, progress, cancel)
-        mode = options.get("mode", "auto")
-        assembly = options.get("assembly") or "fusion"
-        if assembly not in ("fusion", "train"):
-            assembly = "fusion"
-        if traj == "tri":
-            assembly = "train"   # photo + 3 views → the multi-view engine's trained splat
-        ref = inp.frames[min(int(options.get("reference_frame_index", 0)), len(inp.frames) - 1)]
         log = options.get("log") or (lambda m: None)
+        if traj == "tri" and engine == "wan":
+            traj = "capture"
+            log("Qwen-Image-Edit is not installed: Real 3D uses Wan 2.2's 360° capture instead")
+        if traj not in ENGINE_TRAJECTORIES[engine]:
+            alt = "Qwen-Image-Edit" if engine == "wan" else "Wan 2.2"
+            raise BackendError(f"{ENGINE_NAMES[engine]} cannot do the '{traj}' path; choose another path or "
+                               f"install {alt}.", code="unsupported")
+        mode = options.get("mode", "auto")
+        ref = inp.frames[min(int(options.get("reference_frame_index", 0)), len(inp.frames) - 1)]
         out_dir = str(inp.work_dir / "generated_views")
         name, models = ENGINE_NAMES[engine], ENGINE_MODELS[engine]
         plan = detailed(traj, mode)
         log(f"generating views with {name}: {TRAJECTORIES[traj]}")
         for m in models:
             ctx.models.paths(m)  # clear error when missing
-        if engine == "qwen":
+        subject = None
+        if engine == "qwen" and traj == "tri":
+            out = None
+            if options.get("complete_subject", True) and subject_installed(ctx):
+                subject = self._complete_subject(inp, ctx, options, progress, cancel, log, ref, mode)
+            chain = self._qwen_rings(inp, ctx, options, progress, cancel, log, ref, out_dir, mode,
+                                     start=0.08 if subject else 0.0)
+        elif engine == "qwen":
             paths = {m: ctx.models.paths(m) for m in QWEN_MODELS}
             req = {"image": str(ref), "output_dir": out_dir,
                    "base_dir": str(ctx.models.model_dir("qwen-image-edit-2511-base")),
@@ -257,49 +242,42 @@ class GenerativeSceneBackend(Backend):
                    "angles_strength": 0.9, "candidates": QWEN_CANDIDATES.get(mode, 1) if traj == "tri" else 1,
                    "distance": options.get("qwen_distance", "medium shot"),
                    "megapixels": QWEN_MEGAPIXELS.get(mode, 1.0), "steps": 4, "seed": int(options.get("seed", 42))}
-            if mode == "quality" and QWEN_LIGHTNING_8 in ctx.models.entries and \
-                    ctx.models.is_installed(QWEN_LIGHTNING_8):
-                req.update(lora_lightning=str(next(iter(ctx.models.paths(QWEN_LIGHTNING_8).values()))), steps=8)
-                models = tuple(m for m in models if m != "qwen-edit-2511-lightning") + (QWEN_LIGHTNING_8,)
-                log("Quality: 8-step Lightning LoRA")
             self._run_attempts(ctx, self.qwen_script, {**req, "stage": "encode"}, inp, progress, cancel, log,
                                (0.0, 0.1))
             out = self._run_attempts(ctx, self.qwen_script, {**req, "stage": "generate"}, inp, progress,
-                                     cancel, log, (0.1, 0.4))
-            if traj == "tri" and mode != "fast" and options.get("retry", True):
-                out = self._retry_weak_views(req, out, inp, ctx, options, progress, cancel, log)
+                                     cancel, log, (0.1, 0.5))
         elif engine == "wan":
-            frames, steps = WAN_SETTINGS["capture" if traj == "capture" else assembly].get(mode, (33, 30))
+            frames, steps = WAN_SETTINGS["capture" if traj == "capture" else "train"].get(mode, (33, 30))
             req = {"image": str(ref), "output_dir": out_dir, "trajectory": plan, "frames": frames,
                    "steps": steps, "short_side": 704, "hfov_deg": options.get("hfov_deg"),
                    "seed": int(options.get("seed", 42)), "model_dir": str(ctx.models.model_dir(WAN_MODELS[0])),
-                   "every": 0 if assembly == "fusion" else 2}
+                   "every": 2}
             out = self._run_attempts(ctx, self.wan_script, req, inp, progress, cancel, log, (0.0, 0.5))
-        else:
-            n = FRAMES.get(mode, 80)
-            req = {"image": str(ref), "output_dir": out_dir, "trajectory": "orbit" if traj == "capture" else traj,
-                   "num_frames": n, "steps": 50, "short_side": 576, "hfov_deg": options.get("hfov_deg"),
-                   "seed": int(options.get("seed", 23)), "seva_dir": str(ctx.models.model_dir("seva-1.1")),
-                   "vae_dir": str(ctx.models.model_dir("sd21-vae")),
-                   "clip_path": str(ctx.models.paths("clip-vit-h-14")["open_clip_model.safetensors"])}
-            out = self._run_attempts(ctx, self.worker_script, req, inp, progress, cancel, log, (0.0, 0.5))
-        views = out["result"]["views"]
-        if assembly == "fusion":
-            views = self.fusion_views(views)
-            log(f"sharp fusion of the photo and {len(views) - 1} key views")
+        views = out["result"]["views"] if out is not None else chain["views"]
         # The real photo is sampled more often than any single generated view during training.
         w_in = max(4.0, len(views) / 10)
         mv_views = [{"path": v["path"], "generated": bool(v["generated"]), "weight": 1.0 if v["generated"] else w_in,
+                     # the photo's real lens (EXIF of the original file; the frame is a PNG copy without it)
+                     **({"fov_x": options["hfov_deg"]} if not v["generated"] and options.get("hfov_deg") else {}),
                      **({"candidates": v["candidates"], "label": v.get("label", ""),
                          "target_deg": target_angle(v)} if len(v.get("candidates") or []) > 1 else {})}
                     for v in views]
         gen_models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
                       for m in models]
-        mv_opts = {**options, "max_side": 1024, "assembly": assembly}
+        mv_opts = {**options, "max_side": 1024}
         if traj == "tri":
-            # photo + 3 views: train at the photo's detail, and with view-independent-ish colour (SH 1) -
-            # with so few views higher SH degrees overfit into colour flicker when the head moves
-            mv_opts.update(max_side=TRI_SIDE.get(mode, 1280), sh_degree=1)
+            for v in mv_views:
+                v["max_side"] = TRI_VIEW_SIDE if v["generated"] else TRI_PHOTO_SIDE.get(mode, 1600)
+            mv_opts.update(sh_degree=TRI_SH_DEGREE, train_steps=TRI_STEPS.get(mode, 12000))
+            if subject:
+                mv_opts.update(subject_mesh=subject["subject_mesh"], subject_mask=subject["subject_mask"])
+                gen_models += subject["models"]
+            geo = self._photo_geometry(inp, ctx, options, progress, cancel, log, ref, mode) \
+                if moge3_installed(ctx) else None
+            if geo:
+                mv_opts["photo_geometry"] = geo
+                gen_models.append({"id": MOGE3, **{k: ctx.models.status(MOGE3)[k]
+                                                   for k in ("revision", "license", "hash_status")}})
         res = self.mv.reconstruct(
             mv_views, inp, ctx, mv_opts, progress, cancel,
             progress_range=(0.5, 0.97), extra_models=gen_models,
@@ -307,137 +285,120 @@ class GenerativeSceneBackend(Backend):
                             f"('{traj}'). Splats taken from those views are labelled GENERATIVE; they are "
                             "plausible, not measured."])
         res.backend = self.id
-        try:
-            sheet = contact_sheet(ref, views, res.extra.get("candidate_selection") or [],
-                                  inp.work_dir / "export" / "generated_views_sheet.jpg")
-            if sheet:
-                res.extra["contact_sheet"] = str(sheet)
-                log(f"generated views overview: {sheet}")
-        except Exception as e:  # noqa: BLE001 - only an overview image
-            log(f"could not draw the generated-views overview: {e}")
-        res.extra.update({"trajectory": traj, "engine": engine, "assembly": res.extra.get("assembly") or assembly,
+        res.extra.update({"trajectory": traj, "engine": engine, "assembly": "train",
                           "generated_views": len(views) - 1,
-                          "generation_vram_peak_mib": out["result"].get("vram_peak_mib")})
-        res.worker_env = {"generation": out["env"], "reconstruction": res.worker_env}
+                          "generation_vram_peak_mib": (out["result"] if out is not None else chain).get("vram_peak_mib")})
+        if out is None:
+            res.extra["candidate_selection"] = chain["selection"]
+        res.worker_env = {"generation": (out if out is not None else chain)["env"], "reconstruction": res.worker_env}
         return res
 
-    flashworld_script = "flashworld_worker.py"
-
-    def _run_flashworld(self, inp, ctx, options, progress, cancel) -> BackendResult:
-        """One photo -> 3D Gaussians generated directly by FlashWorld (runs in the reconstruction runtime,
-        which has gsplat): no separate views to reconcile, so no ghosting between them."""
-        import hashlib
-        import json
-        from pathlib import Path
-
-        import numpy as np
-
-        from ..scene import GENERATIVE, INFERRED, Camera, read_gaussian_ply, write_gaussian_ply, write_splat
-        from .multiview import encode_turntable
-
-        log = options.get("log") or (lambda m: None)
-        mode = options.get("mode", "auto")
-        swing, cap = FLASHWORLD_SETTINGS.get(mode, FLASHWORLD_SETTINGS["auto"])
-        ref = inp.frames[min(int(options.get("reference_frame_index", 0)), len(inp.frames) - 1)]
-        for m in FLASHWORLD_MODELS:
-            ctx.models.paths(m)  # clear error when missing
-        base = ctx.models.model_dir("wan2.2-ti2v-5b-base")
-        ckpt = next(iter(ctx.models.paths("flashworld").values()))
-        rt = self.mv.runtime_id
-        py, env = ctx.runtimes.python(rt), ctx.runtimes.worker_env(rt)
-        prompt = str(options.get("prompt", ""))
-        cache = ctx.models.model_dir("flashworld") / "text-cache"
-        embeds = cache / f"umt5_{hashlib.sha1(prompt.encode()).hexdigest()[:12]}.pt"
-        if not embeds.exists():
-            log("encoding the text prompt once (UMT5-XXL); it is cached for later runs")
-            run_worker(py, self.flashworld_script, {"stage": "encode", "base_dir": str(base), "prompt": prompt,
-                                                    "embeds_path": str(embeds)},
-                       inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.0, 0.1),
-                       timeout_s=3600)
-        out_dir = inp.work_dir / "flashworld_out"
-        req = {"stage": "generate", "image": str(ref), "output_dir": str(out_dir), "base_dir": str(base),
-               "ckpt": str(ckpt), "embeds_path": str(embeds), "frames": 24, "swing_deg": swing,
-               "rise_deg": 6, "max_gaussians": cap, "min_opacity": 0.01,
-               "moge_path": str(ctx.models.paths("moge-2-vitl-normal")["model.pt"])
-               if "moge-2-vitl-normal" in ctx.models.entries and ctx.models.is_installed("moge-2-vitl-normal")
-               else None}
-        log(f"generating the 3D scene directly with {ENGINE_NAMES['flashworld']}")
-        out = run_worker(py, self.flashworld_script, req, inp.work_dir / "worker", progress, cancel, env=env,
-                         log=log, progress_range=(0.1, 0.97), timeout_s=4 * 3600)
-        res, files = out["result"], out["result"]["outputs"]
-        scene = read_gaussian_ply(Path(files["ply"]))
-        cams = json.loads(Path(files["cameras"]).read_text()) if Path(files["cameras"]).exists() else []
-        scene.cameras = [Camera.from_dict(c) for c in cams]
-        scene.metric_scale = bool(res.get("metric"))
-        # splats the photo shows are INFERRED (its colours, generated depth); the rest is GENERATIVE
-        prov = np.full(len(scene), GENERATIVE, np.uint8)
-        if cams:
-            c = cams[0]
-            w2c = np.linalg.inv(np.asarray(c["c2w"], float))
-            pc = scene.means @ w2c[:3, :3].T + w2c[:3, 3]
-            z = pc[:, 2]
-            with np.errstate(divide="ignore", invalid="ignore"):
-                u = c["fx"] * pc[:, 0] / z + c["cx"]
-                v = c["fy"] * pc[:, 1] / z + c["cy"]
-            prov[(z > 0) & (u >= 0) & (u < c["width"]) & (v >= 0) & (v < c["height"])] = INFERRED
-        scene.provenance = prov
-        exp = inp.work_dir / "export"
-        ply = write_gaussian_ply(scene, exp / "scene.ply")
-        splat = write_splat(scene, exp / "scene.splat")
-        warnings = ["Generative 3D: FlashWorld generated the scene from your photo. Splats your photo shows are "
-                    "INFERRED (its colours, generated depth); everything else is GENERATIVE - plausible, "
-                    "not measured."]
-        turntable = None
-        if files.get("turntable_frames"):
-            turntable, err = encode_turntable(Path(files["turntable_frames"]), exp / "turntable.mp4")
-            if err:
-                warnings.append(f"Turntable preview not encoded: {err}")
-        models = [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
-                  for m in FLASHWORLD_MODELS]
-        n_inf = int((prov == INFERRED).sum())
-        return BackendResult(
-            backend=self.id, scene_ply=ply, splat=splat, obj=None, cameras=cams, metric_scale=scene.metric_scale,
-            provenance_note=(f"FlashWorld generated {len(scene):,} splats directly in 3D: {n_inf:,} seen in your "
-                             f"photo (INFERRED), {len(scene) - n_inf:,} invented (GENERATIVE)."),
-            vram_peak_mib=res.get("vram_peak_mib"), worker_env={"reconstruction": out["env"]},
-            models_used=models, warnings=warnings,
-            extra={"engine": "flashworld", "trajectory": "tri", "assembly": "generated", "gaussians": len(scene),
-                   "subject_distance_m": res.get("subject_distance_m"), "hfov_deg": res.get("hfov_deg"),
-                   "views": res.get("views"), "size": res.get("size"),
-                   "turntable": str(turntable) if turntable else None})
-
-    def _retry_weak_views(self, req, out, inp, ctx, options, progress, cancel, log):
-        """Score the candidates now; for every angle whose best candidate still does not look like a pure
-        camera move of the photo, generate RETRY_EXTRA more and keep the result (the final selection runs
-        again inside the reconstruction)."""
-        views = out["result"]["views"]
-        mv_views = [{"path": v["path"], "generated": bool(v["generated"]),
-                     **({"candidates": v["candidates"], "label": v.get("label", ""), "target_deg": target_angle(v)}
-                        if v.get("generated") else {})} for v in views]
+    def _photo_geometry(self, inp, ctx, options, progress, cancel, log, ref, mode):
+        """The photo's metric geometry by MoGe-3 (photo runtime), at its training size and with its real
+        field of view; None if it fails (MoGe-2 inside the multi-view worker is the fallback)."""
+        out = inp.work_dir / "photo_geometry"
+        out.mkdir(parents=True, exist_ok=True)
+        item = {"path": str(ref), "out": str(out / "photo.npz")}
+        if options.get("hfov_deg"):
+            item["fov_x"] = float(options["hfov_deg"])
+        req = {"model_path": str(ctx.models.paths(MOGE3)["model.pt"]), "version": "v3", "refine_steps": 3,
+               "max_side": TRI_PHOTO_SIDE.get(mode, 1600), "fp16": True, "images": [item]}
+        log("the photo's geometry: MoGe-3")
         try:
-            sel = self.mv.score(mv_views, inp, ctx, {**options, "max_side": 1024}, progress, cancel, (0.4, 0.45))
+            run_worker(ctx.runtimes.python("photo-cu128"), self.geometry_script, req, inp.work_dir / "worker", progress,
+                       cancel, env=ctx.runtimes.worker_env("photo-cu128"), log=log, progress_range=(0.5, 0.52),
+                       timeout_s=1800)
         except BackendError as e:
-            log(f"could not score the generated views ({e}); keeping them as they are")
-            return out
-        best = {s["view"]: min((s.get("scores") or {"": 9.0}).values()) for s in sel}
-        weak = [lb for lb, sc in best.items() if sc > float(options.get("retry_threshold", RETRY_THRESHOLD))]
-        log("view consistency: " + ", ".join(f"{lb} {sc:.3f}" for lb, sc in best.items()))
-        if not weak:
-            return out
-        log(f"generating {RETRY_EXTRA} more candidates for: {', '.join(weak)}")
-        n = int(req.get("candidates", 1))
-        req2 = {**req, "stage": "generate",
-                "views": [dict(v, candidates=n + RETRY_EXTRA) if v["label"] in weak else v for v in req["views"]]}
-        return self._run_attempts(ctx, self.qwen_script, req2, inp, progress, cancel, log, (0.45, 0.5))
+            log(f"MoGe-3 unavailable ({e}); MoGe-2 is used")
+            return None
+        return item["out"]
 
-    @staticmethod
-    def fusion_views(views: list[dict]) -> list[dict]:
-        """The photo plus the key views of every shot (Wan marks them; for engines that do not, an even
-        selection of the generated views)."""
-        photo = [v for v in views if not v.get("generated")][:1]
-        gen = [v for v in views if v.get("generated")]
-        keys = [v for v in gen if v.get("key")]
-        if not keys and gen:
-            n = min(FUSION_SEVA_VIEWS, len(gen))
-            keys = [gen[round(i * (len(gen) - 1) / max(n - 1, 1))] for i in range(n)]
-        return photo + keys
+    def _complete_subject(self, inp, ctx, options, progress, cancel, log, ref, mode):
+        """TRELLIS.2 shape of the whole subject (back included), or None if it fails (Real 3D goes on
+        without it). Its mesh guides the depth of the AI views in the multi-view worker."""
+        p = {m: ctx.models.paths(m) for m in SUBJECT_MODELS}
+        shape_dir = ctx.models.model_dir("trellis2-4b-shape")
+        req = {"image": str(ref), "output_dir": str(inp.work_dir / "complete_subject"),
+               "model_dir": str(shape_dir), "image_large_dir": str(ctx.models.model_dir("trellis-image-large-ss-dec")),
+               "dinov3_zip": str(p["trellis2-image-encoders"]["dinov3.zip"]),
+               "rmbg_zip": str(p["trellis2-image-encoders"]["RMBG-2.0.zip"]),
+               "pipeline_type": SUBJECT_PIPELINE.get(mode, "1024_cascade"), "seed": int(options.get("seed", 42))}
+        log(f"complete subject: TRELLIS.2 ({req['pipeline_type']})")
+        try:
+            out = run_worker(ctx.runtimes.python(SUBJECT_RUNTIME), self.subject_script, req, inp.work_dir / "worker",
+                             progress, cancel, env=ctx.runtimes.worker_env(SUBJECT_RUNTIME), log=log,
+                             progress_range=(0.0, 0.08), timeout_s=3600)
+        except BackendError as e:
+            log(f"complete subject unavailable ({e}); Real 3D continues without it")
+            return None
+        files = out["result"]["outputs"]
+        return {"subject_mesh": files["mesh"], "subject_mask": files["mask"],
+                "models": [{"id": m, **{k: ctx.models.status(m)[k] for k in ("revision", "license", "hash_status")}}
+                           for m in SUBJECT_MODELS]}
+
+    def _qwen_rings(self, inp, ctx, options, progress, cancel, log, ref, out_dir, mode, start=0.0):
+        """Real 3D views, ring by ring (TRI_RINGS): generate a ring (each view from the photo + its
+        neighbouring accepted view), choose the most consistent candidate of each view (judged against
+        that neighbour, VGGT score-only pass), then the next ring uses those choices as references."""
+        paths = {m: ctx.models.paths(m) for m in QWEN_MODELS}
+        n_cand = QWEN_CANDIDATES.get(mode, 1)
+        base = {"image": str(ref), "output_dir": out_dir,
+                "base_dir": str(ctx.models.model_dir("qwen-image-edit-2511-base")),
+                "gguf": str(next(iter(paths["qwen-image-edit-2511-q5"].values()))),
+                "lora_angles": str(next(iter(paths["qwen-edit-2511-angles-lora"].values()))),
+                "lora_lightning": str(next(iter(paths["qwen-edit-2511-lightning"].values()))),
+                "angles_strength": 0.9, "candidates": n_cand,
+                "distance": options.get("qwen_distance", "medium shot"),
+                "megapixels": QWEN_MEGAPIXELS.get(mode, 1.0), "steps": 4, "seed": int(options.get("seed", 42))}
+        rings = TRI_RINGS[:TRI_RING_COUNT.get(mode, 4)]
+        chosen: dict[str, dict] = {}            # label -> accepted view (path, azimuth, elevation)
+        selection, peak, index = [], None, 0
+        span = (0.5 - start) / len(rings)
+        for r, ring in enumerate(rings):
+            lo = start + r * span
+            views = []
+            for label, az, el, refs in ring:
+                views.append({"label": label, "azimuth": az, "elevation": el, "index": index,
+                              "refs": [{"path": chosen[x]["path"], "label": x} for x in refs if x in chosen]})
+                index += 1
+            req = {**base, "views": views}
+            log(f"ring {r + 1}/{len(rings)}: " + ", ".join(
+                v["label"] + (f" (with {', '.join(x['label'] for x in v['refs'])})" if v["refs"] else "")
+                for v in views))
+            self._run_attempts(ctx, self.qwen_script, {**req, "stage": "encode"}, inp, progress, cancel, log,
+                               (lo, lo + span * 0.2))
+            out = self._run_attempts(ctx, self.qwen_script, {**req, "stage": "generate"}, inp, progress, cancel,
+                                     log, (lo + span * 0.2, lo + span * 0.8))
+            peak = max(filter(None, [peak, out["result"].get("vram_peak_mib")]), default=None)
+            gen = [v for v in out["result"]["views"] if v.get("generated")]
+            picks = {v["label"]: v["path"] for v in gen}
+            if n_cand > 1:
+                order = [ref]
+                items = [{"path": str(ref), "generated": False}]
+                for lb, v in chosen.items():
+                    items.append({"path": v["path"], "generated": True, "label": lb})
+                    order.append(lb)
+                for v, (label, az, el, refs) in zip(gen, ring):
+                    anchor = refs[0] if refs and refs[0] in chosen else None
+                    items.append({"path": v["path"], "generated": True, "label": label,
+                                  "candidates": v["candidates"], "max_side": TRI_VIEW_SIDE,
+                                  "target_deg": target_angle({"azimuth": az, "elevation": el}),
+                                  **({"anchor": order.index(anchor),
+                                      "anchor_deg": angle_between((az, el), (chosen[anchor]["azimuth"],
+                                                                             chosen[anchor]["elevation"]))}
+                                     if anchor else {})})
+                try:
+                    sel = self.mv.score(items, inp, ctx, options, progress, cancel, (lo + span * 0.8, lo + span))
+                except BackendError as e:
+                    log(f"could not score ring {r + 1} ({e}); keeping the first candidates")
+                    sel = []
+                for s in sel:
+                    if s.get("path"):
+                        picks[s["view"]] = s["path"]
+                selection += sel
+            for v, (label, az, el, _) in zip(gen, ring):
+                chosen[label] = {"path": picks.get(label, v["path"]), "azimuth": az, "elevation": el}
+        views = [{"path": str(ref), "generated": False}] + [
+            {"path": v["path"], "generated": True, "key": True, "label": lb, "azimuth": v["azimuth"],
+             "elevation": v["elevation"]} for lb, v in chosen.items()]
+        return {"views": views, "selection": selection, "vram_peak_mib": peak, "env": out["env"]}

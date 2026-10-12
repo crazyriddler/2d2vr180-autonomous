@@ -16,17 +16,21 @@ def main(req):
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, f"stage_{req['stage']}.json"), "w") as f:
         json.dump(req, f)
+    calls = os.path.join(out, "stage_calls.json")
+    prev = json.load(open(calls)) if os.path.exists(calls) else []
+    json.dump(prev + [req], open(calls, "w"))
     if req["stage"] == "encode":
         emit("result", stage="encode", views=len(req["views"]))
         return
     views = [{"path": req["image"], "generated": False}]
     for i, v in enumerate(req["views"]):
         paths = []
-        for c in range(max(1, int(v.get("candidates", req.get("candidates", 1))))):
-            p = os.path.join(out, f"view{i:02d}.png" if c == 0 else f"view{i:02d}_c{c}.png")
+        idx = int(v.get("index", i))
+        for c in range(max(1, int(req.get("candidates", 1)))):
+            p = os.path.join(out, f"view{idx:02d}.png" if c == 0 else f"view{idx:02d}_c{c}.png")
             shutil.copy(req["image"], p)
             paths.append(p)
-        views.append({**v, "path": paths[0], "candidates": paths, "generated": True, "key": True})
+        views.append({"path": paths[0], "candidates": paths, "generated": True, "key": True, **v})
     progress(1.0, "fake views done")
     emit("result", stage="generate", views=views, size=[160, 120], placement="stream", vram_peak_mib=None)
 

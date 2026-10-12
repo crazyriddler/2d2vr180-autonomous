@@ -7,15 +7,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "workers"))
 import wan_worker as w  # noqa: E402
 
 
-def test_arc_has_side_and_vertical_shots_starting_at_the_photo():
-    plan = w.shots("arc", 33)
-    assert len(plan) == 4 and w.shot_labels("arc") == ["right", "left", "from above", "from below"]
-    for shot in plan:
-        assert len(shot) == 33 and np.allclose(shot[0], np.eye(4))
+def test_shots_start_at_the_photo():
+    for kind in w.TRAJECTORIES:
+        plan = w.shots(kind, 33)
+        assert len(plan) == len(w.shot_labels(kind)) == 4
+        for shot in plan:
+            assert len(shot) == 33 and np.allclose(shot[0], np.eye(4))
 
 
 def test_vertical_shots_look_at_the_subject_from_above_and_below():
-    above, below = w.shots("arc", 33)[2][-1], w.shots("arc", 33)[3][-1]
+    above, below = w.shots("capture", 33)[2][-1], w.shots("capture", 33)[3][-1]
     target = np.array([0.0, 0.0, 2.0])
     for m in (above, below):
         fwd = m[:3, :3] @ np.array([0, 0, 1.0])

@@ -20,16 +20,19 @@ PREFERENCES: dict[str, dict[str, list[str]]] = {
     "photo": {"auto": ["sharp", "moge_rgbd", "depth_anything_v2"],
               "quality": ["sharp", "moge_rgbd", "depth_anything_v2"],
               "fast": ["moge_rgbd", "depth_anything_v2", "sharp"]},
-    "video:static_scene": {"auto": ["sharp", "moge_rgbd", "depth_anything_v2"],
-                           "quality": ["sharp", "moge_rgbd", "depth_anything_v2"],
-                           "fast": ["moge_rgbd", "depth_anything_v2", "sharp"]},
-    "video:static_camera_dynamic": {m: ["moge_rgbd", "depth_anything_v2"] for m in MODES},
-    "video:moving_camera": {m: ["multiview"] for m in MODES},
+    # every video becomes a 4D scene (rc49); a still scene too: all frames refine one background
+    "video:static_scene": {m: ["video4d"] for m in MODES},
+    "video:static_camera_dynamic": {m: ["video4d"] for m in MODES},
+    "video:moving_camera": {m: ["video4d"] for m in MODES},
+    "video:frame": {"auto": ["sharp", "moge_rgbd", "depth_anything_v2"],
+                    "quality": ["sharp", "moge_rgbd", "depth_anything_v2"],
+                    "fast": ["moge_rgbd", "depth_anything_v2", "sharp"]},
     "images": {m: ["multiview"] for m in MODES},
 }
 
-# If nothing native can run: degrade honestly to a single-frame reconstruction.
-FALLBACK = {"video:moving_camera": "video:static_scene", "images": "photo"}
+# If nothing native can run: degrade honestly to a single-frame reconstruction (the sharpest frame).
+FALLBACK = {"video:moving_camera": "video:frame", "video:static_camera_dynamic": "video:frame",
+            "video:static_scene": "video:frame", "images": "photo"}
 
 
 @dataclass
@@ -74,6 +77,7 @@ def select(inp: JobInput, hw: HardwareReport | None, ctx: BackendContext, mode: 
         if b.maturity == "unsupported" and kind in b.inputs:
             sel.rejected.append({"backend": b.id, "reasons": [b.description]})
     kinds = [kind] + ([FALLBACK[kind]] if kind in FALLBACK else [])
+    native_reasons: list[str] = []      # why the input's own engine could not run (for the fallback note)
     for k in kinds:
         for bid in PREFERENCES.get(k, {}).get(mode, []):
             b = backends[bid]
@@ -85,8 +89,12 @@ def select(inp: JobInput, hw: HardwareReport | None, ctx: BackendContext, mode: 
                 sel.effective_kind = k
                 if k != kind:
                     what = "the first photo" if kind == "images" else "the sharpest frame"
-                    sel.notes.append(f"No multi-view backend available for {kind}; falling back to a "
-                                     f"single-frame reconstruction of {what} ({b.display_name}).")
+                    engine = "multi-view" if kind == "images" else "4D video"
+                    sel.notes.append(f"The {engine} engine cannot run here ({'; '.join(native_reasons)}); "
+                                     f"falling back to a single-frame 3D reconstruction of {what} "
+                                     f"({b.display_name}).")
                 return sel
             sel.rejected.append({"backend": bid, "reasons": reasons})
+            if k == kind:
+                native_reasons += reasons
     return sel

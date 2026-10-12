@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from conftest import install_fake_model
@@ -15,12 +16,13 @@ def test_sharp_preferred_when_installed(ctx, rtx4080, tmp_path):
 
 
 def test_fallback_is_explained(ctx, rtx4080, tmp_path):
-    rtx4080.gpus[0].total_mib = 8192  # too small for multi-view
+    rtx4080.gpus[0].total_mib = 8192  # too small for the 4D engine
     inp = JobInput(tmp_path / "a.mp4", "video", tmp_path, video_kind="moving_camera")
     sel = select(inp, rtx4080, ctx, "auto")
-    assert sel.backend.id == "moge_rgbd" and sel.effective_kind == "video:static_scene"
+    assert sel.backend.id == "moge_rgbd" and sel.effective_kind == "video:frame"
     rej = {r["backend"]: r["reasons"] for r in sel.rejected}
-    assert any("10 GB" in r for r in rej["multiview"])
+    assert any("10 GB" in r for r in rej["video4d"])
+    assert "10 GB" in sel.notes[0] and "sharpest frame" in sel.notes[0]
     assert "longsplat" in rej  # unsupported research backends are listed with reasons
 
 
@@ -34,7 +36,9 @@ def test_runtime_manager_state(tmp_path):
         assert len(lines) > 20 and all("==" in p for p in lines), "runtimes must install an exact lock"
         torch_line = next(p for p in lines if p.startswith("torch=="))
         assert "+cu" in torch_line
-        assert all("/archive/" in a["url"] and len(a["url"].rsplit("/", 1)[1]) == 44 for a in s.archives_no_deps)
+        for a in s.archives_no_deps:   # commit archives, or prebuilt wheels pinned to a commit
+            assert ("/archive/" in a["url"] and len(a["url"].rsplit("/", 1)[1]) == 44) or \
+                (re.search(r"/raw/[0-9a-f]{40}/", a["url"]) and a["url"].endswith(".whl")), a["url"]
     rm = RuntimeManager(tmp_path, specs)
     assert not rm.is_installed("photo-cu128")
     py = rm.python("photo-cu128")
@@ -78,8 +82,6 @@ def test_copy_package_installs_subpackages_from_archive(tmp_path, monkeypatch):
         z.writestr("repo-abc/seva/modules/layers.py", "X = 1\n")
         z.writestr("repo-abc/demo.py", "")
         z.writestr("repo-abc/third_party/x.py", "")
-        z.writestr("repo-abc/src/depth_anything_3/__init__.py", "")
-        z.writestr("repo-abc/src/depth_anything_3/model/da3.py", "Y = 2\n")
 
     class Resp(io.BytesIO):
         def __enter__(self):
@@ -98,10 +100,6 @@ def test_copy_package_installs_subpackages_from_archive(tmp_path, monkeypatch):
                                                                           "stderr": ""})())
     rm = RuntimeManager(root=tmp_path / "rt", specs={})
     rm._copy_package(sys.executable, {"url": "https://x/archive/abc.zip", "copy_package": "seva"}, lambda m: None, None)
-    rm._copy_package(sys.executable, {"url": "https://x/archive/abc.zip", "copy_package": "depth_anything_3",
-                                      "package_root": "src"}, lambda m: None, None)
     monkeypatch.setattr(subprocess, "run", real_run)
-    assert (site / "depth_anything_3" / "model" / "da3.py").read_text() == "Y = 2\n"   # src layout
-    assert not (site / "src").exists()
     assert (site / "seva" / "modules" / "layers.py").read_text() == "X = 1\n"
     assert not (site / "demo.py").exists() and not (site / "third_party").exists()

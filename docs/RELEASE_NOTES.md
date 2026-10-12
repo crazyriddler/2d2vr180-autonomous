@@ -1,4 +1,429 @@
-# 2D2VR180 1.0.0-rc34 — Real 3D generated directly: FlashWorld
+# 2D2VR180 1.0.0-rc53 — Memory check before every job
+
+The owner tested rc52. Two failures happened right at the start of Real 3D, in steps that had worked in the
+two runs before:
+
+- TRELLIS.2: "CUDA out of memory" asking for 0.96 GB with 12.3 GB of VRAM free;
+- loading Qwen's text encoder: the process crashed with Windows error 0xC0000005.
+
+On Windows, GPU memory also needs "commit": room in RAM plus the page file. When that runs out, these are
+exactly the symptoms. Free disk space had also dropped by 29 GB since the previous run, which fits a growing
+page file. Something was holding a lot of memory before the job started: worker processes left over from
+earlier failed jobs, or other programs.
+
+## What's new in rc53
+
+- **Leftover workers are stopped.** At the start of every job the app stops any of its own worker processes
+  still running from earlier jobs. The queue runs one job at a time, so they are never needed. The log
+  names each one and its memory.
+- **Memory is reported.**
+  - The log shows free RAM and free "memory for programs" (RAM + page file) before the job, and before
+    every AI model step.
+  - The report stores the same figures under `hardware.memory`.
+- **A clear warning when memory is short.** With less than 24 GB free, the job says so, and what to do:
+  close other programs, restart the PC if it stays low, and let Windows manage the page file on a drive with
+  20 GB or more free.
+
+## rc52: Real 3D memory fix, second try
+
+The owner tested rc51. Real 3D now crashed at the first step of the first AI view, with Windows error
+0xC0000005 (access violation) and no message. The mode rc51 introduced for PCs with 32 GB of RAM ("sync":
+the AI image model's blocks copied to the GPU without streams) does not work with its quantised (GGUF)
+weights on Windows.
+
+## Fixes in rc52
+
+- **Back to the streamed mode that worked**, with the real cause of the RAM exhaustion fixed. Each block of
+  the 15 GB model is page-locked (pinned) on its way to the GPU. PyTorch keeps every freed pinned buffer in
+  a cache and never gives it back to Windows, so the RAM filled up after two views. That cache is now
+  emptied after every step and every view. The log shows how much pinned memory is still held after the
+  first step.
+- The "sync" mode is removed.
+- Kept from rc51:
+  - running out of RAM is retried with a lighter setting;
+  - the VRAM limit follows the memory that is really free;
+  - the photo given to Qwen is reduced to 2048 px.
+
+## rc51: Real 3D no longer runs out of RAM
+
+Owner report (rc50, Real 3D on a 24 MP photo, RTX 4080, 32 GB RAM): the job failed after the first two AI
+views with `MemoryError: Unable to allocate 11.9 MiB`. The PC had run out of system memory (RAM), not GPU
+memory.
+
+## Fixes in rc51
+
+- **Qwen-Image-Edit no longer pins its weights on PCs with less than 48 GB of RAM.** Its 15 GB model lives in
+  RAM and moves to the GPU block by block.
+  - The faster "stream" mode page-locks every block on the way, which on 32 GB left too little memory for
+    everything else. Below 48 GB of RAM the blocks are now copied from ordinary memory: a little slower, with
+    no extra RAM.
+  - The log shows how much RAM is free and which mode is used.
+- **Running out of RAM is retried, not fatal.** The views already drawn are kept, and the next, lighter
+  setting runs in a fresh process. If nothing fits, the error says "out of system memory (RAM)" and suggests
+  closing other programs or enlarging the Windows page file.
+- **No more silent VRAM overflow.** Every GPU step limits itself to the VRAM that is really free, minus a
+  margin.
+  - Before, the limit was 92–94 % of the card's total. With the desktop and other programs using about
+    1.5 GB, that was more than was free.
+  - On Windows the driver then quietly backs the excess with system RAM: slower, and it eats the RAM.
+  - Now a full card raises a normal out-of-memory error, which every step already handles by retrying
+    smaller.
+- **Big photos cost less.** The AI views are about 1 megapixel, so the photo given to Qwen is reduced to
+  2048 px first instead of decoding all 24 MP. The 3D reconstruction still uses the photo at full detail.
+- The log line "Local DINOv3 NOT found. Attempting download" comes from the TRELLIS.2 fork's code. It loads
+  the model from the app's own folder, and that step runs with Hugging Face access switched off, so nothing
+  is downloaded.
+
+## rc50: Smooth movement in 4D videos
+
+In rc49 the people and animals that move in a video were rebuilt frame by frame, like a flip-book: a new set
+of splats every frame, with flicker between frames and nothing in between. Now they are **Gaussians that
+move**.
+
+## What's new in rc50
+
+- **Moving parts that move.** The moving parts of every second frame are the starting point. Each group
+  (a person, an animal) is followed to where it is in the next one: first as a whole, then point by point.
+  Then every Gaussian learns how it moves (speed, acceleration, turning) and for how long it is visible. The
+  optimisation uses every frame, in front of the trained background, and looks at:
+  - the colour of the moving pixels;
+  - their depth;
+  - local rigidity: neighbours keep their distances, so a body does not tear apart;
+  - smooth acceleration.
+- **Smooth everywhere.**
+  - The 4D player plays continuously, not frame by frame.
+  - The VR180 video is rendered at 24 fps, with the camera and the movement interpolated between the
+    video's frames, even when the video was sampled at 8–15 per second.
+  - The 4D file is smaller, because the same Gaussians serve several frames.
+- **Safe fallback.** If the motion optimisation fails (for example, out of memory), the moving parts are
+  rebuilt frame by frame as in rc49, and the log says why.
+- Still the side the camera saw. A person who turns round shows their other side only while it faces the
+  camera.
+
+## Not yet tested on your hardware
+
+The motion optimisation was tested on the CPU on a synthetic moving object. Seeded from every second
+frame, it halves the error of the frames in between and learns the right speed. The whole worker was run end
+to end with stand-ins for the models. Speed and quality on real videos on the RTX 4080 are still to be
+measured.
+
+## rc49: Videos become 4D scenes
+
+Until now a video only really used one frame. From this version every video becomes a **4D Gaussian splat
+scene**: 3D that changes over time. It comes with a player for the app and for VR, and the VR180 video is
+rendered from it.
+
+## What's new in rc49
+
+- **Videos in 4D.** For every frame of the video (by quality: 8, 12 or 15 per second, for 8, 12 or 15 s):
+  - VGGT finds where the camera was, and MoGe-2 gives the depth at real-world scale. A camera on a tripod is
+    detected and held exactly still.
+  - **What moves is found in 3D.** Each frame is compared with frames before and after it and across the
+    clip: if another frame sees empty space where a point is, or another colour at the same depth, that part
+    is moving. Someone who stands still for a while and then walks away still counts as moving.
+  - **The surroundings are trained once** as one 3D splat from all frames, leaving out what moves. What a
+    passer-by hides in one frame is filled in from the frames where it is visible.
+  - **What moves is rebuilt frame by frame** in the same 3D space, from the side the camera saw. It is
+    labelled *inferred*.
+- **4D player.**
+  - **In the app**, the 3D viewer plays a 4D result with play/pause and a timeline.
+  - **View in VR** opens a new 4D player in Chrome or Edge. You walk around the scene while it moves. The
+    trigger plays and pauses; the sticks move and turn you as before.
+- **New VR180 video.** It is rendered from the 4D scene: every frame from where the camera was, with the path
+  smoothed and the horizon levelled, showing the background plus what moved at that moment. The old
+  frame-by-frame video path, its 4D sequence of `.ply` files and the *Video* mode menu are gone.
+- **New files.**
+  - `scene.splatv` is the whole 4D scene. It uses splaTV's format, so it also plays in splaTV-compatible
+    players.
+  - `scene.ply` is the still background only, for any splat viewer.
+- **New options** under *Several photos and videos*: *Video length (4D)* and *Video frames (4D)*. The
+  recommended setting for both is "by quality". From the command line, use `--video-seconds`,
+  `--video-fps` and `--video-start`.
+- **If the 4D engine cannot run** (it needs the multi-view engine, VGGT, MoGe-2 and 10 GB of VRAM), the
+  sharpest frame is reconstructed as a photo, and the report says why.
+
+## Not yet tested on your hardware
+
+The 4D engine has not been run on an RTX 4080 with the real models. These parts were tested without the real
+models or a GPU:
+
+- motion detection, on synthetic videos;
+- the whole worker, run end to end with stand-ins for VGGT, MoGe-2 and gsplat;
+- the players, in a browser and in the app.
+
+Still to measure on your hardware: speed, memory, and how well motion is found in real footage (shadows,
+reflections, lighting changes).
+
+## Next
+
+The moving parts are rebuilt per frame, so they only show the side the camera saw. True 4D Gaussians that
+move and keep their volume (4DGT, Shape of Motion) are next. The `.splatv` format and the player already
+support moving splats.
+
+## rc48: MoGe-3 for your photo's geometry
+
+Reviewing which method computes distances most precisely today on an RTX 4080 found one better than
+MoGe-2: **MoGe-3** (Microsoft, MIT licence). Real 3D now uses it for your photo.
+
+## What's new in rc48
+
+- **MoGe-3 measures your photo.** It gives sharper depth, a better field of view and a better real-world
+  scale than MoGe-2. In Real 3D, it now provides three things for your photo:
+  - its depth, which guides the 3D shape;
+  - its real-world size (the metric scale of the whole scene);
+  - its field of view, when the photo has no EXIF focal length.
+  - It runs in the photo engine (about 1.5 GB download, about 6 GB of VRAM, a few seconds). Install
+    **MoGe-3 Large** in Models; it is recommended. Without it, Real 3D uses MoGe-2 as before. If MoGe-3 fails,
+    the job continues with MoGe-2 and the log says why.
+  - The report lists it in the models used.
+- **Your camera's real lens now actually reaches the 3D.** rc47 meant to use the EXIF focal length, but the
+  job works on PNG copies of your photo, which have no EXIF, so it was silently lost. The focal length is now
+  read from the original file and travels with the photo through the whole pipeline.
+- **Better focal length from EXIF.** The 35 mm-equivalent focal length is converted with the diagonal
+  convention used by camera makers, after rotating the photo upright, and cropped photos are detected.
+
+## Updating
+
+The photo engine is reinstalled once (it gains the FlexGEMM and Triton kernels MoGe-3 needs).
+
+## rc47: More precise distances
+
+A review of how distances are computed for the 3D found four weak points. All four are fixed in this
+version.
+
+## What's new in rc47
+
+- **One focal length for your photo.** Since rc41, MoGe-2 used your photo's real focal length (EXIF), but the
+  cameras still used VGGT's own estimate. When the two differ, the shape stretches or flattens in depth. Now
+  the EXIF value is used for the photo's camera as well.
+  - It is ignored when it disagrees with the image by more than a third, because it is then probably wrong.
+  - It is also ignored for cropped photos, detected because the shape no longer matches the original
+    frame's.
+  - The log shows how far VGGT's estimate was.
+- **Real-world scale only from your photos.** The metric scale used to be measured on up to 4 images, AI views
+  included. AI views have no real lens, so their metric depth is a guess. Now only the real photos count.
+- **Each view's depth is aligned with scale and shift, robustly.** Before, MoGe-2's depth of each image was
+  brought onto the joint geometry with one scale factor. Now a scale and a shift are fitted, and the pixels
+  where the views disagree are rejected while fitting. In an AI view, the areas whose depth still contradicts
+  what all views agree on are left unguided, instead of pulling the shape away.
+  - In a synthetic test (a person 2 m in front of a wall), the old fit was up to 6.6 cm off; the new one is
+    exact.
+- **Your photo keeps guiding the depth until the end.** The depth guidance used to fade out completely at 60 %
+  of the training, after which only colour shaped the 3D, and areas without texture (walls, smooth skin)
+  could drift. Now your photo keeps a weak depth guidance to the end; the AI views still fade out as before.
+
+## rc46: Cleanup: fewer engines, clearer menus
+
+## What's new in rc46
+
+- **Removed what the current workflow no longer uses.**
+  - **Stable Virtual Camera** (engine, worker and 3 models, about 9 GB). It was only a fallback when Wan 2.2
+    was missing, needed a Hugging Face token, and distorted people. Qwen-Image-Edit and Wan 2.2 cover every
+    path. If you installed it, you can delete it from the models folder.
+  - **"Sharp fusion" assembly.** It assembled views from each one's own MoGe-2 depth without training. Your
+    tests found that worse than the trained splat, which is now the only way: Real 3D, 360° capture, Explore
+    and several photos are all trained.
+  - The "Around the subject", "Wide orbit" and "Spiral" paths, which overlapped with Real 3D and 360° capture.
+- **Reorganised Create page.**
+  - Three presets plus Custom: *Real 3D from one photo* (recommended), *Quick 3D*, *360° capture*.
+  - Advanced options in three groups: *VR180 output*; *One photo* (AI views, AI model for the views,
+    reconstruction engine); *Several photos and videos*.
+- **Recommended components match the workflow.**
+  - Qwen-Image-Edit and its parts are now recommended, because Real 3D needs them.
+  - Wan 2.2 and Depth-Anything-V2 are optional: Wan is for exploring surroundings, and Depth-Anything-V2 only
+    for the Commercial profile.
+- **Real 3D without Qwen** now falls back to Wan 2.2's 360° capture instead of failing.
+- Video is unchanged for now: it will be rebuilt on 4D Gaussian Splatting next.
+
+## rc45: Optional: the complete subject in 3D with TRELLIS.2
+
+## What's new in rc45
+
+- **Complete subject (optional component "TRELLIS.2").** With it installed, Real 3D first builds the whole
+  subject of your photo in 3D, back included, with Microsoft's TRELLIS.2. Only its shape is used:
+  1. The mesh is placed exactly where the subject is in your photo. Its orientation comes from the
+     silhouette, and its size and distance from MoGe-2's depth, refined by matching the two surfaces.
+  2. In the AI views (sides, back), the subject's depth now comes from this mesh. Before, each view had its
+     own monocular guess, and the guesses disagreed with each other. Something MoGe-2 sees clearly in front
+     of the subject is kept.
+  3. Its surface also joins the starting points of the splat, so the back has a shape from the start.
+
+  Colours still come from your photo and the AI views. If TRELLIS.2 fails or is not installed, Real 3D
+  works as in rc44.
+- Install it under Components: "Complete-subject engine (TRELLIS.2)" plus "TRELLIS.2" (about 11 GB: only the
+  shape models, not the texture ones). It runs in its own runtime, with the Windows builds of TRELLIS.2's
+  CUDA extensions from the TRELLIS.2-stableprojectorz project.
+- Fast uses TRELLIS.2's 512 pipeline; Auto and Quality use the 512 → 1024 cascade.
+- Note: not yet run on the RTX 4080. The placement step is tested on synthetic scenes (millimetre accuracy
+  for known orientations, about 4 cm on a 1.7 m subject tilted 10°).
+
+## rc44: Each surface takes its colour from the view that sees it best
+
+## What's new in rc44
+
+- **Best-view colours.** Once the 3D shape is trained, a short final pass recalculates only the colours. Each
+  surface's colour now comes from the view that sees it best: the most head-on view, with the most pixels
+  on it. Your photo wins wherever it sees the surface.
+  - Before, the colour was an average of the photo and the AI views. They never agree exactly, so the
+    texture came out soft and noisy.
+  - Nothing moves and nothing is removed: positions, sizes, shapes and opacities of every splat stay exactly
+    as trained.
+  - The log shows how much of each view ended up deciding the colours.
+- Applies to every multi-view result with up to 24 images (Real 3D, several photos). Longer videos keep the
+  normal training.
+
+## rc43: The AI views' colour drift no longer stains the texture
+
+## What's new in rc43
+
+- **Per-view colour correction for the AI views.** Qwen's views usually come out a little brighter, darker
+  or warmer than your photo. rc19 averaged those differences into the splat's colours, which looked blotchy
+  where views overlap. Now each AI view gets a small colour correction while training (a 3x3 colour matrix
+  plus an offset, kept close to "no change"). The splats keep your photo's colours, and each view's drift
+  is absorbed by its own correction.
+  - Only colours are affected: no splats are moved or removed.
+  - The details panel shows the correction learned for each view.
+
+## rc42: Real 3D all the way round: sides and back
+
+## What's new in rc42
+
+- **The back of your subject now exists.** rc19 never looked further than 45° to each side, so the back of
+  a person had no image at all. Real 3D now draws the subject in rings around it:
+  1. 45° left, 45° right and from above;
+  2. 90° left and right;
+  3. 135° left and right;
+  4. the back (180°).
+
+  Fast stops after the second ring (5 views); Auto and Quality draw all 8.
+- **Each view continues its neighbour.** From the second ring on, every view is drawn from your photo *and*
+  the neighbouring view already accepted (90° from 45°, 135° from 90°, the back from both 135° views), so
+  clothes, hair and proportions stay the same all the way round.
+- **Candidates are judged against their neighbour.** With 2–3 candidates per angle (Auto/Quality), the one
+  that best continues its neighbouring view is kept. A back view shares nothing with your photo, so rc19's
+  photo-based check would have rejected it. One candidate is still drawn from the photo alone, as a
+  fallback.
+- Training is unchanged from rc41.
+- Generation takes longer: 4 rounds of Qwen instead of 1.
+
+## rc41: rc19 plus cleaner textures and more accurate scale
+
+Built on rc19 (rc40), following `docs/research/from-rc19.md`. Only "Real 3D from one photo" changes.
+
+## What's new in rc41
+
+- **Less texture noise.** The splat's colour now depends on the viewing angle only slightly (spherical
+  harmonics degree 1 instead of 3). With 4 images, degree 3 let each splat show a different colour to each
+  camera: the AI views' small disagreements were memorised as colour, which looked like noise and flicker.
+- **Your photo's real detail.** rc19 shrank every image, the photo included, to 1024 px before training. Now the
+  photo is trained at 1280 px (Fast), 1600 px (Auto) or 2048 px (Quality). The AI views stay at their native
+  size (about 1 MP); enlarging them would add nothing.
+- **More training steps for the larger photo:** 6000 (Fast), 12000 (Auto), 20000 (Quality).
+- **More accurate scale and depth.** When the photo has EXIF data with the 35 mm-equivalent focal length (almost
+  every phone and camera), MoGe-2 uses the real field of view instead of guessing it. A wrong field of view
+  stretches or flattens the whole scene in depth. The log shows the EXIF value and VGGT's own estimate.
+- Nothing else changes: the same views, cameras, depth priors and training as rc19, and no cleanup.
+
+## rc40: Back to rc19
+
+## What's new in rc40
+
+- **Everything is back to how it was in rc19.** After many tests, rc19's "Real 3D from one photo" gave the
+  best 3D geometry: Qwen-Image-Edit views, VGGT cameras, MoGe-2 depth priors and a trained splat.
+- Every change from rc20 to rc39 is removed: Depth Anything 3, subject mode, the cleanup steps, colour
+  correction, camera refinement, AbsGS, the feed-forward splat, FlashWorld, the photo layer, more angles,
+  the layered mesh and the rest. The cleanup steps had removed detail from both the scene and the subject.
+- The code is identical to rc19; only the version number changed. Improvements will be built again on this
+  base, one at a time, starting from a research review (see `docs/research/`).
+
+## rc39: A more complete 3D: more angles, and a mesh that is not set in stone
+
+## What's new in rc39
+
+- **Real 3D draws your subject from many more angles.**
+  - Fast: 5 views (45° and 90° to each side, from above).
+  - Auto: 9 views (adds 135° to each side, the back and from below).
+  - Quality: 11 views (adds raised 45° diagonals).
+  - Views of the back share almost nothing with your photo, so they are now judged by how far the camera
+    moved. Before, they would have been dropped as "inconsistent" and retried.
+- **The mesh (OBJ) is no longer "frozen in carbonite".**
+  - The fusion joined the outline of the subject to the wall behind it with a continuous skin. Now the
+    subject and the background are fused separately, and depth jumps are left out.
+  - The subject is fused with much finer voxels: about 1.4 mm for a subject 0.84 m away, about 5× more
+    detail than before.
+  - `subject.obj`, the subject alone without the background, is also exported.
+- **Mesh fusion is faster and always finishes.**
+  - Since the mesh is made from the splat, the whole photo background was fused with the subject's small
+    voxels. A background several times farther away then takes tens of times more voxels.
+  - The background now uses coarser voxels.
+  - A face budget caps every mesh: about 1.5 M faces for the subject and 0.5 M for the background. The
+    voxel grows when that budget would be exceeded.
+
+## rc38: The raw Depth Anything 3 splat is the result
+
+## What's new in rc38
+
+- **No more processing of the 3D.** In your tests, the raw Depth Anything 3 splat looked better than any
+  trained, polished or fused version. So whenever Depth Anything 3 is installed and can take the images,
+  its raw splat is the scene: the VR180 output, the PLY/SPLAT export and the turntable.
+  - This applies to every multi-view job: Real 3D from one photo, 360° around the subject, and several
+    photos of the same scene.
+  - The splat is not trained afterwards, and no splats are removed in a cleanup step.
+  - What rc37 added is kept, because it is part of how the raw splat is built, not processing on top: the
+    photo layer (one splat per photo pixel) and the removal of duplicate copies.
+  - The separate *Turntable: raw DA3 splat* button is no longer needed: *Play turntable* now shows it.
+- Without Depth Anything 3, or with more than 32 images or images of different shapes (long videos, for
+  example), the previous method is used.
+
+## rc37: Real 3D: back to AI views, with your photo's full detail
+
+## What's new in rc37
+
+- **"Real 3D from one photo" uses Qwen-Image-Edit views again.** That was the route that gave the most real
+  3D. FlashWorld is still available: choose it under *Generative engine*.
+- **Your photo keeps its full detail.** Depth Anything 3 builds its splat at about 504 pixels, so each
+  Gaussian covered 2–3 pixels of the photo, which looked blurry. Now the photo's part of the scene is one
+  Gaussian per photo pixel (1280 px in Auto), with the photo's own colours. The depth comes from Depth
+  Anything 3's joint estimate across all views, the smoother one that worked better. Pixels on depth edges
+  are left out, so there are no streaks between the subject and what is behind it.
+- **Fewer ghosts.** Every view used to add its own copy of each surface, each at a slightly different
+  depth, which made the result look ghostly. Now a generated view only adds what the photo, or an earlier
+  view, does not already show.
+- **The polish no longer erases detail.** The splat used to be trained like one built from scratch: points
+  moved, split and were pruned, which blurred it. Now only colours and opacities are adjusted. A ghost copy
+  that the other views contradict fades out, and the geometry stays as built.
+- **Local misalignments of AI views are absorbed.** Each AI-drawn view is usually a few pixels off here
+  and there, for example a hand or an ear. Each view now gets a small, smooth image alignment while
+  training, instead of the splat averaging the copies into blur. The log and the details panel show how
+  far each view had to be shifted.
+- The previous result (before the polish) is still exported as *Turntable: raw DA3 splat* for comparison.
+
+# 2D2VR180 1.0.0-rc36 — FlashWorld fits a 16 GB card
+
+## Fixed in rc36
+
+- **FlashWorld ran out of GPU memory, then seemed to hang.**
+  - FlashWorld passes all 24 views through its image encoder and 3D decoder at once. That needs about
+    24 GB of VRAM.
+  - The fallback then moved them to the CPU, which on Windows is so slow that it looked frozen: no GPU use,
+    1 % CPU.
+  - Now the views go through 4 at a time, then 1 at a time if memory is still short, always on the GPU.
+    Each view passes through on its own, so the result is identical. A CPU run of the real engine gave a
+    difference of exactly 0 between 1, 3 and all views at a time.
+  - The CPU fallback is gone.
+- The log now shows each of FlashWorld's 4 steps and the GPU memory peak, so progress is visible.
+
+## Fixed in rc35
+
+- **"Real 3D" with FlashWorld failed** with `AssertionError: torch.Size([1, 4])` as soon as generation
+  started.
+  - Cause: FlashWorld was written for a newer gsplat than 1.5.3, the version with ready-made Windows
+    builds. In 1.5.3's default "packed" mode, per-view background colours are rejected.
+  - FlashWorld now calls gsplat in unpacked mode. That changes only gsplat's internal memory layout, not
+    the image.
+  - A new test reproduces the exact error with the old call and passes with the new one.
+- Everything before that point already worked on the RTX 4080: the text encoding (cached), MoGe-2
+  measuring the subject at 0.84 m, and loading and quantising the 21 GB model in 22 seconds.
 
 ## What's new in rc34
 
@@ -521,7 +946,7 @@ entirely on your own Windows PC. No Python, CUDA toolkit, Git or other developer
 
 | File | What it is |
 |---|---|
-| `2D2VR180-1.0.0-rc34-setup.exe` | Installer — per user, no administrator rights |
+| `2D2VR180-1.0.0-rc36-setup.exe` | Installer — per user, no administrator rights |
 | `2D2VR180-1.0.0-rc24-portable-win64.zip` | Portable version — unzip and run `2D2VR180.exe` |
 | `checksums.sha256` | SHA256 of every file |
 | `release-manifest.json` | Exact source commit, upstream commits, model/runtime manifests, tool hashes |

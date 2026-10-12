@@ -197,26 +197,6 @@ def test_depth_prior_runs_and_keeps_geometry():
     assert np.median(np.abs(d[..., 0].numpy()[m] - deps[0][m]) / deps[0][m]) < 0.05
 
 
-def test_cleanup_removes_junk_but_keeps_the_scene():
-    gt, pts, cols = gt_params()
-    c2ws, Ks, sizes = make_views()
-    extra = np.array([[0, 0, -5.0],          # behind every camera: never seen
-                      [0.2, 0.1, 1.8],        # a floater far from its neighbours? (kept if not isolated)
-                      [30.0, 30.0, 40.0]], np.float32)   # far away and alone
-    p = st.init_params(np.concatenate([pts, extra]), np.concatenate([cols, np.full((3, 3), 0.5, np.float32)]),
-                       st.TrainConfig(sh_degree=0, init_points=1000), "cpu")
-    with torch.no_grad():
-        p["opacities"].fill_(3.0)
-        p["opacities"][len(pts) - 1] = -8.0                       # nearly transparent
-        p["scales"][len(pts) - 2] = p["scales"][len(pts) - 2] + 6  # a huge blob
-    keep = st.cleanup_mask(p, c2ws, Ks, sizes)
-    assert not keep[len(pts)] and not keep[len(pts) + 2]          # unseen, isolated
-    assert not keep[len(pts) - 1] and not keep[len(pts) - 2]       # transparent, oversized
-    assert keep[: len(pts) - 2].float().mean() > 0.9               # the scene stays
-    sub = st.subset(p, keep)
-    assert len(sub["means"]) == int(keep.sum()) and set(sub.keys()) == set(p.keys())
-
-
 def test_colour_drift_of_generated_views_is_absorbed_by_appearance():
     gt, pts, cols, c2ws, Ks, vm, Kt, imgs, _ = _scene()
     drift = [im.copy() for im in imgs]
@@ -244,66 +224,40 @@ def test_colour_drift_of_generated_views_is_absorbed_by_appearance():
     assert out[1][0][2][2] < 0.95             # it learned to darken blue for the generated views
 
 
-def test_mesh_depth_is_rendered_from_the_trained_splat(monkeypatch):
-    import multiview_worker as mv
-
-    params, pts, _ = gt_params()
+def test_best_view_decides_the_colour_of_each_surface():
+    """A wall seen head-on by one camera and at a grazing angle by another: the head-on view decides
+    its colour (weight ~1), the grazing one only a little; the photo bonus tips a tie."""
+    ys, xs = np.mgrid[-6:7, -6:7] * 0.08
+    pts = np.stack([xs.ravel(), ys.ravel(), np.full(xs.size, 2.0)], 1).astype(np.float32)
+    cfg = st.TrainConfig(sh_degree=0)
+    p = st.init_params(pts, np.full_like(pts, 0.5), cfg, "cpu")
     with torch.no_grad():
-        params["means"][40:] = torch.tensor([0.0, 0.0, -5.0])      # keep only the plane at z = 2
-        params["scales"][:] = np.log(0.12)
-    c2ws, Ks, sizes = make_views(3)
-    monkeypatch.setattr(st, "gsplat_render", ref_render)
-    dd, cc, ks, cs = mv.splat_depth_views(params, c2ws, Ks, sizes, torch, max_side=24, min_alpha=0.9)
-    assert len(dd) == len(cc) == len(ks) == len(cs) == 3
-    d = dd[0]
-    assert (d > 0).mean() > 0.3 and (d == 0).any()               # transparent border is left out
-    assert abs(float(np.median(d[d > 0])) - 2.0) < 0.15
-    assert cc[0].dtype == np.uint8 and cc[0].shape == (24, 24, 3)
+        p["opacities"].fill_(4.0)
+        p["scales"].fill_(np.log(0.06))
+    K = np.array([[30.0, 0, 12], [0, 30.0, 12], [0, 0, 1]])
+    c2ws = np.stack([look_at(np.array([0.0, 0, 0]), [0, 0, 2]), look_at(np.array([1.6, 0, 0.8]), [0, 0, 2])])
+    wmaps = st.best_view_weights(p, c2ws, np.stack([K, K]), [(24, 24)] * 2, render_fn=ref_render)
+    assert wmaps[0][8:16, 8:16].mean() > 0.95          # head-on: decides
+    assert wmaps[1][8:16, 8:16].mean() < 0.5           # grazing: only a little
+    same = st.best_view_weights(p, c2ws[[0, 0]], np.stack([K, K]), [(24, 24)] * 2, render_fn=ref_render,
+                                bonus=[1.5, 1.0])
+    assert same[0][8:16, 8:16].mean() > 0.95 and same[1][8:16, 8:16].mean() < 0.3   # tie: the photo wins
 
 
-def test_pose_refinement_corrects_wrong_cameras_of_generated_views():
+def test_colour_only_training_keeps_every_splat_where_it_is():
     gt, pts, cols, c2ws, Ks, vm, Kt, imgs, _ = _scene()
-    rng = np.random.default_rng(3)
-    wrong = c2ws.copy()
-    for i in (1, 2, 3):                       # the pose engine got the AI views slightly wrong
-        xi = torch.tensor(np.r_[rng.normal(0, 0.02, 3), rng.normal(0, 0.02, 3)], dtype=torch.float32)
-        wrong[i] = c2ws[i] @ st.se3_exp(xi).numpy()
-    cfg = st.TrainConfig(steps=300, sh_degree=0, densify=False, coarse_until=0.0, lr_sh0=0.05, log_every=50,
-                         lr_pose=2e-3, pose_from=0.1)
-    noisy = pts + rng.normal(0, 0.03, pts.shape).astype(np.float32)
-
-    def fit(pose_opt):
-        out = []
-        p, _ = st.train(imgs, wrong, Ks, [2, 1, 1, 1], noisy, np.full_like(cols, 0.5), cfg, device="cpu",
-                        render_fn=ref_render, pose_opt=pose_opt, pose_out=out)
-        with torch.no_grad():
-            r = ref_render(p, vm[0:1], Kt[0:1], 24, 24, 0)[0].clamp(0, 1)
-        return st.psnr(r, torch.from_numpy(imgs[0]).float() / 255), out
-
-    def proj(c2w, K):
-        pc = (pts - c2w[:3, 3]) @ c2w[:3, :3]
-        return (pc[:, :2] / pc[:, 2:]) * K[0, 0]
-
-    def err(cams):          # mean reprojection error (px) of the scene in the generated views
-        return np.mean([np.linalg.norm(proj(cams[i], Ks[i]) - proj(c2ws[i], Ks[i]), axis=1).mean()
-                        for i in (1, 2, 3)])
-
-    base, _ = fit(None)
-    refined, out = fit([False, True, True, True])
-    assert np.allclose(out[0], wrong[0])                     # the photo's camera is the fixed reference
-    assert err(out) < err(wrong)
-    assert refined > base
+    cfg = st.TrainConfig(steps=20, sh_degree=0, densify=False, coarse_until=0.0, log_every=10)
+    p, _ = st.train(imgs, c2ws, Ks, [1, 1, 1, 1], pts, np.full_like(cols, 0.5), cfg, device="cpu", render_fn=ref_render)
+    before = {k: v.detach().clone() for k, v in p.items()}
+    cfg2 = st.TrainConfig(steps=20, sh_degree=0, densify=False, coarse_until=0.0, log_every=10, colours_only=True)
+    p2, _ = st.train(imgs, c2ws, Ks, [1, 1, 1, 1], None, None, cfg2, device="cpu", render_fn=ref_render, params=p)
+    for k in ("means", "scales", "quats", "opacities"):
+        assert torch.equal(p2[k].detach(), before[k])
+    assert len(p2["means"]) == len(before["means"]) and not torch.equal(p2["sh0"].detach(), before["sh0"])
 
 
-def test_training_can_start_from_ready_made_gaussians():
-    gt, pts, cols, c2ws, Ks, vm, Kt, imgs, _ = _scene()
-    with torch.no_grad():
-        g = {"means": gt["means"].numpy(), "scales": gt["scales"].exp().numpy(),
-             "quats": torch.nn.functional.normalize(gt["quats"], dim=1).numpy(),
-             "dc": gt["sh0"][:, 0].numpy(), "opacity": gt["opacities"].sigmoid().numpy()}
-    cfg = st.TrainConfig(steps=30, sh_degree=0, densify=False, coarse_until=0.0, log_every=10)
-    p, hist = st.train(imgs, c2ws, Ks, [1, 1, 1, 1], None, None, cfg, device="cpu", render_fn=ref_render, init=g)
-    with torch.no_grad():
-        out = ref_render(p, vm[:1], Kt[:1], 24, 24, 0)[0].clamp(0, 1)
-    assert st.psnr(out, torch.from_numpy(imgs[0]).float() / 255) > 25       # already right from step 0
-    assert hist[0][1] < 0.05
+def test_the_photo_keeps_a_weak_depth_prior_to_the_end():
+    cfg = st.TrainConfig(steps=1000, depth_weight=0.1, depth_until=0.6, depth_floor=0.02)
+    assert st.depth_weight_at(cfg, 0) == 0.1
+    assert st.depth_weight_at(cfg, 900) == 0.0                 # AI views: colour only at the end
+    assert st.depth_weight_at(cfg, 900, keep=True) == 0.02     # the photo: never fully released

@@ -137,7 +137,7 @@ def pointmap_to_obj(points: np.ndarray, image: np.ndarray, mask: np.ndarray | No
     # OBJ viewers expect y-up; flip OpenCV (y down, z forward) to y up, z back.
     v_out = verts * np.array([1.0, -1.0, -1.0])
     with open(out_obj, "w", newline="\n") as f:
-        f.write(f"# 2D2VR180 mesh: geometry INFERRED from a monocular depth network\n")
+        f.write("# 2D2VR180 mesh: geometry INFERRED from a monocular depth network\n")
         f.write(f"mtllib {mtl_name}\nusemtl source\n")
         np.savetxt(f, v_out, fmt="v %.5f %.5f %.5f")
         np.savetxt(f, uv, fmt="vt %.5f %.5f")

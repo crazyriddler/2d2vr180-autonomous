@@ -40,7 +40,8 @@
    "required_vram_gb": 5,
    "backends": [
     "moge_rgbd",
-    "multiview"
+    "multiview",
+    "video4d"
    ],
    "requires_acceptance": true,
    "gated": false,
@@ -53,6 +54,31 @@
     }
    ],
    "notes": "Default Quality photo model and per-frame model for fixed-camera dynamic video."
+  },
+  {
+   "id": "moge-3-vitl",
+   "display_name": "MoGe-3 ViT-L — the photo's geometry for Real 3D (sharper, better scale and focal)",
+   "source": "https://huggingface.co/Ruicheng/moge-3-vitl",
+   "revision": "184008f877d7ad1ad4c2cd2182a9bd1f63d0e5be",
+   "license": "MIT (Hugging Face model card: license: mit)",
+   "license_url": "https://huggingface.co/Ruicheng/moge-3-vitl",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 6,
+   "backends": [
+    "generative"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "model.pt",
+     "url": "https://huggingface.co/Ruicheng/moge-3-vitl/resolve/184008f877d7ad1ad4c2cd2182a9bd1f63d0e5be/model.pt",
+     "sha256": "9b41b7b9f65ad80aab7ad686f5e9cc0d1fd33f1964022618dfbcd52fc1fb7925",
+     "size_bytes": 1481333394
+    }
+   ],
+   "notes": "Real 3D (rc48): depth, field of view and metric scale of the original photo; runs in photo-cu128 (FlexGEMM Triton kernels). MoGe-2 is used when it is not installed."
   },
   {
    "id": "depth-anything-v2-small",
@@ -128,7 +154,8 @@
    "required_vram_gb": 10,
    "backends": [
     "multiview",
-    "generative_scene"
+    "generative_scene",
+    "video4d"
    ],
    "requires_acceptance": true,
    "gated": false,
@@ -147,93 +174,6 @@
     }
    ],
    "notes": "Used by the multi-view engine (several photos, moving-camera video, generated views). Non-commercial checkpoint."
-  },
-  {
-   "id": "seva-1.1",
-   "display_name": "Stable Virtual Camera 1.1 — generates new camera views of a photo",
-   "source": "https://huggingface.co/stabilityai/stable-virtual-camera",
-   "revision": "e538e251c1009e9a41cf8b7fee5f21332a1960de",
-   "license": "Stability AI Non-Commercial Research Community License (stabilityai-ai-non-commercial); outputs follow the same non-commercial terms",
-   "license_url": "https://huggingface.co/stabilityai/stable-virtual-camera/blob/main/LICENSE",
-   "commercial_use": false,
-   "redistributable": false,
-   "required_vram_gb": 12,
-   "backends": [
-    "generative_scene"
-   ],
-   "requires_acceptance": true,
-   "gated": true,
-   "files": [
-    {
-     "path": "modelv1.1.safetensors",
-     "url": "https://huggingface.co/stabilityai/stable-virtual-camera/resolve/e538e251c1009e9a41cf8b7fee5f21332a1960de/modelv1.1.safetensors",
-     "sha256": "b45d13cb89fe652d607c31989e5f71c2f1217a4f0939301fb60f3b941d6636da",
-     "size_bytes": 5056009640
-    }
-   ],
-   "notes": "Gated: accept the licence on huggingface.co/stabilityai/stable-virtual-camera with your account and enter a Hugging Face access token in Settings before downloading."
-  },
-  {
-   "id": "sd21-vae",
-   "display_name": "Stable Diffusion 2.1 VAE — image encoder/decoder used by Stable Virtual Camera",
-   "source": "https://huggingface.co/sd2-community/stable-diffusion-2-1-base",
-   "revision": "4e63672c03103b6c636b8fb4119ba982469b2955",
-   "license": "CreativeML Open RAIL++-M (Hugging Face model card: license: openrail++)",
-   "license_url": "https://huggingface.co/sd2-community/stable-diffusion-2-1-base",
-   "commercial_use": true,
-   "redistributable": false,
-   "required_vram_gb": 1,
-   "backends": [
-    "generative_scene"
-   ],
-   "requires_acceptance": true,
-   "gated": false,
-   "files": [
-    {
-     "path": "vae/config.json",
-     "url": "https://huggingface.co/sd2-community/stable-diffusion-2-1-base/resolve/4e63672c03103b6c636b8fb4119ba982469b2955/vae/config.json",
-     "sha256": null,
-     "size_bytes": 553
-    },
-    {
-     "path": "vae/diffusion_pytorch_model.safetensors",
-     "url": "https://huggingface.co/sd2-community/stable-diffusion-2-1-base/resolve/4e63672c03103b6c636b8fb4119ba982469b2955/vae/diffusion_pytorch_model.safetensors",
-     "sha256": "a1d993488569e928462932c8c38a0760b874d166399b14414135bd9c42df5815",
-     "size_bytes": 334643276
-    }
-   ],
-   "notes": "Community mirror of stabilityai/stable-diffusion-2-1-base (the original repository is no longer public); only the VAE is downloaded."
-  },
-  {
-   "id": "clip-vit-h-14",
-   "display_name": "OpenCLIP ViT-H/14 (LAION-2B) — image conditioning for Stable Virtual Camera",
-   "source": "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
-   "revision": "1c2b8495b28150b8a4922ee1c8edee224c284c0c",
-   "license": "MIT (Hugging Face model card: license: mit)",
-   "license_url": "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
-   "commercial_use": true,
-   "redistributable": true,
-   "required_vram_gb": 2,
-   "backends": [
-    "generative_scene"
-   ],
-   "requires_acceptance": true,
-   "gated": false,
-   "files": [
-    {
-     "path": "open_clip_config.json",
-     "url": "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K/resolve/1c2b8495b28150b8a4922ee1c8edee224c284c0c/open_clip_config.json",
-     "sha256": null,
-     "size_bytes": 637
-    },
-    {
-     "path": "open_clip_model.safetensors",
-     "url": "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K/resolve/1c2b8495b28150b8a4922ee1c8edee224c284c0c/open_clip_model.safetensors",
-     "sha256": "0084e75319a50ad85ef45377bad5bc38f2f58824459eb690048d51c9f8863be5",
-     "size_bytes": 3944517836
-    }
-   ],
-   "notes": ""
   },
   {
    "id": "big-lama",
@@ -552,12 +492,85 @@
    ]
   },
   {
-   "id": "qwen-edit-2511-lightning-8",
-   "display_name": "Qwen-Image-Edit-2511 Lightning LoRA, 8 steps (lightx2v) — Quality mode",
-   "source": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
-   "revision": "d74eba145674fd7e31b949324e148e21e7118abd",
-   "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
-   "license_url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning",
+   "id": "trellis2-4b-shape",
+   "display_name": "TRELLIS.2-4B (shape stages) — the whole subject in 3D from one photo",
+   "source": "https://huggingface.co/microsoft/TRELLIS.2-4B",
+   "revision": "af44b45f2e35a493886929c6d786e563ec68364d",
+   "license": "MIT (Hugging Face model card: license: mit)",
+   "license_url": "https://huggingface.co/microsoft/TRELLIS.2-4B",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 12,
+   "backends": [
+    "generative_scene"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "pipeline.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/pipeline.json",
+     "sha256": null,
+     "size_bytes": 4186
+    },
+    {
+     "path": "ckpts/ss_flow_img_dit_1_3B_64_bf16.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/ss_flow_img_dit_1_3B_64_bf16.json",
+     "sha256": null,
+     "size_bytes": 467
+    },
+    {
+     "path": "ckpts/ss_flow_img_dit_1_3B_64_bf16.safetensors",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/ss_flow_img_dit_1_3B_64_bf16.safetensors",
+     "sha256": "ca01377c485bec418076d38ee80166d32dc776d744f2553b835cba1e97a7abf6",
+     "size_bytes": 2584426920
+    },
+    {
+     "path": "ckpts/shape_dec_next_dc_f16c32_fp16.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/shape_dec_next_dc_f16c32_fp16.json",
+     "sha256": null,
+     "size_bytes": 678
+    },
+    {
+     "path": "ckpts/shape_dec_next_dc_f16c32_fp16.safetensors",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/shape_dec_next_dc_f16c32_fp16.safetensors",
+     "sha256": "e3b718d3e43e4f8780e9a24ac6fff231811a67e3b058e336e10fe654c911d581",
+     "size_bytes": 948490494
+    },
+    {
+     "path": "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.json",
+     "sha256": null,
+     "size_bytes": 458
+    },
+    {
+     "path": "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.safetensors",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.safetensors",
+     "sha256": "ec5e0917ef9b7e25ad51dffc7d19687a42019871f94239f2fa7f86264c55b70f",
+     "size_bytes": 2584574424
+    },
+    {
+     "path": "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.json",
+     "sha256": null,
+     "size_bytes": 458
+    },
+    {
+     "path": "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors",
+     "url": "https://huggingface.co/microsoft/TRELLIS.2-4B/resolve/af44b45f2e35a493886929c6d786e563ec68364d/ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors",
+     "sha256": "07cd0596f634c5adc1890023d16023afc5eed02fb84b22bb23aff5bf0030fbbd",
+     "size_bytes": 2584574424
+    }
+   ],
+   "notes": "Only the sparse-structure and shape models (no texture models): the mesh is a geometry prior for Real 3D."
+  },
+  {
+   "id": "trellis-image-large-ss-dec",
+   "display_name": "TRELLIS sparse-structure decoder (used by TRELLIS.2)",
+   "source": "https://huggingface.co/microsoft/TRELLIS-image-large",
+   "revision": "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+   "license": "MIT (Hugging Face model card: license: mit)",
+   "license_url": "https://huggingface.co/microsoft/TRELLIS-image-large",
    "commercial_use": true,
    "redistributable": true,
    "required_vram_gb": 0,
@@ -568,54 +581,29 @@
    "gated": false,
    "files": [
     {
-     "path": "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
-     "url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/d74eba145674fd7e31b949324e148e21e7118abd/Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
-     "sha256": "a9e81a58a78f260f67b337a6f615e8fa4cd3bc79847c77b7d61a581b789b1ba8",
-     "size_bytes": 849608296
+     "path": "ckpts/ss_dec_conv3d_16l8_fp16.json",
+     "url": "https://huggingface.co/microsoft/TRELLIS-image-large/resolve/25e0d31ffbebe4b5a97464dd851910efc3002d96/ckpts/ss_dec_conv3d_16l8_fp16.json",
+     "sha256": null,
+     "size_bytes": 245
+    },
+    {
+     "path": "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+     "url": "https://huggingface.co/microsoft/TRELLIS-image-large/resolve/25e0d31ffbebe4b5a97464dd851910efc3002d96/ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+     "sha256": "1c76d4a40519aa2d711cc263a8404105231ac26db31d946bed48b84fee79009a",
+     "size_bytes": 147591972
     }
    ]
   },
   {
-   "id": "da3-nested-giant-large",
-   "display_name": "Depth Anything 3 Nested Giant-Large 1.1 — multi-view poses, depth and metric scale",
-   "source": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1",
-   "revision": "b2359bdf726fb44ef62acca04d629dcf158053e7",
-   "license": "CC BY-NC 4.0 (Hugging Face model card: license: cc-by-nc-4.0) — non-commercial use only",
-   "license_url": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+   "id": "trellis2-image-encoders",
+   "display_name": "DINOv3 ViT-L and RMBG-2.0 (image encoder and background removal for TRELLIS.2)",
+   "source": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/tag/extra-models",
+   "revision": "extra-models",
+   "license": "DINOv3: Meta DINOv3 License; RMBG-2.0: CC BY-NC 4.0 (BRIA AI) — non-commercial",
+   "license_url": "https://huggingface.co/briaai/RMBG-2.0",
    "commercial_use": false,
    "redistributable": false,
-   "required_vram_gb": 8,
-   "backends": [
-    "multiview",
-    "generative_scene"
-   ],
-   "requires_acceptance": true,
-   "gated": false,
-   "files": [
-    {
-     "path": "config.json",
-     "url": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1/resolve/b2359bdf726fb44ef62acca04d629dcf158053e7/config.json",
-     "sha256": null,
-     "size_bytes": 3113
-    },
-    {
-     "path": "model.safetensors",
-     "url": "https://huggingface.co/depth-anything/DA3NESTED-GIANT-LARGE-1.1/resolve/b2359bdf726fb44ef62acca04d629dcf158053e7/model.safetensors",
-     "sha256": "8ebe871a022ed58d2fc8fdfb2ebdb31d57b60fe39611c849095851a7b7c6020c",
-     "size_bytes": 6759558100
-    }
-   ]
-  },
-  {
-   "id": "wan2.2-ti2v-5b-base",
-   "display_name": "Wan2.2-TI2V-5B — VAE, UMT5-XXL text encoder and configs (for FlashWorld)",
-   "source": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
-   "revision": "b8fff7315c768468a5333511427288870b2e9635",
-   "license": "Apache-2.0 (Hugging Face model card: license: apache-2.0)",
-   "license_url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers",
-   "commercial_use": true,
-   "redistributable": true,
-   "required_vram_gb": 12,
+   "required_vram_gb": 2,
    "backends": [
     "generative_scene"
    ],
@@ -623,116 +611,19 @@
    "gated": false,
    "files": [
     {
-     "path": "model_index.json",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/model_index.json",
-     "sha256": null,
-     "size_bytes": 499
+     "path": "dinov3.zip",
+     "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/dinov3.zip",
+     "sha256": "1b6d24ef5f5e70435160eb7ac318426cf7a6ba20d3f159d17b0dd168fc7de672",
+     "size_bytes": 1126258307
     },
     {
-     "path": "scheduler/scheduler_config.json",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/scheduler/scheduler_config.json",
-     "sha256": null,
-     "size_bytes": 820
-    },
-    {
-     "path": "transformer/config.json",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/transformer/config.json",
-     "sha256": null,
-     "size_bytes": 495
-    },
-    {
-     "path": "vae/config.json",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/vae/config.json",
-     "sha256": null,
-     "size_bytes": 1701
-    },
-    {
-     "path": "vae/diffusion_pytorch_model.safetensors",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/vae/diffusion_pytorch_model.safetensors",
-     "sha256": "62cd18f19438e35b32ac63020e2852f566e9b02f46b6cdbd87972a356e3c6f4b",
-     "size_bytes": 2818777808
-    },
-    {
-     "path": "text_encoder/config.json",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/text_encoder/config.json",
-     "sha256": null,
-     "size_bytes": 855
-    },
-    {
-     "path": "text_encoder/model.safetensors.index.json",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/text_encoder/model.safetensors.index.json",
-     "sha256": null,
-     "size_bytes": 22476
-    },
-    {
-     "path": "text_encoder/model-00001-of-00003.safetensors",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/text_encoder/model-00001-of-00003.safetensors",
-     "sha256": "a8e861969c7433e707cc5a74065d795d36cca07ec96eb6763eb4083df7248f58",
-     "size_bytes": 4935812536
-    },
-    {
-     "path": "text_encoder/model-00002-of-00003.safetensors",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/text_encoder/model-00002-of-00003.safetensors",
-     "sha256": "d57d948ece4837d850b7a859a4415121d57cacf8b9ee1d4db200c67f592902d7",
-     "size_bytes": 4983103192
-    },
-    {
-     "path": "text_encoder/model-00003-of-00003.safetensors",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/text_encoder/model-00003-of-00003.safetensors",
-     "sha256": "0da9ee284e21d1406df708788db1d502d95d75f69faa25cd26151bf8829b7c5f",
-     "size_bytes": 1442935480
-    },
-    {
-     "path": "tokenizer/special_tokens_map.json",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/tokenizer/special_tokens_map.json",
-     "sha256": null,
-     "size_bytes": 7079
-    },
-    {
-     "path": "tokenizer/spiece.model",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/tokenizer/spiece.model",
-     "sha256": "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458",
-     "size_bytes": 4548313
-    },
-    {
-     "path": "tokenizer/tokenizer.json",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/tokenizer/tokenizer.json",
-     "sha256": "20a46ac256746594ed7e1e3ef733b83fbc5a6f0922aa7480eda961743de080ef",
-     "size_bytes": 16837459
-    },
-    {
-     "path": "tokenizer/tokenizer_config.json",
-     "url": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers/resolve/b8fff7315c768468a5333511427288870b2e9635/tokenizer/tokenizer_config.json",
-     "sha256": null,
-     "size_bytes": 61758
+     "path": "RMBG-2.0.zip",
+     "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/RMBG-2.0.zip",
+     "sha256": "0d39c4e2b2e6a5ce3ef644ee7fed0df7c4c93da275903305ca8a88c63413a147",
+     "size_bytes": 822966337
     }
    ],
-   "notes": "The 5B transformer is not downloaded from this repository: FlashWorld's checkpoint contains its own fine-tuned copy of it."
-  },
-  {
-   "id": "flashworld",
-   "display_name": "FlashWorld — single image to 3D Gaussians (ICLR 2026)",
-   "source": "https://huggingface.co/imlixinyang/FlashWorld",
-   "revision": "6a8e88c6f88678ac098e4c82675f0aee555d6e5d",
-   "license": "CC BY-NC-SA 4.0 (Hugging Face model card: license: cc-by-nc-sa-4.0) — non-commercial use only; code Apache-2.0",
-   "license_url": "https://huggingface.co/imlixinyang/FlashWorld",
-   "commercial_use": false,
-   "redistributable": false,
-   "required_vram_gb": 12,
-   "backends": [
-    "generative_scene"
-   ],
-   "requires_acceptance": true,
-   "gated": false,
-   "files": [
-    {
-     "path": "model.ckpt",
-     "url": "https://huggingface.co/imlixinyang/FlashWorld/resolve/6a8e88c6f88678ac098e4c82675f0aee555d6e5d/model.ckpt",
-     "sha256": "610a09a11917ae112ea71f2f42291d5c8f11f54ae501ec14a8740f22da2540bd",
-     "size_bytes": 20936494840
-    }
-   ],
-   "notes": "Fine-tuned Wan2.2-TI2V-5B transformer and 3D Gaussian decoder (fp32 PyTorch checkpoint, loaded memory-mapped and quantised to FP8 at run time)."
+   "notes": "Mirrors of the gated Hugging Face repos facebook/dinov3-vitl16-pretrain-lvd1689m and briaai/RMBG-2.0 published by the TRELLIS.2 Windows fork; SHA256 pinned. Extracted locally on first use."
   }
  ]
 }

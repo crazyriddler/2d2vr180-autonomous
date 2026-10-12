@@ -13,6 +13,7 @@ downloads the components below. **No model weights are bundled.**
 | Qt for Python (PySide6-Essentials, shiboken6) | 6.11.2 | LGPL-3.0 | dynamically linked, unmodified Qt libraries in the install folder may be replaced by the user |
 | three.js | 0.170.0 | MIT | assets/webxr/three.module.js — WebXR splat viewer |
 | GaussianSplats3D (@mkkellogg/gaussian-splats-3d) | 0.4.7 | MIT | assets/webxr/gaussian-splats-3d.module.js — WebXR splat viewer |
+| splaTV (antimatter15/splaTV, hybrid.js) | main, 2024 | MIT | assets/webxr/player4d.js — 4D splat rasteriser (shaders, depth sort, .splatv layout) adapted for the 4D player; LICENSE-splatv.txt |
 | uv | 0.12.19 | MIT OR Apache-2.0 | bin/uv.exe — installs the backend runtimes |
 | FFmpeg | 7.1 (imageio-ffmpeg 0.6.0 build) | **GPL-3.0-or-later** | bin/ffmpeg.exe, run as a separate process. Source: https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz ; configuration: `ffmpeg -buildconf`. |
 
@@ -24,9 +25,10 @@ runtime libraries under the NVIDIA EULA), torchvision, gsplat (Apache-2.0), MoGe
 (MIT), VGGT (VGGT License v1), Open3D (MIT), scikit-learn (BSD-3-Clause), Stability AI stable-virtual-camera
 (Stability AI Non-Commercial Research Community License), diffusers (Apache-2.0), open_clip (MIT),
 kornia (Apache-2.0), roma (BSD-3-Clause), VideoX-Fun (Apache-2.0), peft (Apache-2.0), gguf (MIT),
-bitsandbytes (MIT), Depth Anything 3 code (Apache-2.0), FlashWorld code (Apache-2.0, vendored in
-workers/flashworld with its LICENSE), accelerate (Apache-2.0), sentencepiece (Apache-2.0), ftfy (Apache-2.0), addict (MIT), transformers (Apache-2.0), omegaconf (BSD-3-Clause),
-librosa (ISC) and their dependencies.
+bitsandbytes (MIT), transformers (Apache-2.0), omegaconf (BSD-3-Clause),
+librosa (ISC), TRELLIS.2 code and its Windows wheels from the TRELLIS.2-stableprojectorz fork (MIT; cumesh,
+flex_gemm, o_voxel MIT; nvdiffrast and nvdiffrec under the NVIDIA Source Code License), xformers (BSD-3-Clause),
+triton-windows (MIT), timm (Apache-2.0), trimesh (MIT) and their dependencies.
 
 Models (config/model-manifest.json) — shown with their license before download:
 
@@ -39,11 +41,10 @@ Models (config/model-manifest.json) — shown with their license before download
 | Wan 2.2 Fun 5B Control-Camera (alibaba-pai) | Apache-2.0 | yes |
 | Qwen-Image-Edit-2511 (Qwen; text encoder Qwen2.5-VL-7B, VAE) | Apache-2.0 | yes |
 | Qwen-Image-Edit-2511 GGUF Q5_K_M (unsloth) | Apache-2.0 | yes |
+| TRELLIS.2-4B (shape models) and TRELLIS-image-large sparse-structure decoder (Microsoft) | MIT | yes |
+| DINOv3 ViT-L/16 (Meta) and RMBG-2.0 (BRIA AI), mirrored by the TRELLIS.2 Windows fork | Meta DINOv3 License; CC BY-NC 4.0 | **no** (RMBG-2.0) |
 | Qwen-Image-Edit-2511 Multiple-Angles LoRA (fal) | Apache-2.0 | yes |
-| Qwen-Image-Edit-2511 Lightning LoRAs, 4 and 8 steps (lightx2v) | Apache-2.0 | yes |
-| Depth Anything 3 Nested Giant-Large 1.1 (ByteDance) | CC BY-NC 4.0 | no (downloaded by the user) |
-| FlashWorld weights (imlixinyang) | CC BY-NC-SA 4.0 | no (downloaded by the user) |
-| Wan2.2-TI2V-5B VAE and UMT5-XXL text encoder (Wan-AI) | Apache-2.0 | yes |
+| Qwen-Image-Edit-2511 Lightning LoRA (lightx2v) | Apache-2.0 | yes |
 | Stable Virtual Camera 1.1 | Stability AI Non-Commercial Research Community License (gated; outputs non-commercial) | **no** |
 | Stable Diffusion 2.1 VAE (sd2-community mirror) | CreativeML Open RAIL++-M | yes (use restrictions apply) |
 | OpenCLIP ViT-H/14 LAION-2B | MIT | yes |

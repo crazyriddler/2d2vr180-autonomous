@@ -24,75 +24,66 @@ class Component:
 COMPONENTS: list[Component] = [
     # ---------------------------------------------------------------- photos
     Component("engine-photo", "Photo engine", "runtime", "photo-cu128",
-              "Required for every single-photo backend, fixed-camera video and the GPU VR180 renderer "
+              "Required for every single-photo backend, the single-frame fallback for videos and the GPU VR180 renderer "
               "(PyTorch + CUDA, installed privately for 2D2VR180).", True),
     Component("model-moge-l", "MoGe-2 Large — quality metric depth", "model", "moge-2-vitl-normal",
-              "Quality mode for photos and fixed-camera video (metric scale, textured mesh); also gives the "
+              "Quality mode for photos (metric scale, textured mesh); also gives the 4D video engine its depth and the "
               "multi-view engine its real-world scale.", True, ("engine-photo",)),
+    Component("model-moge3", "MoGe-3 Large — the photo's geometry for Real 3D", "model", "moge-3-vitl",
+              "Sharper depth, field of view and real-world scale of your photo for Real 3D (MIT). Without it "
+              "Real 3D uses MoGe-2.", True, ("engine-photo",)),
     Component("model-moge-s", "MoGe-2 Small — fast metric depth", "model", "moge-2-vits-normal",
-              "Fast mode for photos and fixed-camera video.", True, ("engine-photo",)),
+              "Fast mode for photos.", True, ("engine-photo",)),
     Component("model-da2", "Depth-Anything-V2 Small — commercial-safe depth", "model", "depth-anything-v2-small",
-              "Apache-2.0 fallback usable in the Commercial licence profile (relative depth).", True,
+              "Apache-2.0 fallback usable in the Commercial licence profile (relative depth). Only needed for "
+              "commercial use.", False,
               ("engine-photo",)),
     Component("model-sharp", "Apple SHARP — best direct single-photo 3D (research only)", "model", "sharp",
               "Feed-forward 3D Gaussians from one photo. Apple research licence: non-commercial.", True,
               ("engine-photo",)),
     # ---------------------------------------------------------------- multi-view
-    Component("engine-video", "Multi-view engine (several photos, moving-camera video)", "runtime", "recon3d-cu124",
-              "Turns several photos of one scene, or a video where the camera moves, into one trained 3D "
-              "Gaussian splat (VGGT + gsplat). Also used by Generative 3D. Needs an NVIDIA GPU with 10 GB+.", True),
+    Component("engine-video", "Multi-view and 4D video engine (several photos, videos)", "runtime", "recon3d-cu124",
+              "Turns several photos of one scene into one trained 3D Gaussian splat, and a video into a 4D scene "
+              "(the still surroundings in 3D plus everything that moves, frame by frame). VGGT + MoGe-2 + gsplat. "
+              "Also used by Real 3D. Needs an NVIDIA GPU with 10 GB+.", True),
     Component("model-vggt", "VGGT-1B — camera poses and depth from many views (non-commercial)", "model", "vggt-1b",
               "Finds where each photo/frame was taken and its depth.", True, ("engine-video",)),
-    Component("model-da3", "Depth Anything 3 (Nested Giant-Large) — better multi-view poses and depth "
-              "(non-commercial)", "model", "da3-nested-giant-large",
-              "Finds where each view was taken and its depth more accurately than VGGT, with real-world scale. "
-              "Used automatically by the multi-view engine when installed. ~6.8 GB.", True, ("engine-video",)),
-    Component("model-flashworld", "FlashWorld — Real 3D generated directly from one photo (non-commercial)",
-              "model", "flashworld",
-              "Generates the whole 3D scene from your photo in one go (a Wan 2.2 video model with a 3D Gaussian "
-              "decoder): every angle comes from the same 3D, so no ghosting between separately drawn views. "
-              "Used automatically by 'Real 3D from one photo' when installed. ~35 GB with its Wan 2.2 parts; "
-              "needs ~12 GB VRAM.", True, ("engine-video", "model-flashworld-base", "model-moge-l")),
-    Component("model-flashworld-base", "Wan2.2-TI2V-5B VAE and text encoder (for FlashWorld)", "model",
-              "wan2.2-ti2v-5b-base", "Image encoder/decoder and UMT5-XXL text encoder used by FlashWorld.", False,
-              ("engine-video",)),
     # ---------------------------------------------------------------- generative
-    Component("engine-gen", "Generative engine (Qwen-Image-Edit, Wan 2.2, Stable Virtual Camera, LaMa)", "runtime", "gen-cu128",
+    Component("engine-gen", "Generative engine (Qwen-Image-Edit, Wan 2.2, LaMa)", "runtime", "gen-cu128",
               "Invents the parts of a scene a photo does not show (other sides of a subject, the surroundings "
               "for VR180) and fills holes behind objects with AI.", True),
     Component("model-lama", "LaMa — AI hole filling for VR180", "model", "big-lama",
               "Fills the gaps that appear behind objects in VR180 stereo with plausible texture.", True,
               ("engine-gen",)),
-    Component("model-wan", "Wan 2.2 Fun 5B Control-Camera — generative 3D (Apache-2.0)", "model",
-              "wan2.2-fun-5b-camera", "Video model that films new camera moves around your photo for Generative 3D. "
-              "Keeps people and animals intact. ~25 GB; needs ~32 GB of RAM.", True,
-              ("engine-gen", "engine-video", "model-vggt", "model-moge-l")),
-    Component("model-qwen", "Qwen-Image-Edit-2511 + Multiple-Angles — sharp generative views (Apache-2.0)", "model",
+    Component("model-wan", "Wan 2.2 Fun 5B Control-Camera — filmed camera moves (Apache-2.0)", "model",
+              "wan2.2-fun-5b-camera", "Video model that films camera moves from your photo: used to explore the "
+              "surroundings for VR180, or for Real 3D when Qwen-Image-Edit is not installed. ~25 GB; needs ~32 GB "
+              "of RAM.", False, ("engine-gen", "engine-video", "model-vggt", "model-moge-l")),
+    Component("model-qwen", "Qwen-Image-Edit-2511 + Multiple-Angles — the views of Real 3D (Apache-2.0)", "model",
               "qwen-image-edit-2511-q5", "Image model that redraws your photo from other camera angles (45°, 90°, "
-              "the back, above, below) at about 1 megapixel — sharper than video frames. ~33 GB with its text "
-              "encoder and LoRAs; needs ~32 GB of RAM. Needed for 'Real 3D from one photo'.", True,
-              ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning",
-               "model-qwen-lightning8", "engine-video", "model-vggt", "model-moge-l")),
+              "135°, the back, above, below) at about 1 megapixel. Real 3D, the recommended way to make 3D from one "
+              "photo, needs it. ~33 GB with its text encoder and LoRAs; needs ~32 GB of RAM.", True,
+              ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning", "engine-video",
+               "model-vggt", "model-moge-l")),
     Component("model-qwen-base", "Qwen-Image-Edit-2511 text encoder and VAE (for Qwen views)", "model",
-              "qwen-image-edit-2511-base", "Qwen2.5-VL-7B text/image encoder, VAE and configuration.", False,
+              "qwen-image-edit-2511-base", "Qwen2.5-VL-7B text/image encoder, VAE and configuration.", True,
               ("engine-gen",)),
     Component("model-qwen-angles", "Multiple-Angles LoRA (for Qwen views)", "model", "qwen-edit-2511-angles-lora",
-              "Camera-angle control: 8 directions × 4 heights × 3 distances.", False, ("engine-gen",)),
+              "Camera-angle control: 8 directions × 4 heights × 3 distances.", True, ("engine-gen",)),
     Component("model-qwen-lightning", "Qwen-Image-Edit Lightning LoRA (4 steps)", "model", "qwen-edit-2511-lightning",
-              "Makes each Qwen view take 4 sampling steps instead of 40.", False, ("engine-gen",)),
-    Component("model-qwen-lightning8", "Qwen-Image-Edit Lightning LoRA (8 steps, Quality)", "model",
-              "qwen-edit-2511-lightning-8", "Used in Quality mode: 8 sampling steps per view for finer detail.",
-              False, ("engine-gen",)),
-    Component("model-seva", "Stable Virtual Camera 1.1 — alternative generative engine (non-commercial, gated)",
-              "model", "seva-1.1", "Multi-view diffusion for scenes and objects without people (used only when Wan "
-              "2.2 is not installed). Distorts people.", False,
-              ("engine-gen", "model-seva-vae", "model-clip-h", "engine-video", "model-vggt", "model-moge-l"),
-              note="Gated: first accept the licence at huggingface.co/stabilityai/stable-virtual-camera and paste "
-                   "a Hugging Face access token (read) in Settings."),
-    Component("model-seva-vae", "Stable Diffusion 2.1 VAE (for Stable Virtual Camera)", "model", "sd21-vae",
-              "Image encoder/decoder used by Stable Virtual Camera.", False, ("engine-gen",)),
-    Component("model-clip-h", "OpenCLIP ViT-H/14 (for Stable Virtual Camera)", "model", "clip-vit-h-14",
-              "Image understanding used by Stable Virtual Camera.", False, ("engine-gen",)),
+              "Makes each Qwen view take 4 sampling steps instead of 40.", True, ("engine-gen",)),
+    Component("engine-subject", "Complete-subject engine (TRELLIS.2)", "runtime", "subject3d-cu128",
+              "Builds the whole subject of your photo in 3D - back included - so Real 3D gets the correct shape "
+              "all the way round (PyTorch + TRELLIS.2's CUDA extensions, installed privately).", False),
+    Component("model-trellis2", "TRELLIS.2 — the whole subject in 3D, back included (MIT)", "model", "trellis2-4b-shape",
+              "Used automatically by Real 3D when installed: the subject's complete shape guides the AI views' depth, "
+              "so sides and back have consistent geometry. ~11 GB; about 1-2 minutes per photo.", False,
+              ("engine-subject", "model-trellis-ssdec", "model-trellis-encoders", "model-qwen")),
+    Component("model-trellis-ssdec", "TRELLIS sparse-structure decoder (for TRELLIS.2)", "model",
+              "trellis-image-large-ss-dec", "Small decoder shared with the original TRELLIS.", False, ("engine-subject",)),
+    Component("model-trellis-encoders", "DINOv3 and RMBG-2.0 (for TRELLIS.2, non-commercial)", "model",
+              "trellis2-image-encoders", "Image encoder and background removal used by TRELLIS.2.", False,
+              ("engine-subject",)),
 ]
 
 

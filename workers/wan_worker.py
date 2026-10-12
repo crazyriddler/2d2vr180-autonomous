@@ -7,7 +7,7 @@ several shots (e.g. one to the left, one to the right) are generated and their f
 reconstructed into one 3D splat by the multi-view engine.
 
 Request:
-  {"image": "...", "output_dir": "...", "model_dir": "...", "trajectory": "arc" | "orbit" | "explore" | "spiral",
+  {"image": "...", "output_dir": "...", "model_dir": "...", "trajectory": "capture" | "capture_full" | "explore",
    "frames": 49, "steps": 50, "short_side": 704, "seed": 42, "prompt": "", "every": 2}
 """
 
@@ -18,9 +18,9 @@ import time
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
+from _protocol import cap_vram, emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
-TRAJECTORIES = ("capture", "capture_full", "arc", "orbit", "explore", "spiral")
+TRAJECTORIES = ("capture", "capture_full", "explore")
 
 PROMPT = ("A still moment captured on camera; the camera slowly moves around the scene while everything in it "
           "stays perfectly still, frozen in time. Realistic, sharp, highly detailed, natural anatomy, the same "
@@ -81,12 +81,8 @@ def crane_c2w(alpha, radius=2.0):
 
 
 # (label, kind, degrees, key angles): yaw = horizontal orbit (+ = to the right), crane = vertical orbit
-# (- = above, looking down). Key angles are the views used by sharp fusion (None: 1/4, 1/2, 3/4, all).
+# (- = above, looking down). Key angles: the views marked as key frames (None: 1/4, 1/2, 3/4, all).
 SHOT_PLANS = {
-    "arc": [("right", "yaw", 45, None), ("left", "yaw", -45, None), ("from above", "crane", -35, None),
-            ("from below", "crane", 25, None)],
-    "orbit": [("right", "yaw", 100, None), ("left", "yaw", -100, None), ("from above", "crane", -50, None),
-              ("from below", "crane", 30, None)],
     # 360-degree photo capture: 45, 90, 135, 180 and 270 degrees, overhead, from below
     "capture": [("orbit to 180°", "yaw", 180, (45, 90, 135, 180)), ("orbit to 270°", "yaw", -90, (-90,)),
                 ("overhead", "crane", -60, (-60,)), ("from below", "crane", 30, (30,))],
@@ -125,16 +121,13 @@ def shot_key_frames(kind, si, n):
 def shot_labels(kind):
     if kind in SHOT_PLANS:
         return [plan[0] for plan in SHOT_PLANS[kind]]
-    if kind == "explore":
-        return ["look right", "look left", "look up", "look down"]
-    return ["spiral"]
+    return ["look right", "look left", "look up", "look down"]       # explore
 
 
 def shots(kind, n):
     """List of shots; each is a list of n camera-to-world matrices starting at the photo (identity)."""
     import numpy as np
 
-    t = np.linspace(0, 1, n)
     ease = ease_curve(n)
     if kind in SHOT_PLANS:
         out = []
@@ -142,26 +135,16 @@ def shots(kind, n):
             f = orbit_c2w if how == "yaw" else crane_c2w
             out.append([f(math.radians(deg) * e) for e in ease])
         return out
-    if kind == "explore":
-        out = []
-        for yaw, pitch in ((60, 0), (-60, 0), (0, 30), (0, -25)):
-            shot = []
-            for e in ease:
-                m = np.eye(4)
-                m[:3, :3] = _yaw_pitch(math.radians(yaw) * e, math.radians(pitch) * e)
-                m[:3, 3] = [0.15 * math.sin(math.radians(yaw)) * e, 0.0, 0.1 * e]
-                shot.append(m)
-            out.append(shot)
-        return out
-    # spiral: small forward-facing circle with a slight push-in
-    shot = []
-    for k, e in enumerate(t):
-        m = np.eye(4)
-        a = 2 * math.pi * e
-        m[:3, 3] = [0.25 * math.sin(a) * e, 0.15 * (1 - math.cos(a)) * e, 0.3 * e]
-        m[:3, :3] = _yaw_pitch(-0.12 * math.sin(a) * e, 0.08 * (1 - math.cos(a)) * e)
-        shot.append(m)
-    return [shot]
+    out = []                                                          # explore
+    for yaw, pitch in ((60, 0), (-60, 0), (0, 30), (0, -25)):
+        shot = []
+        for e in ease:
+            m = np.eye(4)
+            m[:3, :3] = _yaw_pitch(math.radians(yaw) * e, math.radians(pitch) * e)
+            m[:3, 3] = [0.15 * math.sin(math.radians(yaw)) * e, 0.0, 0.1 * e]
+            shot.append(m)
+        out.append(shot)
+    return out
 
 
 def pose_rows(c2ws, hfov_deg, w, h):
@@ -374,7 +357,7 @@ def main(req):
     if not env["cuda_available"]:
         emit("error", code="cuda_unavailable", message="Generating views needs an NVIDIA GPU (CUDA).")
         sys.exit(1)
-    kind = req.get("trajectory", "arc")
+    kind = req.get("trajectory", "capture")
     if kind not in TRAJECTORIES:
         emit("error", code="bad_input", message=f"unknown trajectory {kind}")
         sys.exit(1)
@@ -389,7 +372,7 @@ def main(req):
     steps = int(req.get("steps", 50))
     plan = shots(kind, n)
     labels = shot_labels(kind)
-    torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.92)))
+    cap_vram(torch, float(req.get("vram_fraction", 0.92)))
     # One memory setting per process: a failed attempt's memory (VRAM and RAM) is only reliably
     # released when its process exits, so the app restarts the worker with the next attempt.
     # Finished shots and the encoded prompt are kept on disk and reused.

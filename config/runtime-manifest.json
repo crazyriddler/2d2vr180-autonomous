@@ -5,7 +5,7 @@
   "runtimes": [
     {
       "id": "photo-cu128",
-      "description": "Single-image backends: MoGe-2, Depth-Anything-V2 (RGB-D splats) and Apple SHARP",
+      "description": "Single-image backends: MoGe-2 / MoGe-3, Depth-Anything-V2 (RGB-D splats) and Apple SHARP",
       "python": "3.12",
       "torch_index": "https://download.pytorch.org/whl/cu128",
       "min_driver": "570.00",
@@ -27,9 +27,14 @@
         {
           "name": "sharp",
           "url": "https://github.com/apple/ml-sharp/archive/aed6527499ef91cba3b54c18d49a870f25947190.zip"
+        },
+        {
+          "name": "flex_gemm",
+          "url": "https://github.com/JeffreyXiang/FlexGEMM/archive/b2fadb29d41846c7981ade6801ffc689fae119cf.zip",
+          "copy_package": "flex_gemm"
         }
       ],
-      "smoke_test": "import torch, transformers, moge.model.v2, sharp; print('cuda', torch.cuda.is_available())",
+      "smoke_test": "import torch, transformers, moge.model.v2, moge.model.v3, flex_gemm, triton, sharp; print('cuda', torch.cuda.is_available())",
       "lock": "locks/photo-cu128.txt",
       "local_versions": {
         "torch": "+cu128",
@@ -65,15 +70,9 @@
         {
           "name": "pipeline",
           "url": "https://github.com/EasternJournalist/pipeline/archive/1c511390d90226c00c101f34b84df26a0f8789b4.zip"
-        },
-        {
-          "name": "depth-anything-3",
-          "url": "https://github.com/ByteDance-Seed/Depth-Anything-3/archive/3d835ec1a5802d64a8b8b15f817a1ab54809bfe4.zip",
-          "copy_package": "depth_anything_3",
-          "package_root": "src"
         }
       ],
-      "smoke_test": "import torch, gsplat, gsplat.strategy, vggt.models.vggt, moge.model.v2, open3d, sklearn, plyfile, addict, omegaconf, diffusers, transformers, sentencepiece; import importlib.util as u; assert u.find_spec('depth_anything_3'); print('cuda', torch.cuda.is_available())",
+      "smoke_test": "import torch, gsplat, gsplat.strategy, vggt.models.vggt, moge.model.v2, open3d, sklearn, plyfile; print('cuda', torch.cuda.is_available())",
       "network_at_inference": false,
       "lock": "locks/recon3d-cu124.txt",
       "local_versions": {
@@ -84,7 +83,7 @@
     },
     {
       "id": "gen-cu128",
-      "description": "Generative engine: Qwen-Image-Edit-2511 multi-angle views, Wan 2.2 Fun 5B camera control (video diffusion, people-safe), Stable Virtual Camera, LaMa hole filling",
+      "description": "Generative engine: Qwen-Image-Edit-2511 multi-angle views, Wan 2.2 Fun 5B camera control (video diffusion, people-safe), LaMa hole filling",
       "python": "3.12",
       "torch_index": "https://download.pytorch.org/whl/cu128",
       "min_driver": "570.00",
@@ -92,18 +91,56 @@
       "status": "unverified: install and GPU smoke test not yet run on Windows/RTX 4080",
       "archives_no_deps": [
         {
-          "name": "stable-virtual-camera",
-          "url": "https://github.com/Stability-AI/stable-virtual-camera/archive/fe19948e9b7bea261ab2db780a59656131404a83.zip",
-          "copy_package": "seva"
-        },
-        {
           "name": "videox-fun",
           "url": "https://github.com/aigc-apps/VideoX-Fun/archive/4b7b6402a1e0f0406bd6801fb66c0a00bd922621.zip",
           "copy_package": "videox_fun"
         }
       ],
-      "smoke_test": "import sys, types; sys.modules['gradio'] = types.SimpleNamespace(Progress=object); import torch, open_clip, diffusers, kornia, transformers, omegaconf, peft, gguf, seva.model, seva.eval; from diffusers import QwenImageEditPlusPipeline, GGUFQuantizationConfig; print('cuda', torch.cuda.is_available())",
+      "smoke_test": "import torch, diffusers, kornia, transformers, omegaconf, peft, gguf; from diffusers import QwenImageEditPlusPipeline, GGUFQuantizationConfig; print('cuda', torch.cuda.is_available())",
       "lock": "locks/gen-cu128.txt",
+      "local_versions": {
+        "torch": "+cu128",
+        "torchvision": "+cu128"
+      }
+    },
+    {
+      "id": "subject3d-cu128",
+      "description": "Complete subject: TRELLIS.2-4B builds the whole subject of a photo in 3D (back included) as a shape prior for Real 3D",
+      "python": "3.11",
+      "torch_index": "https://download.pytorch.org/whl/cu128",
+      "min_driver": "570.00",
+      "approx_size_gb": 5.0,
+      "status": "unverified: Windows CUDA extensions are the TRELLIS.2-stableprojectorz fork's prebuilt cp311 wheels; install and GPU smoke test not yet run on the RTX 4080",
+      "archives_no_deps": [
+        {
+          "name": "cumesh",
+          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/raw/d5d38f1e033a881e2c00e3137822ef8aa4e193de/whl/cumesh-0.0.1-cp311-cp311-win_amd64.whl"
+        },
+        {
+          "name": "flex_gemm",
+          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/raw/d5d38f1e033a881e2c00e3137822ef8aa4e193de/whl/flex_gemm-0.0.1-cp311-cp311-win_amd64.whl"
+        },
+        {
+          "name": "nvdiffrast",
+          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/raw/d5d38f1e033a881e2c00e3137822ef8aa4e193de/whl/nvdiffrast-0.4.0-cp311-cp311-win_amd64.whl"
+        },
+        {
+          "name": "nvdiffrec_render",
+          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/raw/d5d38f1e033a881e2c00e3137822ef8aa4e193de/whl/nvdiffrec_render-0.0.0-cp311-cp311-win_amd64.whl"
+        },
+        {
+          "name": "o_voxel",
+          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/raw/d5d38f1e033a881e2c00e3137822ef8aa4e193de/whl/o_voxel-0.0.1-cp311-cp311-win_amd64.whl"
+        },
+        {
+          "name": "trellis2",
+          "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/archive/d5d38f1e033a881e2c00e3137822ef8aa4e193de.zip",
+          "copy_package": "trellis2"
+        }
+      ],
+      "smoke_test": "import os; os.environ['ATTN_BACKEND']='xformers'; import torch, xformers, cumesh, flex_gemm, o_voxel, trimesh, kornia, timm; from trellis2.pipelines import Trellis2ImageTo3DPipeline; print('cuda', torch.cuda.is_available())",
+      "network_at_inference": false,
+      "lock": "locks/subject3d-cu128.txt",
       "local_versions": {
         "torch": "+cu128",
         "torchvision": "+cu128"

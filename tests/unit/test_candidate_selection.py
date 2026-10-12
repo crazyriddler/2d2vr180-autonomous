@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "workers"))
 import multiview_worker as mv  # noqa: E402
@@ -84,176 +83,140 @@ def test_consistency_map_flags_only_the_changed_region():
     assert conf[:, :150].mean() > 0.85                                      # the rest stays trusted
 
 
-def test_hopeless_generated_views_are_dropped_but_one_is_kept():
-    items = [{"path": "photo"}, {"generated": True, "label": "a", "rigidity": 0.3},
-             {"generated": True, "label": "b", "rigidity": 0.95}, {"generated": True, "label": "c", "rigidity": 0.9}]
-    imgs, vin = list("PABC"), list("pabc")
-    dropped = mv.drop_inconsistent(items, imgs, vin, 0.8)
-    assert sorted(dropped) == ["b", "c"] and [it.get("label") for it in items] == [None, "a"] and imgs == ["P", "A"]
-    items = [{"path": "photo"}, {"generated": True, "label": "a", "rigidity": 0.9},
-             {"generated": True, "label": "b", "rigidity": 0.85}]
-    imgs, vin = list("PAB"), list("pab")
-    mv.drop_inconsistent(items, imgs, vin, 0.8)
-    assert [it.get("label") for it in items] == [None, "b"]          # the least bad one stays
-
-
-def test_da3_stub_serves_any_helper_the_model_files_import(monkeypatch):
-    for name in ("depth_anything_3.utils.export", "depth_anything_3.utils.pose_align"):
-        monkeypatch.delitem(sys.modules, name, raising=False)
-    mv.da3_stub()
-    # the Giant / Nested models' Gaussian head imports this one (rc29 failed on it)
-    from depth_anything_3.utils.pose_align import align_poses_umeyama, batch_align_poses_umeyama  # noqa: F401
-    from depth_anything_3.utils.export import export  # noqa: F401
-    mod = sys.modules["depth_anything_3.utils.pose_align"]
-    assert not hasattr(mod, "__file__") and not hasattr(mod, "__path__")
-    for name in ("depth_anything_3.utils.export", "depth_anything_3.utils.pose_align"):
-        monkeypatch.delitem(sys.modules, name, raising=False)
-
-
-def test_da3_that_cannot_load_falls_back_to_vggt(monkeypatch):
-    class FakeTorch:
-        class cuda:
-            @staticmethod
-            def is_available():
-                return False
-
-    def broken(*a, **k):
-        raise ImportError("cannot import name 'something' from 'depth_anything_3'")
-
-    logs = []
-    monkeypatch.setattr(mv, "load_da3", broken)
-    monkeypatch.setattr(mv, "log", logs.append)
-    assert mv.try_load_da3("x", "cuda", FakeTorch) is None
-    assert "using VGGT" in logs[0] and "ImportError" in logs[0]
-
-
-def _person_in_front_of_wall(h=300, w=200):
-    d = np.full((h, w), 3.0)                       # backdrop wall at 3 m, slightly tilted
-    d += np.linspace(0, 0.2, h)[:, None]
-    yy, xx = np.mgrid[0:h, 0:w]
-    person = ((xx - 80) / 45.0) ** 2 + ((yy - 170) / 120.0) ** 2 < 1
-    d[person] = 1.6 + 0.1 * np.sin(xx[person] / 9.0)
-    return d, person
-
-
-def test_subject_mask_finds_the_person_in_front_of_the_wall():
-    pytest.importorskip("scipy")
-    d, person = _person_in_front_of_wall()
-    m, why = mv.subject_mask(d)
-    assert m is not None, why
-    assert m[person].mean() > 0.98                  # the whole subject (slightly dilated)
-    assert m[~person].mean() < 0.05                 # and hardly any wall
-
-
-def test_no_subject_mode_for_a_scene_without_a_separate_subject():
-    pytest.importorskip("scipy")
-    h, w = 300, 200
-    ground = 1.0 + 9.0 * (1 - np.linspace(0, 1, h))[:, None] * np.ones((1, w))   # a landscape / floor
-    m, why = mv.subject_mask(ground)
-    assert m is None and "no separate subject" in why
-    assert mv.subject_mask(np.full((h, w), 2.0))[0] is None
-    room = np.exp(np.random.default_rng(0).uniform(0, 2, (h, w)))          # depths spread evenly
-    assert mv.subject_mask(room)[0] is None
-    d, person = _person_in_front_of_wall()
-    d[220:] = np.linspace(3.0, 1.2, 80)[:, None]                            # standing on a floor
-    assert mv.subject_mask(d)[0] is not None
-
-
-def test_masked_flattens_the_background():
-    img = np.full((40, 30, 3), 200, np.uint8)
-    m = np.zeros((40, 30), bool)
-    m[10:30, 5:20] = True
-    out = mv.masked(img, m)
-    assert (out[m] == 200).all() and (out[~m] == 128).all()
-
-
-def test_turntable_orbits_the_subject_and_stays_within_the_views():
-    d, person = _person_in_front_of_wall()
-    h, w = d.shape
-    K = np.array([[200.0, 0, w / 2], [0, 200.0, h / 2], [0, 0, 1]])
-    ys, xs = np.mgrid[0:h, 0:w]
-    pts = np.stack([(xs + .5 - w / 2) / 200 * d, (ys + .5 - h / 2) / 200 * d, d], -1).reshape(-1, 3)
-    c2w0 = np.eye(4)
-
-    def yawed(deg):
-        a = math.radians(deg)
-        m = np.eye(4)
-        m[:3, :3] = [[math.cos(a), 0, math.sin(a)], [0, 1, 0], [-math.sin(a), 0, math.cos(a)]]
-        return m
-
-    zc, yaw = mv.turntable_orbit(pts, [c2w0, yawed(40), yawed(-12)], K, (w, h), person)
-    assert 1.5 < zc < 1.75                          # around the person, not the wall at 3 m
-    assert abs(yaw - 28) < 0.5                      # 70 % of the widest view (40°)
-    zc_all, yaw_small = mv.turntable_orbit(pts, [c2w0, yawed(7)], K, (w, h))
-    assert zc_all > 2.5 and yaw_small == 8.0        # no mask: median of everything; small views: small swing
-
-
-def test_subject_mode_leaves_out_generated_candidates_without_a_subject(tmp_path, monkeypatch):
+def test_field_of_view_from_exif(tmp_path):
     from PIL import Image
 
-    monkeypatch.setattr(mv, "log", lambda *a: None)
-    good = tmp_path / "good.png"
-    Image.fromarray(np.full((8, 6, 3), 90, np.uint8)).save(good)
-    m = np.ones((8, 6), bool)
-    items = [{"path": "photo.png"},
-             {"path": "a0.png", "generated": True, "candidates": ["a0.png", str(good)]},   # first has no subject
-             {"path": "b0.png", "generated": True, "candidates": ["b0.png", "b1.png"]}]    # none has one
-    imgs = ["photo", "a0", "b0"]
-    masks = {"photo.png": m, "a0.png": None, str(good): m, "b0.png": None, "b1.png": None}
-    assert mv.keep_masked_views(items, imgs, masks, 100) is masks
-    assert [it["path"] for it in items] == ["photo.png", str(good)]
-    assert items[1]["candidates"] == [str(good)] and imgs[0] == "photo" and imgs[1].shape == (8, 6, 3)
-    # no generated view with a subject left: subject mode is abandoned, nothing is removed
-    items2 = [{"path": "photo.png"}, {"path": "b0.png", "generated": True}]
-    assert mv.keep_masked_views(items2, ["p", "b"], masks, 100) is None and len(items2) == 2
+    img = Image.new("RGB", (400, 300))
+    exif = Image.Exif()
+    exif.get_ifd(0x8769)[0xA405] = 26                     # a typical phone main camera
+    img.save(tmp_path / "a.jpg", exif=exif)
+    fov = mv.exif_fov_x(str(tmp_path / "a.jpg"))
+    assert fov is not None and 65 < fov < 70             # ~67° across the long side for 4:3
+    img.save(tmp_path / "b.jpg")
+    assert mv.exif_fov_x(str(tmp_path / "b.jpg")) is None
+    tall = Image.new("RGB", (300, 400))
+    tall.save(tmp_path / "c.jpg", exif=exif)
+    assert mv.exif_fov_x(str(tmp_path / "c.jpg")) < fov  # portrait: the short side is horizontal
 
 
-def _rot(deg, axis=1):
-    a = math.radians(deg)
-    c, s = math.cos(a), math.sin(a)
-    R = np.eye(3)
-    i, j = [k for k in range(3) if k != axis]
-    R[i, i], R[i, j], R[j, i], R[j, j] = c, -s, s, c
-    return R
+def test_candidates_are_judged_against_their_anchor_view(monkeypatch, tmp_path):
+    """A back view is chosen by how well it continues the 135° view it was drawn from, not by the
+    photo (they share nothing); views without an anchor are still judged against the photo."""
+    from PIL import Image
+
+    paths = {}
+    for name in ("photo", "a", "b0", "b1", "c0", "c1"):
+        paths[name] = str(tmp_path / f"{name}.png")
+        Image.new("RGB", (64, 48), (len(name) * 20, 0, 0)).save(paths[name])
+    items = [{"path": paths["photo"]}, {"path": paths["a"], "label": "135° right"},
+             {"path": paths["b0"], "label": "back", "candidates": [paths["b0"], paths["b1"]], "anchor": 1,
+              "anchor_deg": 45, "target_deg": 180},
+             {"path": paths["c0"], "label": "45° left", "candidates": [paths["c0"], paths["c1"]], "target_deg": 45}]
+    imgs = [mv.load_rgb(it["path"]) for it in items]
+    vin = [mv.vggt_input(im) for im in imgs]
+    seen = []
+
+    def fake_score(model, ref_vin, cand_vin, dtype, torch, target_deg=None):
+        ref = next(k for k, v in enumerate(vin) if v[0] is ref_vin[0])
+        seen.append((ref, target_deg))
+        return float(cand_vin[0].mean()), 0.0, 45.0, 0.5
+
+    monkeypatch.setattr(mv, "rigidity_score", fake_score)
+    rep = mv.select_candidates(items, imgs, vin, None, None, None, 64)
+    assert seen[:2] == [(1, 45), (1, 45)]               # back: against the 135° view, 45° away from it
+    assert seen[2:] == [(0, 45), (0, 45)]               # no anchor: against the photo, 45° from it
+    assert rep[0]["judged_against"] == "135° right" and rep[1]["judged_against"] == "photo"
+    assert rep[0]["path"] == items[2]["path"]
 
 
-def test_feedforward_gaussians_are_brought_into_the_camera_frame():
-    # model frame: photo camera at some pose; metric scaling happens after the Gaussians are built
-    c2w_model = np.eye(4)
-    c2w_model[:3, :3] = _rot(20) @ _rot(-10, 0)
-    c2w_model[:3, 3] = [0.3, -0.2, 0.5]
-    s = 2.5
-    pts_cam = np.array([[0.1, 0.2, 1.0], [-0.3, 0.1, 2.0]])           # in the photo camera (metric)
-    means_model = (pts_cam / s) @ c2w_model[:3, :3].T + c2w_model[:3, 3]     # model units (unscaled)
-    c2w_metric = c2w_model.copy()
-    c2w_metric[:3, 3] *= s                                           # what DA3 returns as extrinsics
-    inv0 = np.linalg.inv(c2w_metric)
-    q_cam = np.array([[1.0, 0, 0, 0], [0.9238795, 0.3826834, 0, 0]])   # orientations in the photo camera
-    q_model = mv.quat_mul(mv.quat_from_rotmat(c2w_model[:3, :3]), q_cam)
-    means, scales, quats = mv.gaussians_to_frame(means_model, np.full((2, 3), 0.01), q_model, s, inv0)
-    assert np.allclose(means, pts_cam, atol=1e-5)
-    assert np.allclose(scales, 0.025)
-    assert np.allclose(np.abs((quats * q_cam).sum(1)), 1, atol=1e-5)  # same rotation (up to sign)
+def test_angle_between_ring_views():
+    from twod2vr180.backends.generative import TRI_RINGS, angle_between
+
+    assert abs(angle_between((135, 0), (180, 0)) - 45) < 1e-9
+    assert abs(angle_between((270, 0), (315, 0)) - 45) < 1e-9
+    assert abs(angle_between((0, 30), (0, 0)) - 30) < 1e-9
+    labels = [lb for ring in TRI_RINGS for lb, *_ in ring]
+    for k, ring in enumerate(TRI_RINGS):              # references always come from an earlier ring
+        earlier = {lb for r in TRI_RINGS[:k] for lb, *_ in r}
+        assert all(set(refs) <= earlier for *_, refs in ring)
+    assert "back" in labels and len(labels) == len(set(labels)) == 8
 
 
-def test_feedforward_init_keeps_the_subject_and_adds_the_photo_background():
-    V, h, w = 2, 32, 24
-    G = {"means": np.random.default_rng(0).normal(size=(V, h, w, 3)).astype(np.float32),
-         "scales": np.full((V, h, w, 3), 0.01, np.float32), "quats": np.tile([1, 0, 0, 0], (V, h, w, 1)).astype(
-             np.float32), "dc": np.zeros((V, h, w, 3), np.float32), "opacity": np.full((V, h, w), 0.6, np.float32)}
-    subj_hw = np.zeros((h, w), bool)
-    subj_hw[8:24, 6:18] = True
-    vin = [(None, {"mask": subj_hw}), (None, {"mask": subj_hw})]
-    depth = [np.full((h, w), 2.0)] * 2
-    photo_depth = np.full((64, 48), 3.0, np.float32)
-    K0 = np.array([[50.0, 0, 24], [0, 50.0, 32], [0, 0, 1]])
-    g = mv.ff_init_gaussians(G, [{}, {"generated": True}], vin, depth, [subj_hw, subj_hw], photo_depth,
-                             np.full((64, 48, 3), 100, np.uint8), K0, np.eye(4))
-    n_subject = 2 * int(subj_hw.sum())
-    assert len(g["means"]) > n_subject                      # + the photo's background
-    bg = g["means"][n_subject:]
-    assert np.allclose(bg[:, 2], 3.0) and np.allclose(g["opacity"][n_subject:], 0.9)
-    # without subject mode: everything but the border and the farthest 10 %
-    g2 = mv.ff_init_gaussians(G, [{}, {"generated": True}], [(None, {}), (None, {})],
-                              [np.linspace(1, 5, h * w).reshape(h, w)] * 2, [None, None], None, None, K0, np.eye(4))
-    assert 0.6 * 2 * h * w < len(g2["means"]) < 0.9 * 2 * h * w
+def test_align_scale_is_robust():
+    rng = np.random.default_rng(0)
+    z = rng.uniform(1, 5, (50, 50))
+    ref = 2.5 * z
+    ref[:5] = 100       # outliers
+    assert abs(mv.align_scale(z, ref, np.ones_like(z, bool)) - 2.5) < 1e-6
+    assert mv.resize_map(np.arange(4.0).reshape(2, 2), 4, 4)[3, 3] == 3.0
+
+
+def _scene_depth(h=120, w=160):
+    """True depth (m) of a room corner with a person-sized bump 2 m away."""
+    ys, xs = np.mgrid[0:h, 0:w]
+    z = 3.0 + 0.4 * (xs / w) + 0.2 * (ys / h)
+    bump = (xs - w / 2) ** 2 / 30 ** 2 + (ys - h / 2) ** 2 / 45 ** 2 < 1
+    z[bump] = 2.0 - 0.15 * np.cos((xs[bump] - w / 2) / 30)
+    return z
+
+
+def test_scale_and_shift_fit_removes_the_offset_a_scale_alone_leaves():
+    """A monocular depth that is right in shape but offset (z' = 0.9 z + 0.15) and partly wrong: the
+    robust scale+shift fit lands within millimetres; the old scale-only fit stays centimetres off."""
+    truth = _scene_depth()
+    mono = (truth - 0.15) / 0.9
+    rng = np.random.default_rng(0)
+    bad = rng.random(truth.shape) < 0.15
+    joint = np.where(bad, truth * rng.uniform(0.5, 1.5, truth.shape), truth)    # 15 % outliers
+    ok = np.ones_like(truth, bool)
+    s, t = mv.align_affine(mono, joint, ok)
+    err_affine = np.abs(mono * s + t - truth)
+    err_scale = np.abs(mono * mv.align_scale(mono, joint, ok) - truth)
+    assert np.percentile(err_affine, 90) * 100 < 0.3           # cm
+    assert np.percentile(err_scale, 90) * 100 > 1.5            # the subject and the walls a few cm off
+
+
+def test_generated_view_depth_that_contradicts_the_joint_geometry_is_left_unknown():
+    truth = _scene_depth()
+    mono = truth.copy()
+    mono[40:80, 20:50] *= 0.7                 # the AI view "sees" a different shape here
+    valid = inside = np.ones_like(truth, bool)
+    p_gen = mv.fit_prior(mono, valid, truth, inside, inside, True)
+    p_photo = mv.fit_prior(mono, valid, truth, inside, inside, False)
+    assert (p_gen[40:80, 20:50] == 0).mean() > 0.9 and (p_gen[:30] > 0).all()
+    assert (p_photo[40:80, 20:50] > 0).all()                   # the photo keeps its own shape
+
+
+def test_exif_focal_length_sets_the_photo_camera_unless_it_disagrees():
+    K = np.array([[[500.0, 0, 300], [0, 500.0, 200], [0, 0, 1]]] * 2)
+    out = mv.exif_intrinsics(K, {0: 60.0}, [(400, 640), (400, 640)])
+    assert abs(out[0][0, 0] - 320 / np.tan(np.radians(30))) < 1e-6 and out[0][0, 2] == 320
+    assert np.array_equal(out[1], K[1])                        # a generated view keeps its estimate
+    far = mv.exif_intrinsics(K, {0: 120.0}, [(400, 640)] * 2)
+    assert np.array_equal(far[0], K[0])                        # 2x off: the EXIF value is not trusted
+
+
+def test_cropped_photos_do_not_use_the_exif_focal_length(tmp_path):
+    from PIL import Image
+
+    exif = Image.Exif()
+    ifd = exif.get_ifd(0x8769)
+    ifd[0xA405] = 26
+    ifd[0xA002], ifd[0xA003] = 4000, 3000                    # shot at 4:3 ...
+    Image.new("RGB", (400, 400)).save(tmp_path / "crop.jpg", exif=exif)      # ... saved square: cropped
+    assert mv.exif_fov_x(str(tmp_path / "crop.jpg")) is None
+    Image.new("RGB", (400, 300)).save(tmp_path / "resized.jpg", exif=exif)   # only resized: still valid
+    assert mv.exif_fov_x(str(tmp_path / "resized.jpg")) is not None
+
+
+def test_photo_geometry_from_moge3_and_its_metric_scale(tmp_path):
+    h, w = 60, 80
+    z = np.full((h, w), 2.0, np.float32)
+    K = np.array([[80.0, 0, 40], [0, 80.0, 30], [0, 0, 1]])
+    np.savez(tmp_path / "g.npz", points=np.stack([np.zeros((h, w)), np.zeros((h, w)), z], -1).astype(np.float32),
+             mask=np.ones((h, w), bool), intrinsics=K)
+    zz, ok, fov = mv.photo_geometry(str(tmp_path / "g.npz"), 120, 160)
+    assert zz.shape == (120, 160) and ok.all() and abs(fov - 2 * np.degrees(np.arctan(40 / 80))) < 1e-6
+    info = {"sx": 160 / mv.VGGT_W, "sy": 120 / 378, "crop": 0, "h": 378}
+    engine = np.full((378, mv.VGGT_W), 0.5)                     # the engine's scene is 4x too small
+    assert abs(mv.scale_from_photo(zz, ok, engine, np.ones_like(engine), info) - 4.0) < 1e-6

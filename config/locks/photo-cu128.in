@@ -17,3 +17,5 @@ trimesh
 tqdm
 requests
 transformers==4.46.3
+# MoGe-3: FlexGEMM's Triton kernels on Windows
+triton-windows==3.4.0.post21

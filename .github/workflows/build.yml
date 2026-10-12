@@ -58,7 +58,7 @@ jobs:
       - name: WebXR viewer browser tests (Chrome on Mesa OpenGL)
         run: |
           pip install playwright==1.55.0
-          CHROME_PATH=$(which google-chrome) xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q tests/integration/test_webxr_viewer.py
+          CHROME_PATH=$(which google-chrome) xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q tests/integration/test_webxr_viewer.py tests/integration/test_player4d.py
 
   build-windows:
     # Hosted runners have no NVIDIA GPU: this job proves packaging, launch and
@@ -212,7 +212,7 @@ jobs:
           ./scripts/bootstrap.ps1
           ./scripts/build.ps1
           .venv\Scripts\python.exe -m pip install scikit-image==0.25.2
-      - name: Generative runtime (install, real LaMa inpainting on CPU, Stable Virtual Camera import)
+      - name: Generative runtime (install, real LaMa inpainting on CPU, Wan 2.2 import)
         shell: pwsh
         env:
           TWOD2VR180_HOME: D:\2d2vr180-home

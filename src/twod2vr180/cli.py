@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import urllib.parse
 import json
 import sys
 from pathlib import Path
@@ -140,9 +139,8 @@ def cmd_run(a) -> int:
                       eye_resolution=a.eye_resolution, license_profile=a.license_profile,
                       output_dir=a.out, allow_cpu=a.allow_cpu, renderer=a.renderer,
                       fill_holes=not a.no_fill_holes, video_eye_resolution=a.video_eye_resolution,
-                      ai_hole_fill=not a.no_ai_fill, generative=a.generative, gen_assembly=a.assembly, gen_engine=a.engine,
-                      video_mode=a.video_mode,
-                      export_sequence=a.export_sequence)
+                      ai_hole_fill=not a.no_ai_fill, generative=a.generative, gen_engine=a.engine,
+                      video_seconds=a.video_seconds, video_fps=a.video_fps, video_start_s=a.video_start)
     job = Job([Path(p) for p in a.input] if len(a.input) > 1 else Path(a.input[0]), opts)
     runner = JobRunner(_ctx(a.license_profile))
 
@@ -195,21 +193,28 @@ def cmd_vr180(a) -> int:
 
 
 def cmd_view_vr(a) -> int:
-    """Serve a splat to the bundled WebXR viewer on 127.0.0.1 and open it."""
+    """Serve a splat (or a 4D scene) to the bundled WebXR viewer on 127.0.0.1 and open it."""
     import time
     import urllib.request
     from .scene import load_scene
+    from .scene4d import Scene4D, is_scene4d, splatv_for
     from .vr_server import get_server, view_params
 
     ply = Path(a.scene)
-    scene = load_scene(ply)
+    if is_scene4d(ply):             # 4D: the 4D player plays the .splatv
+        scene, ply = Scene4D.load(ply).background, splatv_for(ply)
+    else:
+        scene = load_scene(ply)
     depth, xf = view_params(scene)
     url = get_server().share(ply, depth, ply.stem, xf)
     print(url, flush=True)
     if a.check:  # self-test: viewer page, modules and the scene itself are served
-        base = url.split("/viewer.html")[0]
+        page = url.split("?")[0].rsplit("/", 1)[1]
+        base = url.split("/" + page)[0]
         scene_path = urllib.parse.unquote(url.split("scene=")[1].split("&")[0])
-        for part in ("/viewer.html", "/three.module.js", "/gaussian-splats-3d.module.js", scene_path):
+        parts = ["/player4d.html", "/player4d.js"] if page == "player4d.html" else \
+            ["/viewer.html", "/three.module.js", "/gaussian-splats-3d.module.js"]
+        for part in parts + [scene_path]:
             with urllib.request.urlopen(base + part, timeout=10) as r:
                 if r.status != 200:
                     return 1
@@ -273,14 +278,16 @@ def build_parser() -> argparse.ArgumentParser:
     j.add_argument("--renderer", default="auto", choices=["auto", "gpu", "cpu"])
     j.add_argument("--no-fill-holes", action="store_true")
     j.add_argument("--no-ai-fill", action="store_true", help="do not use LaMa for VR180 holes")
-    j.add_argument("--generative", default="off", choices=["off", "tri", "capture", "arc", "orbit", "explore", "spiral"],
-                   help="photos: invent unseen views (Wan 2.2 / Stable Virtual Camera) and build a full 3D scene")
-    j.add_argument("--engine", default="auto", choices=["auto", "qwen", "wan", "seva"],
-                   help="generative 3D: model that invents the other views (auto: Qwen, then Wan, then SEVA)")
-    j.add_argument("--assembly", default="fusion", choices=["fusion", "train"],
-                   help="generative 3D: sharp fusion of per-view MoGe-2 geometry (default) or one trained splat")
-    j.add_argument("--export-sequence", action="store_true", help="fixed-camera video: one .ply per frame")
-    j.add_argument("--video-mode", default="auto", choices=["auto", "multiview", "per_frame", "best_frame"])
+    j.add_argument("--generative", default="off", choices=["off", "tri", "capture", "explore"],
+                   help="photos: invent the unseen views and train one 3D scene (tri = Real 3D, rings around "
+                        "the subject; capture = 360°; explore = surroundings for VR180)")
+    j.add_argument("--engine", default="auto", choices=["auto", "qwen", "wan"],
+                   help="generative 3D: model that invents the other views (auto: Qwen, then Wan)")
+    j.add_argument("--video-seconds", type=float, default=0.0,
+                   help="video → 4D: seconds of video used (0 = by mode: fast 8, auto 12, quality 15)")
+    j.add_argument("--video-fps", type=float, default=0.0,
+                   help="video → 4D: frames per second used (0 = by mode: fast 8, auto 12, quality 15)")
+    j.add_argument("--video-start", type=float, default=0.0, help="video → 4D: start this many seconds in")
     j.add_argument("--summary-json", help="write a compact result summary to this file")
     j.add_argument("-v", "--verbose", action="store_true")
     j.set_defaults(fn=cmd_run)
@@ -295,7 +302,8 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--out")
     v.set_defaults(fn=cmd_vr180)
 
-    x = sub.add_parser("view-vr", help="open a .ply/.splat in the WebXR viewer (PC-VR headsets via Link/SteamVR)")
+    x = sub.add_parser("view-vr", help="open a .ply/.splat (3D) or .splatv / 4D result folder in the WebXR viewer "
+                                       "(PC-VR headsets via Link/SteamVR)")
     x.add_argument("scene")
     x.add_argument("--no-browser", action="store_true")
     x.add_argument("--check", action="store_true", help="self-test the viewer server and exit")

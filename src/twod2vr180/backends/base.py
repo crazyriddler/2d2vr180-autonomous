@@ -89,7 +89,6 @@ class BackendResult:
     scene_ply: Path | None = None
     splat: Path | None = None
     obj: Path | None = None
-    frame_scenes: list[Path] = field(default_factory=list)   # per-frame geometry (npz) for 2.5D video
     cameras: list[dict] = field(default_factory=list)
     metric_scale: bool = False
     provenance_note: str = ""
@@ -104,7 +103,6 @@ class BackendResult:
         for k, v in list(d.items()):
             if isinstance(v, Path):
                 d[k] = str(v)
-        d["frame_scenes"] = [str(p) for p in self.frame_scenes]
         return d
 
 

@@ -15,15 +15,21 @@ Request:
    "gguf": "...", "lora_angles": "...", "lora_lightning": "...",
    "views": [{"label": "90°", "azimuth": 90, "elevation": 0}, ...], "distance": "medium shot",
    "megapixels": 1.0, "steps": 4, "seed": 42, "attempt": 0}
+
+Chained views (rc42): a view may carry "refs" ([{"path", "label"}], views generated in an earlier round) and
+"index" (its file number). Its candidates are then drawn from the photo *and* those references (the
+nearest accepted view keeps clothes, hair and proportions consistent around the subject); with more than
+one candidate, candidate 0 still comes from the photo alone, so the selection can fall back to it.
 """
 
+import gc
 import json
 import math
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
+from _protocol import cap_vram, emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
 AZIMUTHS = {0: "front view", 45: "front-right quarter view", 90: "right side view",
             135: "back-right quarter view", 180: "back view", 225: "back-left quarter view",
@@ -61,10 +67,51 @@ def output_size(w, h, megapixels):
     return max(256, int(round(w * s / 32)) * 32), max(256, int(round(h * s / 32)) * 32)
 
 
-def memory_attempts(vram_total_mib, megapixels):
-    """(placement, megapixels): the Q5 transformer (15 GB) only fits whole on 24 GB+ cards."""
+def system_ram_gib():
+    """(total, available) physical memory in GiB, or (None, None) when unknown."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            st = MEMORYSTATUSEX()
+            st.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st))
+            return st.ullTotalPhys / 2**30, st.ullAvailPhys / 2**30
+        page = os.sysconf("SC_PAGE_SIZE")
+        return os.sysconf("SC_PHYS_PAGES") * page / 2**30, os.sysconf("SC_AVPHYS_PAGES") * page / 2**30
+    except (AttributeError, OSError, ValueError):
+        return None, None
+
+
+def memory_attempts(vram_total_mib, megapixels, ram_total_gib=None):
+    """(placement, megapixels) to try in order. The Q5 transformer (15 GB) only fits whole on 24 GB+ cards;
+    otherwise its blocks stream to the GPU as they are needed ('stream'). Each block is page-locked (pinned)
+    on the way; PyTorch keeps freed pinned buffers in a cache that it never returns, which on a 32 GB PC
+    exhausted the RAM after two views (rc50 report): the cache is now emptied after every step
+    (release_pinned). Group offloading without streams crashed natively on Windows with these GGUF weights
+    (rc51 report, access violation at the first step), so it is not used. ``ram_total_gib`` is kept for
+    the log only."""
     whole = [("gpu", megapixels)] if vram_total_mib >= 24000 else []
     return whole + [("stream", megapixels), ("stream", min(megapixels, 0.6))]
+
+
+def release_pinned(torch):
+    """Return PyTorch's cached page-locked (pinned) host buffers to Windows. Returns the pinned MB still
+    reserved, or None when the stats are unavailable."""
+    try:
+        torch.cuda.synchronize()
+        torch._C._host_emptyCache()
+        st = torch.cuda.memory.host_memory_stats()
+        return int(st.get("reserved_bytes.all.current", st.get("allocated_bytes.all.current", 0)) // 2**20)
+    except Exception:  # noqa: BLE001 - older / other builds: nothing to release
+        return None
 
 
 # ----------------------------------------------------------------------------- stage 1
@@ -113,19 +160,36 @@ def encode(req, torch, image):
     drop = 64
     cw, ch = calculate_dimensions(CONDITION_IMAGE_SIZE, image.width / image.height)
     cond = VaeImageProcessor(vae_scale_factor=16).resize(image, ch, cw)
-    out = []
-    views = req["views"]
-    for i, v in enumerate(views):
-        prompt = view_prompt(v, req.get("distance", "medium shot"))
-        txt = template.format("Picture 1: <|vision_start|><|image_pad|><|vision_end|>" + prompt)
-        inputs = processor(text=[txt], images=[cond], padding=True, return_tensors="pt").to(enc.device)
+    from PIL import Image, ImageOps
+
+    def embed(text, images):
+        pics = "".join(f"Picture {k + 1}: <|vision_start|><|image_pad|><|vision_end|>" for k in range(len(images)))
+        inputs = processor(text=[template.format(pics + text)], images=images, padding=True,
+                           return_tensors="pt").to(enc.device)
         with torch.no_grad():
             hs = enc(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask,
                      pixel_values=inputs.pixel_values, image_grid_thw=inputs.image_grid_thw,
                      output_hidden_states=True).hidden_states[-1]
         n = int(inputs.attention_mask[0].sum())
-        out.append({"prompt": prompt, "embeds": hs[0, :n][drop:].to("cpu", torch.bfloat16)})
-        progress((i + 1) / len(views), f"encoded view {i + 1}/{len(views)}: {prompt}")
+        return hs[0, :n][drop:].to("cpu", torch.bfloat16)
+
+    out = []
+    views = req["views"]
+    for i, v in enumerate(views):
+        prompt = view_prompt(v, req.get("distance", "medium shot"))
+        item = {"prompt": prompt, "embeds": embed(prompt, [cond])}
+        if v.get("refs"):
+            refs = []
+            for r in v["refs"]:
+                with Image.open(r["path"]) as im:
+                    ri = ImageOps.exif_transpose(im).convert("RGB")
+                rw, rh = calculate_dimensions(CONDITION_IMAGE_SIZE, ri.width / ri.height)
+                refs.append(VaeImageProcessor(vae_scale_factor=16).resize(ri, rh, rw))
+            names = " and ".join(f"Picture {k + 2} ({r.get('label', 'another view')})" for k, r in enumerate(v["refs"]))
+            item["embeds_ref"] = embed(f"{prompt}. The same subject, clothes and hair as in {names}.", [cond] + refs)
+        out.append(item)
+        progress((i + 1) / len(views), f"encoded view {i + 1}/{len(views)}: {prompt}"
+                 + (f" (+ {len(v['refs'])} reference view)" if v.get("refs") else ""))
     torch.save({"key": prompts_key(req), "views": out}, os.path.join(req["output_dir"], "qwen_prompts.pt"))
     emit("result", stage="encode", views=len(out), vram_peak_mib=vram_peak_mib(torch))
 
@@ -133,8 +197,9 @@ def encode(req, torch, image):
 def prompts_key(req):
     import hashlib
 
-    views = [{k: v.get(k) for k in ("label", "azimuth", "elevation", "prompt")} for v in req["views"]]
-    blob = json.dumps([req["image"], os.path.getsize(req["image"]), views, req.get("distance")], sort_keys=True)
+    refs = [[r["path"], os.path.getsize(r["path"])] for v in req["views"] for r in v.get("refs") or []]
+    blob = json.dumps([req["image"], os.path.getsize(req["image"]), req["views"], req.get("distance"), refs],
+                      sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -188,7 +253,8 @@ def load_pipeline(req, torch, placement):
     if placement == "gpu":
         pipe.to(dev)
     else:
-        # Blocks stream from RAM as they are needed; pinned on the fly (no second copy in RAM).
+        # Blocks stream from RAM to the GPU as they are needed, pinned on the fly (no second copy of the
+        # weights in RAM); the pinned buffers are released after every step (release_pinned).
         transformer.enable_group_offload(onload_device=dev, offload_device=torch.device("cpu"),
                                          offload_type="block_level", num_blocks_per_group=1, use_stream=True,
                                          low_cpu_mem_usage=True)
@@ -196,8 +262,19 @@ def load_pipeline(req, torch, placement):
     return pipe
 
 
+def ram_retry(k, attempts, placement, w, h, ex):
+    """Out of system memory: retry in a fresh process with the next, lighter setting (finished views are
+    kept), or give up with a clear message."""
+    more = k + 1 < len(attempts)
+    emit("error", code="oom_retry" if more else "oom",
+         message=f"out of system memory (RAM) with '{placement}' at {w}x{h}: {type(ex).__name__}: {ex}"
+                 + ("; retrying with a lighter setting" if more else
+                    ". Close other programs or enlarge the Windows page file and try again."))
+    sys.exit(1)
+
+
 def generate(req, torch, image, env):
-    from PIL import Image  # noqa: F401
+    from PIL import Image, ImageOps
 
     out_dir = req["output_dir"]
     cache = os.path.join(out_dir, "qwen_prompts.pt")
@@ -205,7 +282,8 @@ def generate(req, torch, image, env):
     if not data or data.get("key") != prompts_key(req):
         emit("error", code="bad_input", message="encoded prompts missing or stale: run the 'encode' stage first")
         sys.exit(1)
-    attempts = memory_attempts(env.get("vram_total_mib") or 16000, float(req.get("megapixels", 1.0)))
+    ram_total, ram_free = system_ram_gib()
+    attempts = memory_attempts(env.get("vram_total_mib") or 16000, float(req.get("megapixels", 1.0)), ram_total)
     k = int(req.get("attempt", 0))
     if k >= len(attempts):
         emit("error", code="oom", message="Qwen-Image-Edit does not fit in this GPU's memory at any setting.")
@@ -216,35 +294,48 @@ def generate(req, torch, image, env):
     views = [{"path": req["image"], "generated": False}]
     steps = int(req.get("steps", 4))
     n_cand = max(1, int(req.get("candidates", 1)))
-    counts = [max(1, int(v.get("candidates", n_cand))) for v in req["views"]]   # per view (retries ask for more)
-    total = sum(counts)
+    total = len(req["views"]) * n_cand
     for i, (v, enc) in enumerate(zip(req["views"], data["views"])):
         paths = []
-        for c in range(counts[i]):
+        idx = int(v.get("index", i))
+        ref_imgs = []
+        for r in v.get("refs") or []:
+            with Image.open(r["path"]) as im:
+                ref_imgs.append(ImageOps.exif_transpose(im).convert("RGB"))
+        for c in range(n_cand):
             # candidate 0 keeps the old file name (results of earlier versions are reused)
-            p = os.path.join(out_dir, f"view{i:02d}.png" if c == 0 else f"view{i:02d}_c{c}.png")
+            p = os.path.join(out_dir, f"view{idx:02d}.png" if c == 0 else f"view{idx:02d}_c{c}.png")
+            use_refs = bool(ref_imgs) and (n_cand == 1 or c >= 1)
             paths.append(p)
             if os.path.exists(p):
                 log(f"view {i + 1} ({v.get('label')}) candidate {c + 1}: already generated, reused")
                 continue
             if pipe is None:
-                pipe = load_pipeline(req, torch, placement)
-            log(f"view {i + 1}/{len(req['views'])} ({v.get('label')}) candidate {c + 1}/{counts[i]}: {enc['prompt']} · "
-                f"{w}x{h} · {placement}")
-            e = enc["embeds"][None].to("cuda", torch.bfloat16)
+                if ram_free is not None:
+                    log(f"system memory: {ram_free:.1f} of {ram_total:.1f} GB free; transformer placement '{placement}'")
+                try:
+                    pipe = load_pipeline(req, torch, placement)
+                except MemoryError as ex:
+                    ram_retry(k, attempts, placement, w, h, ex)
+            log(f"view {i + 1}/{len(req['views'])} ({v.get('label')}) candidate {c + 1}/{n_cand}: {enc['prompt']} · "
+                f"{w}x{h} · {placement}" + (" · with reference views" if use_refs else ""))
+            e = enc["embeds_ref" if use_refs else "embeds"][None].to("cuda", torch.bfloat16)
             mask = torch.ones(e.shape[:2], dtype=torch.long, device="cuda")
-            done = sum(counts[:i]) + c
+            done = i * n_cand + c
 
             def on_step(pp, s, t, kw, done=done, i=i, c=c):
+                pinned = release_pinned(torch)
+                if s == 0 and done == 0 and pinned is not None:
+                    log(f"pinned host memory after the first step: {pinned} MB (released after every step)")
                 progress((done + (s + 1) / steps) / total,
-                         f"view {i + 1}/{len(req['views'])} ({v.get('label')}), candidate {c + 1}/{counts[i]}: "
+                         f"view {i + 1}/{len(req['views'])} ({v.get('label')}), candidate {c + 1}/{n_cand}: "
                          f"step {s + 1}/{steps}")
                 return {}
 
             oom = None
             try:
                 with torch.no_grad():
-                    img = pipe(image=[image], prompt_embeds=e, prompt_embeds_mask=mask, true_cfg_scale=1.0,
+                    img = pipe(image=[image] + (ref_imgs if use_refs else []), prompt_embeds=e, prompt_embeds_mask=mask, true_cfg_scale=1.0,
                                num_inference_steps=steps, width=w, height=h,
                                generator=torch.Generator("cuda").manual_seed(int(req.get("seed", 42)) + i + 1000 * c),
                                callback_on_step_end=on_step).images[0]
@@ -252,6 +343,8 @@ def generate(req, torch, image, env):
                 if "out of memory" not in str(ex).lower():
                     raise
                 oom = str(ex).splitlines()[0][:300]
+            except MemoryError as ex:          # system RAM, not the GPU's
+                ram_retry(k, attempts, placement, w, h, ex)
             if oom:
                 more = k + 1 < len(attempts)
                 emit("error", code="oom_retry" if more else "oom",
@@ -259,8 +352,13 @@ def generate(req, torch, image, env):
                              ("; retrying with a lighter setting" if more else ""))
                 sys.exit(1)
             img.save(p)
+            del img
+            gc.collect()                       # keep RAM flat between candidates
+            torch.cuda.empty_cache()
+            release_pinned(torch)
         views.append({"path": paths[0], "candidates": paths, "generated": True, "key": True,
-                      "label": v.get("label"), "azimuth": v.get("azimuth", 0), "elevation": v.get("elevation", 0)})
+                      "label": v.get("label"), "azimuth": v.get("azimuth", 0), "elevation": v.get("elevation", 0),
+                      "refs": [r.get("label") for r in v.get("refs") or []]})
     with open(os.path.join(out_dir, "views.json"), "w") as f:
         json.dump(views, f)
     emit("result", stage="generate", views=views, size=[w, h], placement=placement,
@@ -278,7 +376,9 @@ def main(req):
     os.makedirs(req["output_dir"], exist_ok=True)
     with Image.open(req["image"]) as im:
         image = ImageOps.exif_transpose(im).convert("RGB")
-    torch.cuda.set_per_process_memory_fraction(float(req.get("vram_fraction", 0.92)))
+    if max(image.size) > 2048:     # views are ~1 MP: a 24 MP photo only costs memory here
+        image.thumbnail((2048, 2048), Image.LANCZOS)
+    cap_vram(torch, float(req.get("vram_fraction", 0.92)))
     if req.get("stage") == "encode":
         encode(req, torch, image)
     else:

@@ -14,22 +14,31 @@ import urllib.parse
 import urllib.request
 
 HF_REPOS = [
-    "imlixinyang/FlashWorld",
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+    "Qwen/Qwen-Image-Edit-2511", "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
+    "lightx2v/Qwen-Image-Edit-2511-Lightning", "unsloth/Qwen-Image-Edit-2511-GGUF",
+    "QuantStack/Qwen-Image-Edit-2511-GGUF",
+    # rc45 research: complete subject (TRELLIS.2) and the newer Qwen image model
+    "microsoft/TRELLIS.2-4B", "microsoft/TRELLIS-image-large", "Qwen/Qwen-Image-2.1",
+    # rc48: MoGe-3 (finer monocular geometry)
+    "Ruicheng/moge-3-vitl", "Ruicheng/moge-3-vitg",
 ]
-HF_SEARCH: list[str] = []
-GGUF_HEADERS: list[str] = []
+HF_SEARCH = ["Qwen-Image-Edit-2511 gguf", "Qwen-Image-Edit-2511-Multiple-Angles", "Qwen-Image-2.1",
+             "Qwen-Image-2.1 Multiple-Angles", "TRELLIS.2"]
+GGUF_HEADERS = [  # tensor names of GGUF files (read from the first MiBs, not downloaded)
+    "unsloth/Qwen-Image-Edit-2511-GGUF/qwen-image-edit-2511-Q5_K_M.gguf",
+]
 HF_TEXT = [  # small files whose content is needed (configs, model cards)
-    "imlixinyang/FlashWorld/README.md",
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/transformer/config.json",
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/text_encoder/config.json",
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/model_index.json",
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/vae/config.json",
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/scheduler/scheduler_config.json",
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/tokenizer/tokenizer_config.json",
-    "Wan-AI/Wan2.2-TI2V-5B-Diffusers/tokenizer/special_tokens_map.json",
+    "Qwen/Qwen-Image-Edit-2511/transformer/config.json", "Qwen/Qwen-Image-Edit-2511/model_index.json",
+    "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA/README.md",
+    "microsoft/TRELLIS.2-4B/pipeline.json", "microsoft/TRELLIS.2-4B/README.md",
+    "microsoft/TRELLIS-image-large/pipeline.json", "Qwen/Qwen-Image-2.1/README.md",
+    "Qwen/Qwen-Image-2.1/model_index.json", "Ruicheng/moge-3-vitl/README.md",
 ]
-URLS: list[str] = []  # non-HF downloads: hashed by streaming
+URLS: list[str] = [  # non-HF downloads: hashed by streaming
+    # TRELLIS.2 Windows fork (MIT): DINOv3 image encoder and RMBG-2.0 background removal it ships
+    "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/dinov3.zip",
+    "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/RMBG-2.0.zip",
+]
 
 
 def get(url: str):

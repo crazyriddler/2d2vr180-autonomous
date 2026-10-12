@@ -82,11 +82,11 @@ class WelcomeDialog(QDialog):
         body = QLabel(
             f"<p>{gpu}</p><p>Turn photos and videos into explorable 3D scenes, Gaussian splats, meshes and VR180 "
             "stereo — entirely on this computer: single photos, several photos of one place, videos, and "
-            "generative 3D that invents the parts a photo does not show.</p><p>Before the first run, the app "
-            "downloads its three AI engines (about 5–7 GB each) and models (0.1–5 GB each, about 20 GB in "
-            "total) from their original publishers — plan for ~40 GB of free disk space. You will see each "
-            "model's licence before it is downloaded. Stable Virtual Camera additionally needs a free Hugging "
-            "Face account (Settings → Hugging Face token).</p>")
+            "Real 3D from one photo, where AI draws the parts the photo does not show.</p><p>Before the first run, "
+            "the app downloads its AI engines (about 5–7 GB each) and the recommended models (about 45 GB, most "
+            "of it the Qwen-Image-Edit model that draws the other views) from their original publishers — plan "
+            "for ~70 GB of free disk space (TRELLIS.2, optional, adds ~16 GB). You will see each model's licence "
+            "before it is downloaded.</p>")
         body.setWordWrap(True)
         body.setTextFormat(Qt.RichText)
         v.addWidget(body)
@@ -234,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     w = MainWindow()
     if argv:
         p = Path(argv[0])
-        if p.suffix.lower() in (".ply", ".splat"):
+        if p.suffix.lower() in (".ply", ".splat", ".splatv"):
             w.open_scene(p)
         else:
             w.create.add_files([str(p)])
