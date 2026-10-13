@@ -16,6 +16,10 @@ Request:
    "views": [{"label": "90°", "azimuth": 90, "elevation": 0}, ...], "distance": "medium shot",
    "megapixels": 1.0, "steps": 4, "seed": 42, "attempt": 0}
 
+Hole filling (rc57): a view may carry its own "image" (a render of the 3D scene with its holes painted
+black) and "prompt" (an instruction instead of a camera angle); with "angles_strength": 0 the
+Multiple-Angles LoRA is not loaded. The app keeps only the generated pixels inside the holes.
+
 Chained views (rc42): a view may carry "refs" ([{"path", "label"}], views generated in an earlier round) and
 "index" (its file number). Its candidates are then drawn from the photo *and* those references (the
 nearest accepted view keeps clothes, hair and proportions consistent around the subject); with more than
@@ -177,7 +181,13 @@ def encode(req, torch, image):
     views = req["views"]
     for i, v in enumerate(views):
         prompt = view_prompt(v, req.get("distance", "medium shot"))
-        item = {"prompt": prompt, "embeds": embed(prompt, [cond])}
+        vcond = cond
+        if v.get("image"):        # its own input picture (hole filling)
+            with Image.open(v["image"]) as im:
+                vi = ImageOps.exif_transpose(im).convert("RGB")
+            vw, vh = calculate_dimensions(CONDITION_IMAGE_SIZE, vi.width / vi.height)
+            vcond = VaeImageProcessor(vae_scale_factor=16).resize(vi, vh, vw)
+        item = {"prompt": prompt, "embeds": embed(prompt, [vcond])}
         if v.get("refs"):
             refs = []
             for r in v["refs"]:
@@ -198,6 +208,7 @@ def prompts_key(req):
     import hashlib
 
     refs = [[r["path"], os.path.getsize(r["path"])] for v in req["views"] for r in v.get("refs") or []]
+    refs += [[v["image"], os.path.getsize(v["image"])] for v in req["views"] if v.get("image")]
     blob = json.dumps([req["image"], os.path.getsize(req["image"]), req["views"], req.get("distance"), refs],
                       sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
@@ -299,6 +310,10 @@ def generate(req, torch, image, env):
         paths = []
         idx = int(v.get("index", i))
         ref_imgs = []
+        vimage = image
+        if v.get("image"):             # its own input picture (hole filling)
+            with Image.open(v["image"]) as im:
+                vimage = ImageOps.exif_transpose(im).convert("RGB")
         for r in v.get("refs") or []:
             with Image.open(r["path"]) as im:
                 ref_imgs.append(ImageOps.exif_transpose(im).convert("RGB"))
@@ -335,7 +350,7 @@ def generate(req, torch, image, env):
             oom = None
             try:
                 with torch.no_grad():
-                    img = pipe(image=[image] + (ref_imgs if use_refs else []), prompt_embeds=e, prompt_embeds_mask=mask, true_cfg_scale=1.0,
+                    img = pipe(image=[vimage] + (ref_imgs if use_refs else []), prompt_embeds=e, prompt_embeds_mask=mask, true_cfg_scale=1.0,
                                num_inference_steps=steps, width=w, height=h,
                                generator=torch.Generator("cuda").manual_seed(int(req.get("seed", 42)) + i + 1000 * c),
                                callback_on_step_end=on_step).images[0]

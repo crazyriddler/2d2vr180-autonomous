@@ -14,7 +14,16 @@ This backend builds that foundation:
      second layer behind edges, with MoGe's geometry and scale instead of SHARP's monocular guess;
   4. diagnostics: SHARP alone is exported next to it, and a sheet of views (head 15 cm to each side and up,
      15° around the subject) compares the two.
-The progressive hole filling (rc57) builds on this splat.
+Then (rc57) the holes are filled, consistent with the photo by construction:
+  5. the locked splat is rendered from moved cameras (head 15 cm to each side, 15° around the subject; Auto and
+     Quality go further). A hole is every pixel showing nothing the photo saw: empty, or SHARP's own guesses
+     behind the photo's surfaces (fusion.unseen_by_photo);
+  6. only the holes are painted (Qwen-Image-Edit with the holes blacked out, else LaMa); everything visible
+     stays exactly the render;
+  7. SHARP runs on each filled view with the rendered depth where the scene exists and MoGe's depth of the
+     new pixels tied to the background around each hole (sharp_depth_worker "fill");
+  8. only the splats in the holes are added (GENERATIVE), never on or in front of what the photo shows; the
+     photo's own guesses where new content lands are replaced (fusion.add_fills).
 """
 
 from __future__ import annotations
@@ -25,14 +34,25 @@ from pathlib import Path
 
 import numpy as np
 
-from ..scene import INFERRED, Camera, GaussianScene, read_gaussian_ply, write_gaussian_ply, write_splat
+from ..scene import GENERATIVE, INFERRED, Camera, GaussianScene, read_gaussian_ply, write_gaussian_ply, write_splat
 from .base import (SCENE_STATIC, SINGLE_VIEW, Availability, Backend, BackendContext, BackendError, BackendResult,
                    Estimate, JobInput, run_worker)
 
 MOGE_MODELS = ("moge-3-vitl", "moge-2-vitl-normal")     # first installed wins
 FACE_MODEL = "yunet-face"
 SHEET_VIEWS = [("head 15 cm left", "move", (-0.15, 0, 0)), ("head 15 cm right", "move", (0.15, 0, 0)),
-               ("head 10 cm up", "move", (0, -0.10, 0)), ("15° left", "orbit", -15), ("15° right", "orbit", 15)]
+               ("head 10 cm up", "move", (0, -0.10, 0)), ("15° left", "orbit", (-15, 0)), ("15° right", "orbit", (15, 0))]
+# Moved cameras whose holes are filled, small moves first (an earlier view's content wins where they overlap).
+_FAST = [("head 15 cm left", "move", (-0.15, 0, 0)), ("head 15 cm right", "move", (0.15, 0, 0)),
+         ("15° left", "orbit", (-15, 0)), ("15° right", "orbit", (15, 0))]
+_AUTO = _FAST + [("head 10 cm up", "move", (0, -0.10, 0)), ("30° left", "orbit", (-30, 0)), ("30° right", "orbit", (30, 0))]
+FILL_VIEWS = {"fast": _FAST, "auto": _AUTO,
+              "quality": _AUTO + [("head 10 cm down", "move", (0, 0.10, 0)), ("15° from above", "orbit", (0, 15)),
+                                  ("head 30 cm left", "move", (-0.30, 0, 0)), ("head 30 cm right", "move", (0.30, 0, 0))]}
+FILL_PROMPT = ("The pure black areas are missing parts of this picture. Fill them with what is hidden behind, "
+               "continuing the surrounding background, surfaces, texture and lighting seamlessly. Do not add new "
+               "objects or people. Keep everything else exactly the same.")
+MIN_HOLE = 0.002            # views with less of their picture in holes are skipped
 
 
 def moge_model(ctx) -> str | None:
@@ -42,23 +62,77 @@ def moge_model(ctx) -> str | None:
     return None
 
 
-def sheet_cameras(cam: Camera, pivot: float, side: int = 480) -> list[tuple[str, dict]]:
-    """The photo's camera, then the diagnostic views (photo frame, OpenCV)."""
+def sheet_cameras(cam: Camera, pivot: float, side: int = 480, views=None, photo: bool = True) -> list[tuple[str, dict]]:
+    """The photo's camera (optional), then the moved views (photo frame, OpenCV): "move" = head translation
+    in metres, "orbit" = (azimuth, elevation) degrees around the subject at depth ``pivot``."""
     from ..fusion import orbit_pose
 
-    s = side / max(cam.width, cam.height)
+    s = min(side, max(cam.width, cam.height)) / max(cam.width, cam.height)
     base = {"width": max(8, round(cam.width * s)), "height": max(8, round(cam.height * s)), "fx": cam.fx * s,
             "fy": cam.fy * s, "cx": cam.cx * s, "cy": cam.cy * s}
-    out = [("photo", {**base, "c2w": np.eye(4).tolist()})]
-    for label, kind, v in SHEET_VIEWS:
+    out = [("photo", {**base, "c2w": np.eye(4).tolist()})] if photo else []
+    for label, kind, v in SHEET_VIEWS if views is None else views:
         c2w = np.eye(4)
         if kind == "move":
             c2w[:3, 3] = v
         else:
-            _, R, t = orbit_pose(v, 0, pivot)
+            _, R, t = orbit_pose(v[0], v[1], pivot)
             c2w[:3, :3], c2w[:3, 3] = R, t
         out.append((label, {**base, "c2w": c2w.tolist()}))
     return out
+
+
+def view_camera(c: dict) -> Camera:
+    return Camera(int(c["width"]), int(c["height"]), c["fx"], c["fy"], c["cx"], c["cy"], np.array(c["c2w"]))
+
+
+def grid(rows: list[tuple[str, list]], col_labels: list[str], out_png: Path) -> Path:
+    """Images in a labelled grid (rows of equal-size images)."""
+    from PIL import Image, ImageDraw
+
+    h, w = np.asarray(rows[0][1][0]).shape[:2]
+    pad = 22
+    sheet = Image.new("RGB", (w * len(col_labels), (h + pad) * len(rows) + pad), (24, 24, 24))
+    dr = ImageDraw.Draw(sheet)
+    for j, label in enumerate(col_labels):
+        dr.text((j * w + 6, 4), label, fill=(230, 230, 230))
+    for i, (name, row) in enumerate(rows):
+        y = pad + i * (h + pad)
+        dr.text((6, y + 2), name, fill=(255, 210, 90))
+        for j, im in enumerate(row):
+            sheet.paste(Image.fromarray(np.asarray(im, np.uint8)).resize((w, h)), (j * w, y + 16))
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out_png)
+    return out_png
+
+
+def render_views(ctx, ply: Path, scene: GaussianScene, cams: list[dict], out_dir: Path, work: Path,
+                 script: str = "render_worker.py", log=None, cpu_fallback: bool = True) -> list[dict] | None:
+    """RGB, alpha and depth of a splat seen from cameras: gsplat in the photo runtime, else (diagnostics
+    only) the CPU splat renderer. None when neither can run."""
+    from ..render import render_pinhole
+
+    try:
+        run_worker(ctx.runtimes.python("photo-cu128"), script,
+                   {"ply": str(ply), "views": cams, "out_dir": str(out_dir), "batch": 6}, work / "worker",
+                   lambda v, m: None, lambda: False, env=ctx.runtimes.worker_env("photo-cu128"), timeout_s=900)
+        out = []
+        for i in range(len(cams)):
+            with np.load(out_dir / f"view_{i:06d}.npz") as z:
+                out.append({"rgb": z["rgb"], "alpha": z["alpha"].astype(np.float32),
+                            "depth": z["depth"].astype(np.float32)})
+        return out
+    except (BackendError, OSError, KeyError) as e:
+        if log:
+            log(f"GPU renderer unavailable ({str(e).splitlines()[0][:160]})"
+                + ("; CPU renderer used for the pictures" if cpu_fallback else ""))
+        if not cpu_fallback:
+            return None
+        res = []
+        for c in cams:
+            r = render_pinhole(scene, np.array(c["c2w"]), c["width"], c["height"], c["fx"], c["fy"], c["cx"], c["cy"])
+            res.append({"rgb": r.rgb, "alpha": r.covered.astype(np.float32), "depth": r.depth})
+        return res
 
 
 def pivot_depth(scene: GaussianScene, cam: Camera) -> float:
@@ -70,46 +144,13 @@ def pivot_depth(scene: GaussianScene, cam: Camera) -> float:
 
 
 def render_sheet(ctx, rows: list[tuple[str, Path, GaussianScene]], cams: list[tuple[str, dict]], work: Path,
-                 out_png: Path, log=None) -> Path:
-    """Grid of renders: one row per splat, one column per camera. GPU (gsplat) when it can run, else the
-    CPU splat renderer."""
-    from PIL import Image, ImageDraw
-
-    from ..render import render_pinhole
-
+                 out_png: Path, log=None, script: str = "render_worker.py") -> Path:
+    """Grid of renders: one row per splat, one column per camera."""
     images = []
-    for name, ply, scene in rows:
-        row = None
-        try:
-            d = work / f"sheet_{name}"
-            run_worker(ctx.runtimes.python("photo-cu128"), "render_worker.py",
-                       {"ply": str(ply), "views": [c for _, c in cams], "out_dir": str(d), "batch": 6},
-                       work / "worker", lambda v, m: None, lambda: False,
-                       env=ctx.runtimes.worker_env("photo-cu128"), timeout_s=600)
-            row = []
-            for i in range(len(cams)):
-                with np.load(d / f"view_{i:06d}.npz") as z:
-                    row.append(z["rgb"])
-        except (BackendError, OSError, KeyError) as e:
-            if log:
-                log(f"views sheet: GPU renderer unavailable ({str(e).splitlines()[0][:120]}); CPU renderer used")
-            row = [render_pinhole(scene, np.array(c["c2w"]), c["width"], c["height"], c["fx"], c["fy"], c["cx"],
-                                  c["cy"]).rgb for _, c in cams]
-        images.append((name, row))
-    w, h = cams[0][1]["width"], cams[0][1]["height"]
-    pad = 22
-    sheet = Image.new("RGB", (w * len(cams), (h + pad) * len(images) + pad), (24, 24, 24))
-    dr = ImageDraw.Draw(sheet)
-    for j, (label, _) in enumerate(cams):
-        dr.text((j * w + 6, 4), label, fill=(230, 230, 230))
-    for i, (name, row) in enumerate(images):
-        y = pad + i * (h + pad)
-        dr.text((6, y + 2), name, fill=(255, 210, 90))
-        for j, im in enumerate(row):
-            sheet.paste(Image.fromarray(np.asarray(im, np.uint8)), (j * w, y + 16))
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    sheet.save(out_png)
-    return out_png
+    for k, (name, ply, scene) in enumerate(rows):
+        r = render_views(ctx, ply, scene, [c for _, c in cams], work / f"sheet_{k}", work, script, log)
+        images.append((name, [v["rgb"] for v in r]))
+    return grid(images, [label for label, _ in cams], out_png)
 
 
 class LockedPhotoBackend(Backend):
@@ -123,6 +164,7 @@ class LockedPhotoBackend(Backend):
     commercial_use = False          # SHARP weights: research only
     geometry_script = "moge_worker.py"
     worker_script = "sharp_depth_worker.py"
+    render_script = "render_worker.py"
     description = ("One photo → Apple SHARP's Gaussians aligned to the photo's measured metric depth (MoGe-3) at "
                    "its real lens, with a scale check from the people's eyes.")
 
@@ -166,7 +208,7 @@ class LockedPhotoBackend(Backend):
                    {"model_path": str(ctx.models.paths(mg)["model.pt"]), "version": "v3" if mg == MOGE_MODELS[0] else "v2",
                     "refine_steps": 3, "max_side": 1536, "fp16": True, "images": [item],
                     "allow_cpu": bool(getattr(ctx, "allow_cpu", False))},
-                   inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.0, 0.35),
+                   inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.0, 0.25),
                    timeout_s=1800)
         used(mg)
 
@@ -179,7 +221,7 @@ class LockedPhotoBackend(Backend):
                          {"mode": "photo", "checkpoint": str(ctx.models.paths("sharp")["sharp_2572gikvuh.pt"]),
                           "geometry": item["out"], "output_dir": str(work), "face_model": face, "plain": True,
                           "allow_cpu": bool(getattr(ctx, "allow_cpu", False))},
-                         inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.35, 0.8),
+                         inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.25, 0.45),
                          timeout_s=1800)
         used("sharp")
         res = out["result"]
@@ -190,45 +232,205 @@ class LockedPhotoBackend(Backend):
             w, h = res["size"]
             scene.cameras = [Camera(w, h, res["f_px"], res["f_px"], w / 2, h / 2)]
         exp = inp.work_dir / "export"
-        ply = write_gaussian_ply(scene, exp / "scene.ply", include_provenance=True)
-        splat = write_splat(scene, exp / "scene.splat")
-        extra_files = {}
-        rows = [("photo locked (SHARP + measured depth)", ply, scene)]
+        cam = scene.cameras[0]
+        locked_ply = write_gaussian_ply(scene, work / "locked_scene.ply", include_provenance=True)
+        extra_files, fill_report, final = {}, [], scene
+        warnings = ["OBJ mesh is not available for SHARP output."]
+
+        # 5-8. fill the holes of moved views
+        if options.get("real3d_fill", True):
+            try:
+                filled = self._fill(inp, ctx, options, progress, cancel, log, scene, locked_ply, cam, mg, used)
+            except BackendError as e:
+                if e.code == "cancelled":
+                    raise
+                filled = None
+                warnings.append(f"Filling what the photo hides failed ({str(e).splitlines()[0][:200]}); the "
+                                "photo's splat is used as it is.")
+                log(warnings[-1])
+            if filled is not None:
+                final, added, fill_report, steps = filled
+                extra_files["added_layer"] = str(write_gaussian_ply(added, exp / "added_layer.ply",
+                                                                    include_provenance=True))
+                if steps:
+                    extra_files["fill_steps"] = str(steps)
+        final.cameras = [cam]
+        ply = write_gaussian_ply(final, exp / "scene.ply", include_provenance=True)
+        splat = write_splat(final, exp / "scene.splat")
+        rows = [("Real 3D" + (" (photo locked + filled holes)" if final is not scene else " (photo locked)"),
+                 ply, final)]
+        if final is not scene:
+            rows.append(("photo locked, no fill", locked_ply, scene))
         if res["outputs"].get("plain"):
             plain = read_gaussian_ply(Path(res["outputs"]["plain"]))
             plain.provenance[:] = INFERRED
-            plain.cameras = scene.cameras[:1]
+            plain.cameras = [cam]
             p2 = write_gaussian_ply(plain, exp / "compare_sharp_alone.ply")
             extra_files["compare_sharp_alone"] = str(p2)
             rows.append(("SHARP alone (for comparison)", p2, plain))
 
-        # 4. diagnostics sheet
-        progress(0.85, "views sheet")
+        # diagnostics sheet
+        progress(0.93, "views sheet")
         try:
-            cams = sheet_cameras(scene.cameras[0], pivot_depth(scene, scene.cameras[0]))
-            sheet = render_sheet(ctx, rows, cams, work, exp / "views_sheet.png", log)
+            cams = sheet_cameras(cam, pivot_depth(scene, cam))
+            sheet = render_sheet(ctx, rows, cams, work, exp / "views_sheet.png", log, self.render_script)
             extra_files["views_sheet"] = str(sheet)
         except Exception as e:  # noqa: BLE001 - a diagnostic
             log(f"views sheet skipped: {e}")
         progress(1.0, "done")
         (work / "summary.json").write_text(json.dumps({k: v for k, v in res.items() if k != "outputs"}, indent=2))
-        notes = []
         if res.get("faces"):
-            notes.append(f"scale checked on {len(res['faces'])} face(s)"
-                         + (f", corrected ×{res['face_scale']:.3f}" if res.get("face_scale", 1.0) != 1.0 else ""))
+            warnings.append(f"Scale checked on {len(res['faces'])} face(s)"
+                            + (f", corrected ×{res['face_scale']:.3f}." if res.get("face_scale", 1.0) != 1.0 else "."))
+        added_n = int((final.provenance == GENERATIVE).sum())
         return BackendResult(
-            backend=self.id, scene_ply=ply, splat=splat, obj=None, cameras=[scene.cameras[0].to_dict()],
-            metric_scale=True,
-            provenance_note=("Splats INFERRED from the photo: Apple SHARP aligned to the measured depth "
-                             f"({'MoGe-3' if mg == MOGE_MODELS[0] else 'MoGe-2'}). Nothing behind the subject is "
-                             "invented yet."),
+            backend=self.id, scene_ply=ply, splat=splat, obj=None, cameras=[cam.to_dict()], metric_scale=True,
+            provenance_note=(f"{len(final) - added_n:,} splats INFERRED from the photo: Apple SHARP aligned to the "
+                             f"measured depth ({'MoGe-3' if mg == MOGE_MODELS[0] else 'MoGe-2'}). "
+                             + (f"{added_n:,} GENERATIVE splats fill what the photo hides (AI-painted, their depth "
+                                "tied to the photo's)." if added_n else "Nothing behind the subject is invented.")),
             vram_peak_mib=res.get("vram_peak_mib"), worker_env=out["env"], models_used=models_used,
-            warnings=["OBJ mesh is not available for SHARP output."] + notes,
-            extra={"gaussians": len(scene), "assembly": "locked", "trajectory": "tri",
+            warnings=warnings,
+            extra={"gaussians": len(final), "assembly": "locked", "trajectory": "tri", "added_splats": added_n,
                    "sharp_own_scale": res.get("sharp_own_scale"), "depth_coverage": res.get("depth_coverage"),
                    "faces": res.get("faces") or [], "face_scale": res.get("face_scale", 1.0),
                    "hfov_used_deg": float(np.degrees(2 * np.arctan(res["size"][0] / 2 / res["f_px"]))),
-                   "files": extra_files})
+                   "fill": fill_report, "files": extra_files})
+
+    def _inpainter(self, ctx) -> str | None:
+        from ..inpaint import lama_available
+        from .generative import installed
+
+        if ctx.runtimes.is_installed("gen-cu128") and installed(ctx, "qwen"):
+            return "qwen"
+        return "lama" if lama_available(ctx)[0] else None
+
+    def _fill(self, inp, ctx, options, progress, cancel, log, scene, locked_ply, cam, mg, used):
+        """Holes of moved views → painted → SHARP with tied depth → added. None when it cannot run."""
+        from PIL import Image
+
+        from ..fusion import DepthBuffer, add_fills, unseen_by_photo
+        from .generative import GenerativeSceneBackend, QWEN_MODELS
+
+        painter = self._inpainter(ctx)
+        if painter is None:
+            log("filling what the photo hides needs Qwen-Image-Edit or LaMa (Components); skipped")
+            return None
+        mode = options.get("mode", "auto")
+        work = inp.work_dir / "locked" / "fill"
+        work.mkdir(parents=True, exist_ok=True)
+        pivot = pivot_depth(scene, cam)
+        cams = sheet_cameras(cam, pivot, side=1024, views=FILL_VIEWS.get(mode, FILL_VIEWS["auto"]), photo=False)
+        progress(0.46, f"looking from {len(cams)} moved positions")
+        renders = render_views(ctx, locked_ply, scene, [c for _, c in cams], work / "render", work,
+                               self.render_script, log, cpu_fallback=False)
+        if renders is None:
+            log("filling what the photo hides needs the GPU renderer; skipped")
+            return None
+        photo_buf = DepthBuffer(cam).fill(scene.means, scene.opacity > 0.1)
+        todo = []
+        for k, ((label, c), r) in enumerate(zip(cams, renders)):
+            vc = view_camera(c)
+            hole = unseen_by_photo(r["depth"], r["alpha"], vc, vc.c2w, photo_buf)
+            for _ in range(2):                        # cover the fringe of stretched splats too
+                g = hole.copy()
+                g[1:] |= hole[:-1]
+                g[:-1] |= hole[1:]
+                g[:, 1:] |= hole[:, :-1]
+                g[:, :-1] |= hole[:, 1:]
+                hole = g
+            if hole.mean() < MIN_HOLE:
+                log(f"{label}: nothing to fill")
+                continue
+            rgb = r["rgb"].copy()
+            rgb[hole] = 0
+            base = work / f"v{k:02d}"
+            Image.fromarray(rgb).save(f"{base}_holes.png")
+            Image.fromarray(hole.astype(np.uint8) * 255).save(f"{base}_mask.png")
+            np.savez(f"{base}_known.npz", depth=np.where(hole, np.inf, r["depth"]).astype(np.float32))
+            todo.append({"k": k, "label": label, "cam": c, "hole": hole, "render": r["rgb"], "base": str(base)})
+        if not todo:
+            log("no holes to fill from the moved positions")
+            return None
+        log(f"painting the holes of {len(todo)} views with {'Qwen-Image-Edit' if painter == 'qwen' else 'LaMa'}")
+
+        # paint only the holes
+        if painter == "qwen":
+            gen = GenerativeSceneBackend()
+            paths = {m: ctx.models.paths(m) for m in QWEN_MODELS}
+            req = {"image": f"{todo[0]['base']}_holes.png", "output_dir": str(work / "painted"),
+                   "base_dir": str(ctx.models.model_dir("qwen-image-edit-2511-base")),
+                   "gguf": str(next(iter(paths["qwen-image-edit-2511-q5"].values()))),
+                   "lora_angles": str(next(iter(paths["qwen-edit-2511-angles-lora"].values()))),
+                   "lora_lightning": str(next(iter(paths["qwen-edit-2511-lightning"].values()))),
+                   "views": [{"label": t["label"], "prompt": FILL_PROMPT, "image": f"{t['base']}_holes.png"}
+                             for t in todo],
+                   "angles_strength": 0.0, "candidates": 1, "megapixels": 1.0 if mode != "fast" else 0.75,
+                   "steps": 4, "seed": int(options.get("seed", 42))}
+            gen._run_attempts(ctx, gen.qwen_script, {**req, "stage": "encode"}, inp, progress, cancel, log, (0.5, 0.55))
+            got = gen._run_attempts(ctx, gen.qwen_script, {**req, "stage": "generate"}, inp, progress, cancel, log,
+                                    (0.55, 0.75))
+            painted = [v["path"] for v in got["result"]["views"] if v.get("generated")]
+            for m in QWEN_MODELS:
+                used(m)
+        else:
+            from ..inpaint import MODEL, RUNTIME, WORKER
+
+            items = [{"image": f"{t['base']}_holes.png", "mask": f"{t['base']}_mask.png",
+                      "out": f"{t['base']}_lama.png"} for t in todo]
+            run_worker(ctx.runtimes.python(RUNTIME), WORKER,
+                       {"model": str(ctx.models.paths(MODEL)["big-lama.pt"]), "items": items, "max_side": 2048},
+                       inp.work_dir / "worker", progress, cancel, env=ctx.runtimes.worker_env(RUNTIME), log=log,
+                       progress_range=(0.5, 0.75))
+            painted = [it["out"] for it in items]
+            used(MODEL)
+        if len(painted) != len(todo):
+            raise BackendError(f"the painter returned {len(painted)} pictures for {len(todo)} views")
+        for t, p in zip(todo, painted):
+            c = t["cam"]
+            with Image.open(p) as im:
+                g = np.asarray(im.convert("RGB").resize((c["width"], c["height"]), Image.LANCZOS))
+            filled = t["render"].copy()
+            filled[t["hole"]] = g[t["hole"]]           # everything visible stays exactly the render
+            t["filled"] = filled
+            Image.fromarray(filled).save(f"{t['base']}_filled.png")
+
+        # SHARP on every filled view, its depth tied to the scene
+        out = run_worker(ctx.runtimes.python(self.runtime_id), self.worker_script,
+                         {"mode": "fill", "checkpoint": str(ctx.models.paths("sharp")["sharp_2572gikvuh.pt"]),
+                          "moge_path": str(ctx.models.paths(mg)["model.pt"]),
+                          "moge_version": "v3" if mg == MOGE_MODELS[0] else "v2",
+                          "views": [{"image": f"{t['base']}_filled.png", "mask": f"{t['base']}_mask.png",
+                                     "known": f"{t['base']}_known.npz", "fx": t["cam"]["fx"], "fy": t["cam"]["fy"],
+                                     "cx": t["cam"]["cx"], "cy": t["cam"]["cy"], "out": f"{t['base']}_fill.ply"}
+                                    for t in todo]},
+                         inp.work_dir / "worker", progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id),
+                         log=log, progress_range=(0.75, 0.88), timeout_s=3600)
+        fills = []
+        for t, ply in zip(todo, out["result"]["outputs"]):
+            sc = read_gaussian_ply(Path(ply))
+            vc = view_camera(t["cam"])
+            fills.append((sc, vc, vc.c2w, t["hole"], t["label"]))
+        progress(0.9, "joining the new content")
+        merged, added, report = add_fills(scene, cam, fills, log=log)
+        for rep, st in zip(report, out["result"].get("stats") or []):
+            rep["depth_tie"] = st
+
+        # what each step did, in one picture
+        steps = None
+        try:
+            mply = write_gaussian_ply(merged, work / "merged.ply", include_provenance=True)
+            after = render_views(ctx, mply, merged, [t["cam"] for t in todo], work / "after", work,
+                                 self.render_script, log)
+            rows = []
+            for t, a in zip(todo, after):
+                shown = t["render"].copy()
+                shown[t["hole"]] = (255, 0, 255)
+                rows.append((t["label"], [shown, t["filled"], a["rgb"]]))
+            steps = grid(rows, ["holes (magenta)", "painted", "result"], inp.work_dir / "export" / "fill_steps.png")
+        except Exception as e:  # noqa: BLE001 - a diagnostic
+            log(f"fill steps picture skipped: {e}")
+        return merged, added, report, steps
 
     def export(self, result: BackendResult, destination: Path) -> list[Path]:
         out = super().export(result, destination)

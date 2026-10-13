@@ -28,8 +28,10 @@ MODE_HELP = {
 PRESETS = {
     "real3d": ("Real 3D from one photo (recommended)",
                "Your photo locked: Apple SHARP's 3D of your photo aligned to its measured depth (MoGe-3) at the "
-               "real lens, with a scale check on people's eyes. True depth and scale for looking around from the "
-               "front, as in VR. About a minute. Needs Apple SHARP and MoGe-3 (or MoGe-2 Large)."),
+               "real lens, with a scale check on people's eyes; then what the photo hides is painted from a little "
+               "to each side and added at a depth tied to the photo's. True depth and scale for looking around "
+               "from the front, as in VR. A few minutes. Needs Apple SHARP and MoGe-3 (or MoGe-2 Large); the fill "
+               "uses Qwen-Image-Edit (or LaMa)."),
     "quick": ("Quick 3D",
               "Depth from the photo alone (MoGe-2 / SHARP). Seconds. Sharp from the front, nothing behind objects."),
     "around": ("360° capture (experimental)",
@@ -269,6 +271,13 @@ class CreatePage(QWidget):
                                       "photo shows exactly, at its measured depth and real lens.")
         self.real3d_method.currentIndexChanged.connect(self._save_opts)
         gf.addRow("Real 3D method", self.real3d_method)
+        self.real3d_fill = QCheckBox("Fill what the photo hides (AI paints only the holes)")
+        self.real3d_fill.setChecked(win.settings.real3d_fill)
+        self.real3d_fill.setToolTip("The locked photo is looked at from a little to each side; what the photo never "
+                                    "saw (behind edges) is painted by Qwen-Image-Edit or LaMa and added at a depth "
+                                    "tied to the photo's. Shown as 'generative'.")
+        self.real3d_fill.toggled.connect(self._save_opts)
+        gf.addRow("", self.real3d_fill)
         self.engine = QComboBox()
         for label, val in (("Automatic — Qwen-Image-Edit if installed, otherwise Wan 2.2", "auto"),
                            ("Qwen-Image-Edit — sharp ~1 MP image per angle (recommended)", "qwen"),
@@ -460,6 +469,7 @@ class CreatePage(QWidget):
         s.generative = self.generative.currentData()
         s.gen_engine = self.engine.currentData()
         s.real3d_method = self.real3d_method.currentData()
+        s.real3d_fill = self.real3d_fill.isChecked()
         s.video_seconds = float(self.video_len.currentData())
         s.video_fps = float(self.video_fps.currentData())
         s.combine_photos = self.combine.isChecked()

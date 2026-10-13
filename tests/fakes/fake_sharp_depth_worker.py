@@ -18,6 +18,29 @@ def main(req):
     from twod2vr180.scene import Camera, write_gaussian_ply
 
     emit("env", torch=None, cuda="12.8", cuda_available=True, device="fake")
+    if req.get("mode") == "fill":      # each filled view: its known depth, the holes 10 % behind the farthest
+        from PIL import Image
+
+        stats = []
+        for v in req["views"]:
+            img = np.asarray(Image.open(v["image"]).convert("RGB"))
+            hole = np.asarray(Image.open(v["mask"]).convert("L")) > 127
+            with np.load(v["known"]) as z:
+                d = z["depth"].astype(np.float64)
+            known = np.isfinite(d) & (d > 0)
+            d = np.where(known, d, np.max(d[known]) * 1.1 if known.any() else 3.0)
+            h, w = d.shape
+            cam = Camera(w, h, v["fx"], v["fy"], v["cx"], v["cy"])
+            ys, xs = np.mgrid[0:h, 0:w]
+            pts = np.stack([(xs + .5 - cam.cx) / cam.fx * d, (ys + .5 - cam.cy) / cam.fy * d, d], -1)
+            sc = pointmap_to_gaussians(pts, img, None, cam)
+            sc.cameras = [cam]
+            write_gaussian_ply(sc, v["out"])
+            stats.append({"hole_fraction": float(hole.mean()), "ring_pixels": 0, "scale": 1.0, "shift": 0.0})
+        with open(os.path.join(os.path.dirname(req["views"][0]["out"]), "fake_fill_request.json"), "w") as f:
+            json.dump(req, f)
+        emit("result", outputs=[v["out"] for v in req["views"]], stats=stats, vram_peak_mib=None)
+        return
     out = req["output_dir"]
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "fake_sharp_depth_request.json"), "w") as f:

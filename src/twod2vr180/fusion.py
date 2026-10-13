@@ -122,7 +122,8 @@ class DepthBuffer:
     """Front-most splat per pixel of a camera (reduced resolution), for visibility tests."""
 
     def __init__(self, cam: Camera, side: int = BUFFER_SIDE):
-        f = side / max(cam.width, cam.height)
+        # never finer than the image: a splat per image pixel must cover the buffer without gaps
+        f = min(side, max(cam.width, cam.height)) / max(cam.width, cam.height)
         self.w, self.h = max(8, round(cam.width * f)), max(8, round(cam.height * f))
         self.fx, self.fy = cam.fx * self.w / cam.width, cam.fy * self.h / cam.height
         self.cx, self.cy = cam.cx * self.w / cam.width, cam.cy * self.h / cam.height
@@ -476,3 +477,103 @@ def fuse(views: list[FusionView], tol: float = 0.05, log=None, max_points: int =
                           np.concatenate([p.colors for p in parts]), np.concatenate([p.provenance for p in parts]),
                           None, cams, True)
     return FusionResult(scene, poses, report)
+
+
+# ---------------------------------------------------------------- Real 3D v3: holes filled (rc57)
+
+def unseen_by_photo(depth: np.ndarray, alpha: np.ndarray, cam: Camera, c2w: np.ndarray, photo: DepthBuffer,
+                    tol: float = 0.04, min_alpha: float = 0.6) -> np.ndarray:
+    """Pixels of a render (moved camera ``cam`` at ``c2w``, photo frame) that show nothing the photo saw:
+    empty pixels, and surfaces behind what the photo sees (SHARP's guessed second layer, splats stretched
+    across depth edges). These are the holes to fill."""
+    h, w = depth.shape
+    ys, xs = np.mgrid[0:h, 0:w]
+    z = np.where(np.isfinite(depth), depth, 0.0).astype(np.float64)
+    P = np.stack([(xs + 0.5 - cam.cx) / cam.fx * z, (ys + 0.5 - cam.cy) / cam.fy * z, z], -1).reshape(-1, 3)
+    P = P @ np.asarray(c2w)[:3, :3].T + np.asarray(c2w)[:3, 3]
+    u, v, z0, inside = photo.project(P)
+    deepest = neighbours(photo.depth, pad=-np.inf).max(0)[v, u]
+    behind = inside & np.isfinite(deepest) & (z0 > deepest * (1 + tol))
+    empty = (alpha < min_alpha) | ~np.isfinite(depth) | (depth <= 0)
+    return empty | behind.reshape(h, w)
+
+
+def add_fills(base: GaussianScene, photo_cam: Camera, fills: list[tuple], tol: float = 0.05,
+              log=None) -> tuple[GaussianScene, GaussianScene, list[dict]]:
+    """Join the photo's splats with the splats made for the holes of moved views.
+
+    ``fills``: (scene in the view's camera frame, view camera, c2w in the photo frame, hole mask, label).
+    Only splats in a view's holes are taken; one is dropped when the photo or an earlier view already has a
+    surface there, or when it would sit in front of what the photo sees. The photo's own guesses behind its
+    surfaces (SHARP's second layer, stretched splats) are replaced where the new content lands.
+    Returns (merged scene, added splats, report per view)."""
+    log = log or (lambda m: None)
+    solid = base.opacity > MIN_OPACITY
+    buf = DepthBuffer(photo_cam).fill(base.means, solid)
+    u, v, z, inside = buf.project(base.means)
+    deepest = neighbours(buf.depth, pad=-np.inf).max(0)[v, u]
+    hidden = inside & np.isfinite(deepest) & (z > deepest * (1 + tol))
+    sheet = rubber_sheet(base, photo_cam, tol=tol)
+    guessed = hidden | sheet
+    cells = occupied_cells(base.means[solid & ~guessed], buf, tol)
+    nb_min = neighbours(buf.depth).min(0)
+    parts, report = [], []
+    replaced = np.zeros(len(base), bool)
+    gi = np.nonzero(guessed)[0]
+    for sc, cam, c2w, mask, label in fills:
+        z_v = sc.means[:, 2].astype(np.float64)
+        ok = z_v > 1e-6
+        zs = np.where(ok, z_v, 1.0)
+        pu = np.floor(cam.fx * sc.means[:, 0] / zs + cam.cx).astype(np.int64)
+        pv = np.floor(cam.fy * sc.means[:, 1] / zs + cam.cy).astype(np.int64)
+        mh, mw = mask.shape
+        ok &= (pu >= 0) & (pu < mw) & (pv >= 0) & (pv < mh) & (sc.opacity > MIN_OPACITY)
+        in_hole = np.zeros(len(sc), bool)
+        in_hole[ok] = mask[pv[ok], pu[ok]]
+        c2w = np.asarray(c2w, np.float64)
+        world = transform_scene(sc.subset(in_hole), 1.0, c2w[:3, :3], c2w[:3, 3])
+        wu, wv, wz, win = buf.project(world.means)
+        front = win & np.isfinite(nb_min[wv, wu]) & (wz < nb_min[wv, wu] * (1 - tol))
+        dup = near_occupied(world.means, buf, tol, cells)
+        keep = ~front & ~dup
+        add = world.subset(keep)
+        add.provenance[:] = GENERATIVE
+        if len(add):
+            parts.append(add)
+            cells = np.union1d(cells, occupied_cells(add.means, buf, tol))
+            # the photo's guesses this view drew in its holes give way to the new content
+            w2c = np.linalg.inv(c2w)
+            q = base.means[gi].astype(np.float64) @ w2c[:3, :3].T + w2c[:3, 3]
+            qz = np.where(q[:, 2] > 1e-6, q[:, 2], 1.0)
+            qu = np.floor(cam.fx * q[:, 0] / qz + cam.cx).astype(np.int64)
+            qv = np.floor(cam.fy * q[:, 1] / qz + cam.cy).astype(np.int64)
+            qok = (q[:, 2] > 1e-6) & (qu >= 0) & (qu < mw) & (qv >= 0) & (qv < mh)
+            hit = np.zeros(len(gi), bool)
+            hit[qok] = mask[qv[qok], qu[qok]]
+            replaced[gi[hit]] = True
+        rep = {"view": label, "in_holes": int(in_hole.sum()), "added": int(keep.sum()),
+               "already_there": int(dup.sum()), "in_front_of_photo": int((front & ~dup).sum()),
+               "hole_fraction": round(float(mask.mean()), 4)}
+        report.append(rep)
+        log(f"{label}: {rep['added']:,} new splats for its holes ({rep['hole_fraction']:.1%} of the view; "
+            f"{rep['already_there']:,} already there, {rep['in_front_of_photo']:,} in front of the photo)")
+    if parts:
+        added = GaussianScene(*(np.concatenate([getattr(p, k) for p in parts])
+                                for k in ("means", "scales", "quats", "opacity", "colors", "provenance")),
+                              None, [], True)
+        replaced |= guessed & near_occupied(base.means, buf, tol, occupied_cells(added.means, buf, tol))
+    else:
+        added = GaussianScene(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.float32),
+                              np.zeros((0, 4), np.float32), np.zeros(0, np.float32), np.zeros((0, 3), np.float32),
+                              np.zeros(0, np.uint8), None, [], True)
+    kept = base.subset(~replaced)
+    kept.sh_rest = None
+    merged = GaussianScene(*(np.concatenate([getattr(kept, k), getattr(added, k)])
+                             for k in ("means", "scales", "quats", "opacity", "colors", "provenance")),
+                           None, list(base.cameras), True)
+    if report:
+        report.append({"view": "photo", "guessed_behind_surfaces": int(guessed.sum()),
+                       "replaced_by_new_content": int(replaced.sum())})
+        log(f"the photo's own guesses behind its surfaces: {int(guessed.sum()):,} splats, "
+            f"{int(replaced.sum()):,} replaced by the new content")
+    return merged, added, report

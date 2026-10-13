@@ -34,6 +34,7 @@ class Settings:
     generative: str = "tri"                      # off | tri | capture | explore
     gen_engine: str = "auto"                     # auto | qwen | wan
     real3d_method: str = "locked"                # locked | views | train
+    real3d_fill: bool = True                     # locked: AI-paint what the photo hides
     combine_photos: bool = True                  # several photos dropped together → one multi-view scene
     ai_hole_fill: bool = True                    # LaMa inpainting of VR180 disocclusions
     video_seconds: float = 0.0                   # 4D video: seconds used (0 = by quality: 8 / 12 / 15)
@@ -92,7 +93,7 @@ class Settings:
                        still_video_seconds=self.still_video_seconds, license_profile=self.license_profile,
                        output_dir=self.output_dir or None, fill_holes=self.fill_holes, renderer=self.renderer,
                        allow_cpu=self.allow_cpu, generative=self.generative,
-                       gen_engine=self.gen_engine, real3d_method=self.real3d_method,
+                       gen_engine=self.gen_engine, real3d_method=self.real3d_method, real3d_fill=self.real3d_fill,
                        ai_hole_fill=self.ai_hole_fill,
                        video_seconds=self.video_seconds, video_fps=self.video_fps)
         for k, v in overrides.items():

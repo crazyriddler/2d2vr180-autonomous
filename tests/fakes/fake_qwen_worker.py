@@ -28,7 +28,7 @@ def main(req):
         idx = int(v.get("index", i))
         for c in range(max(1, int(req.get("candidates", 1)))):
             p = os.path.join(out, f"view{idx:02d}.png" if c == 0 else f"view{idx:02d}_c{c}.png")
-            shutil.copy(req["image"], p)
+            shutil.copy(v.get("image") or req["image"], p)     # hole filling: its own picture
             paths.append(p)
         views.append({"path": paths[0], "candidates": paths, "generated": True, "key": True, **v})
     progress(1.0, "fake views done")

@@ -1,3 +1,45 @@
+# 2D2VR180 1.0.0-rc57 — Real 3D v3, step 2: what the photo hides, filled consistently
+
+rc56 locked the photo: Apple SHARP aligned to the measured depth at the real lens. rc57 adds what the photo
+cannot show (behind edges, the sides of the subject), built so it agrees with the photo by construction
+instead of being drawn freely. Every earlier attempt drew freely, and that was what made it fail.
+
+## How the fill works (Real 3D, on by default)
+
+1. **Moved cameras.** The locked splat is rendered from moved cameras:
+   - Fast: the head 15 cm to each side and 15° around the subject.
+   - Auto adds: 10 cm up and 30° to each side.
+   - Quality adds: 10 cm down, 15° from above and 30 cm to each side.
+2. **Holes are what the photo never saw.** A pixel is a hole if it is empty, or if it shows something behind
+   the photo's surfaces, such as SHARP's own guessed second layer or splats stretched across depth edges.
+3. **Only the holes are painted.** Qwen-Image-Edit-2511 gets the view with the holes painted black and the
+   instruction to continue the background (Lightning, 4 steps; LaMa when Qwen is not installed). Every
+   visible pixel stays exactly the render.
+4. **The new content's depth is tied to the scene.**
+   - MoGe's depth of the painted view is aligned, with a robust scale and shift, to the rendered depth in a
+     ring around each hole. Only the far side of the ring is used: the background the hole belongs to.
+   - SHARP then runs with the rendered depth where the scene exists and that aligned depth inside the
+     holes.
+5. **Only the holes' splats are added**, labelled GENERATIVE.
+   - Never on top of, or in front of, what the photo shows.
+   - An earlier view wins where views overlap.
+   - The photo's own guesses are replaced where the new content lands.
+
+## See what was added
+
+- `added_layer.ply`: only the new splats.
+- `fill_steps.png`: per moved view, the holes (magenta), the painted picture and the result.
+- `views_sheet.png`: three rows to compare.
+  - Real 3D with the fill;
+  - the locked photo without it;
+  - SHARP alone.
+- `run_report.json`, under `backend.extra.fill`, records per view:
+  - how much was a hole;
+  - how many splats were added or were already there;
+  - how the depth was tied.
+
+To turn the fill off: Advanced → "Fill what the photo hides", or `--no-fill` on the CLI.
+
 # 2D2VR180 1.0.0-rc56 — Real 3D v3, step 1: the photo locked
 
 Owner verdict on rc55: the 3D and the scale are mediocre, and it was not clear the AI views added

@@ -65,7 +65,7 @@ COMPONENTS: list[Component] = [
               "of RAM.", False, ("engine-gen", "engine-video", "model-vggt", "model-moge-l")),
     Component("model-qwen", "Qwen-Image-Edit-2511 + Multiple-Angles — the views of Real 3D (Apache-2.0)", "model",
               "qwen-image-edit-2511-q5", "Image model that redraws your photo from other camera angles at about 1 "
-              "megapixel: the 360° capture, and the AI-views methods of Real 3D. ~33 GB with its text encoder and "
+              "megapixel: paints what the photo hides in Real 3D, the 360° capture and the AI-views methods. ~33 GB with its text encoder and "
               "LoRAs; needs ~32 GB of RAM.", True,
               ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning", "engine-video",
                "model-vggt", "model-moge-l", "model-sharp")),

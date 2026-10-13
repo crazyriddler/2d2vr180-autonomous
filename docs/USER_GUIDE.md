@@ -57,9 +57,18 @@ verified (SHA256) before use.
        - It checks the scale against the eyes of the people in it (adults' eyes are 56-70 mm apart).
        - It aligns Apple SHARP's 3D of the photo to that depth.
 
+       Then what the photo hides is filled:
+       - the photo is looked at from a little to each side;
+       - only what it never saw is painted, by Qwen-Image-Edit or LaMa;
+       - that new content is added at a depth tied to the photo's, labelled generative.
+
+       Turn this off with *Fill what the photo hides*.
+
        You get correct depth and scale for looking around from the front in VR. Next to the result are:
        - `compare_sharp_alone.ply`: SHARP without the measured depth;
-       - `views_sheet.png`: both versions from 15 cm to each side and from 15° around the subject.
+       - `views_sheet.png`: the versions from 15 cm to each side and from 15° around the subject;
+       - `added_layer.ply`: only the added splats;
+       - `fill_steps.png`: for each moved view, its holes, what was painted and the result.
 
        **Real 3D method** chooses how it is built:
        - *The photo locked* (default);

@@ -559,6 +559,7 @@ def _fake_locked(ctx, monkeypatch):
 
     monkeypatch.setattr(LockedPhotoBackend, "geometry_script", str(FAKE_WORKER))
     monkeypatch.setattr(LockedPhotoBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_sharp_depth_worker.py"))
+    monkeypatch.setattr(LockedPhotoBackend, "render_script", str(REPO / "tests" / "fakes" / "fake_render_worker.py"))
     install_fake_model(ctx.models, "sharp")
 
 
@@ -616,3 +617,46 @@ def test_real3d_without_sharp_falls_back_to_the_ai_views_method(ctx, rtx4080, ph
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["backend"]["id"] == "generative_scene"
     assert "the photo locked) cannot run" in (job.dir / "job.log").read_text(encoding="utf-8")
+
+
+def test_real3d_fills_what_the_photo_hides_from_moved_views(ctx, rtx4080, photo, monkeypatch):
+    """rc57: renders from moved cameras → holes (what the photo never saw) → Qwen paints only the holes →
+    SHARP with the depth tied to the scene → only the holes' splats are added (GENERATIVE)."""
+    from conftest import install_fake_model
+    from twod2vr180.scene import read_gaussian_ply
+
+    _fake_locked(ctx, monkeypatch)
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["id"] == "photo_locked"
+    calls = json.loads((job.dir / "locked" / "fill" / "painted" / "stage_calls.json").read_text())
+    assert [c["stage"] for c in calls] == ["encode", "generate"]
+    views = calls[1]["views"]
+    assert calls[1]["angles_strength"] == 0 and all(v["prompt"].startswith("The pure black areas") for v in views)
+    assert all(v["image"].endswith("_holes.png") for v in views) and 1 <= len(views) <= 4
+    fill = json.loads((job.dir / "locked" / "fill" / "fake_fill_request.json").read_text())
+    assert len(fill["views"]) == len(views) and fill["moge_version"] == "v2"
+    ex = rep["backend"]["extra"]
+    assert ex["added_splats"] > 0 and ex["fill"][-1]["view"] == "photo"
+    out = rep["outputs"]
+    assert Path(out["fill_steps"]).exists() and Path(out["added_layer"]).exists()
+    added = read_gaussian_ply(Path(out["added_layer"]))
+    assert len(added) == ex["added_splats"] and (added.provenance == 2).all()
+    assert rep["coverage"]["by_splat"]["generative"] > 0
+    assert set(QWEN_IDS) <= {m["id"] for m in rep["models"]}
+
+
+def test_real3d_fill_can_be_turned_off(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_locked(ctx, monkeypatch)
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", real3d_fill=False, layouts=["sbs"],
+                          renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["extra"]["added_splats"] == 0 and not (job.dir / "locked" / "fill").exists()

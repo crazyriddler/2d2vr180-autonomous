@@ -12,6 +12,16 @@ Request (mode "photo"):
    "ipd_range_m": [0.056, 0.070], "plain": true, "allow_cpu": false}
 Writes output_dir/locked.ply (SHARP PLY with metadata) and, with "plain", output_dir/plain.ply (SHARP alone,
 for comparison). Result: scale diagnostics (how far SHARP's own depth was from MoGe's, the face check).
+
+Request (mode "fill", rc57): new content for the holes a moved camera sees, tied to the known geometry:
+  {"mode": "fill", "checkpoint": "...", "moge_path": ".../model.pt", "moge_version": "v3" | "v2",
+   "views": [{"image": "filled.png", "mask": "hole.png" (white = hole), "known": "known.npz" (depth: the
+              rendered depth of the scene, inf where it has nothing), "fx", "fy", "cx", "cy",
+              "out": "fill.ply"}], "ring_px": 12}
+For every view: MoGe's depth of the filled image is aligned (robust scale and shift) to the rendered depth
+in a ring around the holes - on the far side, the background the hole belongs to - and SHARP runs with the
+rendered depth where the scene exists and the aligned depth inside the holes. The app keeps only the
+splats that fall in the holes.
 """
 
 import os
@@ -111,6 +121,113 @@ def predict(predictor, img, f_px, device, torch, depth=None, valid=None):
     return g, info
 
 
+def align_affine(z_src, z_ref, iters=4, keep=0.8):
+    """Robust (a, b) with a z_src + b ≈ z_ref (a > 0), trimmed least squares; scale only as a fallback."""
+    import numpy as np
+
+    x, y = np.asarray(z_src, np.float64), np.asarray(z_ref, np.float64)
+    if len(x) < 20:
+        return 1.0, 0.0
+    a, b = float(np.median(y / x)), 0.0
+    for _ in range(iters):
+        r = np.abs(a * x + b - y)
+        sel = r <= np.quantile(r, keep)
+        A = np.stack([x[sel], np.ones(int(sel.sum()))], 1)
+        a2, b2 = np.linalg.lstsq(A, y[sel], rcond=None)[0]
+        if a2 <= 0:
+            return float(np.median(y / x)), 0.0
+        a, b = float(a2), float(b2)
+    return a, b
+
+
+def dilate(mask, r):
+    """Binary dilation by r pixels (square neighbourhood), numpy only."""
+    import numpy as np
+
+    m = np.asarray(mask, bool)
+    for _ in range(int(r)):
+        p = np.pad(m, 1)
+        m = p[1:-1, 1:-1] | p[:-2, 1:-1] | p[2:, 1:-1] | p[1:-1, :-2] | p[1:-1, 2:]
+        m = m | p[:-2, :-2] | p[:-2, 2:] | p[2:, :-2] | p[2:, 2:]
+    return m
+
+
+def hole_depth(known, mono, hole, mono_ok, ring_px=12):
+    """Composite depth for a filled view: the known (rendered) depth outside the holes, the monocular depth
+    aligned to the known one's far side around the holes inside them. Returns (depth, valid, stats)."""
+    import numpy as np
+
+    known_ok = np.isfinite(known) & (known > 0)
+    ring = dilate(hole, ring_px) & ~hole & known_ok & mono_ok
+    stats = {"hole_fraction": round(float(hole.mean()), 5), "ring_pixels": int(ring.sum())}
+    if ring.sum() >= 20:
+        far = ring & (known >= np.median(known[ring]))      # the background the hole belongs to
+        use = far if far.sum() >= 20 else ring
+        a, b = align_affine(mono[use], known[use])
+    else:     # no known surroundings: the monocular depth at the scene's own scale
+        both = known_ok & mono_ok & ~hole
+        a, b = (float(np.median(known[both] / mono[both])), 0.0) if both.sum() >= 20 else (1.0, 0.0)
+    filled = a * mono + b
+    depth = np.where(hole, filled, known)
+    valid = np.where(hole, mono_ok & (filled > 0), known_ok)
+    stats.update(scale=round(a, 5), shift=round(b, 5))
+    return depth, valid, stats
+
+
+def load_moge(path, version, device, torch):
+    if version == "v3":
+        os.environ.setdefault("FLEX_GEMM_AUTOTUNE_MODE", "never")
+        import flex_gemm
+
+        flex_gemm.config.AUTOTUNE_MODE = "never"
+        from moge.model.v3 import MoGeModel
+    else:
+        from moge.model.v2 import MoGeModel
+    return MoGeModel.from_pretrained(path).to(device).eval()
+
+
+def fill(req, torch, device):
+    import math
+
+    import numpy as np
+    from PIL import Image
+    from sharp.utils.gaussians import save_ply
+
+    version = req.get("moge_version", "v2")
+    progress(0.02, f"loading MoGe-{version[1:]} and SHARP")
+    moge = load_moge(req["moge_path"], version, device, torch)
+    predictor = load_predictor(req["checkpoint"], device, torch)
+    stats = []
+    views = req["views"]
+    for i, v in enumerate(views):
+        img = np.asarray(Image.open(v["image"]).convert("RGB"))
+        h, w = img.shape[:2]
+        hole = np.asarray(Image.open(v["mask"]).convert("L").resize((w, h), Image.NEAREST)) > 127
+        with np.load(v["known"]) as z:
+            known = z["depth"].astype(np.float64)
+        t = torch.from_numpy(img).to(device).float().div(255).permute(2, 0, 1)
+        kw = {"refine_steps": 3} if version == "v3" else {}
+        fov = math.degrees(2 * math.atan(w / 2 / float(v["fx"])))
+        with torch.no_grad():
+            out = moge.infer(t, resolution_level=9, fov_x=fov, use_fp16=device.type == "cuda", **kw)
+        mono = out["depth"].float().cpu().numpy().astype(np.float64)
+        mono_ok = np.isfinite(mono) & (mono > 0)
+        if "mask" in out:
+            mono_ok &= out["mask"].cpu().numpy().astype(bool)
+        mono = np.where(mono_ok, mono, 1.0)
+        depth, valid, st = hole_depth(known, mono, hole, mono_ok, int(req.get("ring_px", 12)))
+        g, info = predict(predictor, img, float(v["fx"]), device, torch, depth, valid)
+        save_ply(g, float(v["fx"]), (h, w), v["out"])
+        st.update(info)
+        stats.append(st)
+        log(f"fill view {i + 1}/{len(views)}: holes {st['hole_fraction']:.1%} of the picture, their depth tied to "
+            f"{st['ring_pixels']:,} known pixels around them (×{st['scale']:.3f} {st['shift']:+.3f} m)")
+        progress((i + 1) / len(views), f"new content for view {i + 1}/{len(views)}")
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+    emit("result", outputs=[v["out"] for v in views], stats=stats, vram_peak_mib=vram_peak_mib(torch))
+
+
 def main(req):
     import numpy as np
     import torch
@@ -126,6 +243,9 @@ def main(req):
     from sharp.utils.gaussians import save_ply
 
     device = torch.device("cuda" if env["cuda_available"] else "cpu")
+    if req.get("mode") == "fill":
+        fill(req, torch, device)
+        return
     out_dir = req["output_dir"]
     os.makedirs(out_dir, exist_ok=True)
     geo = np.load(req["geometry"])

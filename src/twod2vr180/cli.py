@@ -140,7 +140,7 @@ def cmd_run(a) -> int:
                       output_dir=a.out, allow_cpu=a.allow_cpu, renderer=a.renderer,
                       fill_holes=not a.no_fill_holes, video_eye_resolution=a.video_eye_resolution,
                       ai_hole_fill=not a.no_ai_fill, generative=a.generative, gen_engine=a.engine,
-                      real3d_method=a.real3d,
+                      real3d_method=a.real3d, real3d_fill=not a.no_fill,
                       video_seconds=a.video_seconds, video_fps=a.video_fps, video_start_s=a.video_start)
     job = Job([Path(p) for p in a.input] if len(a.input) > 1 else Path(a.input[0]), opts)
     runner = JobRunner(_ctx(a.license_profile))
@@ -285,6 +285,8 @@ def build_parser() -> argparse.ArgumentParser:
     j.add_argument("--real3d", default="locked", choices=["locked", "views", "train"],
                    help="Real 3D method: locked = SHARP aligned to the photo's measured depth (default); views = "
                         "SHARP on the photo and 3 AI views, joined (rc55); train = photo + 3 AI views, trained (rc54)")
+    j.add_argument("--no-fill", action="store_true",
+                   help="Real 3D (locked): do not AI-paint what the photo hides from moved views")
     j.add_argument("--engine", default="auto", choices=["auto", "qwen", "wan"],
                    help="generative 3D: model that invents the other views (auto: Qwen, then Wan)")
     j.add_argument("--video-seconds", type=float, default=0.0,

@@ -198,3 +198,58 @@ def test_orbit_pose_looks_at_the_pivot(az):
     assert np.allclose(centre_ray, to_pivot, atol=1e-6)
     assert np.isclose(np.linalg.norm(pivot - t), 2.0)
     assert t[1] < 0                                              # + elevation: the camera is above
+
+
+def test_holes_are_what_the_photo_never_saw_and_fills_add_only_them():
+    """rc57: a head move to the right uncovers the wall behind the box's right edge. The render of the
+    photo's splats there is empty; a fill made from that view (here: the true surfaces) adds exactly that
+    strip and the box's side, and nothing the photo already shows."""
+    from twod2vr180.fusion import add_fills, unseen_by_photo
+    from twod2vr180.render import render_pinhole
+
+    base = _sharp(np.eye(4), 1.0)
+    photo_buf = DepthBuffer(CAM).fill(base.means)
+    c2w = np.eye(4)
+    c2w[0, 3] = 0.35                                              # head 35 cm to the right
+    r = render_pinhole(base, c2w, W, H, F, F, W / 2, H / 2, crack_fill=False)
+    hole = unseen_by_photo(r.depth, r.covered.astype(float), CAM, c2w, photo_buf)
+    assert 0.005 < hole.mean() < 0.2
+    # the hole is right of the box (the wall the box hid), not on the box or the open wall
+    ys, xs = np.nonzero(hole[H // 3: 2 * H // 3])
+    box_right = (0.3 - 0.35) / 1.7 * F + W / 2
+    assert np.median(xs) > box_right - 5
+    fill_scene = _sharp(c2w, 1.0)                                 # what the view really sees
+    merged, added, rep = add_fills(base, CAM, [(fill_scene, CAM, c2w, hole, "right 35 cm")])
+    assert len(added) > 50 and len(merged) == len(base) - rep[-1]["replaced_by_new_content"] + len(added)
+    assert (added.provenance == GENERATIVE).all()
+    assert np.median(_surface_distance(added.means)) < 0.01
+    u, v, z, inside = photo_buf.project(added.means)
+    seen = inside & (np.abs(z / photo_buf.depth[v, u] - 1) < 0.02)
+    assert seen.mean() < 0.05                                     # nothing the photo shows is duplicated
+    assert rep[0]["added"] == len(added)
+
+
+def test_rendered_holes_include_guesses_behind_the_photo_surfaces():
+    """A splat behind the box (a 'second layer' guess) is drawn in a moved view, but the photo never saw
+    it: its pixels still count as holes, and new content there replaces the guess."""
+    from twod2vr180.fusion import add_fills, unseen_by_photo
+    from twod2vr180.render import render_pinhole
+
+    base = _sharp(np.eye(4), 1.0)
+    n = 400
+    rng = np.random.default_rng(0)
+    guess = np.stack([rng.uniform(0.3, 0.5, n), rng.uniform(-0.25, 0.25, n), np.full(n, 3.0)], 1)
+    g = GaussianScene(guess.astype(np.float32), np.full((n, 3), 0.01, np.float32),
+                      np.tile(np.float32([1, 0, 0, 0]), (n, 1)), np.full(n, 0.9, np.float32),
+                      np.tile(np.float32([1, 0, 1]), (n, 1)))
+    both = GaussianScene(*(np.concatenate([getattr(base, k), getattr(g, k)])
+                           for k in ("means", "scales", "quats", "opacity", "colors")))
+    photo_buf = DepthBuffer(CAM).fill(both.means)
+    c2w = np.eye(4)
+    c2w[0, 3] = 0.35
+    r = render_pinhole(both, c2w, W, H, F, F, W / 2, H / 2, crack_fill=False)
+    hole = unseen_by_photo(r.depth, r.covered.astype(float), CAM, c2w, photo_buf)
+    magenta = (r.rgb[..., 0] > 200) & (r.rgb[..., 1] < 60) & (r.rgb[..., 2] > 200)
+    assert magenta.sum() > 20 and hole[magenta].mean() > 0.9
+    merged, added, rep = add_fills(both, CAM, [(_sharp(c2w, 1.0), CAM, c2w, hole, "right")])
+    assert rep[-1]["guessed_behind_surfaces"] >= n * 0.9 and rep[-1]["replaced_by_new_content"] > 0

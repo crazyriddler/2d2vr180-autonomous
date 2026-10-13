@@ -55,6 +55,7 @@ class JobOptions:
     generative: str = "off"              # off | capture | arc | orbit | explore | spiral: invent unseen views
     gen_engine: str = "auto"             # auto | qwen | wan: model that invents the other views
     real3d_method: str = "locked"        # Real 3D: locked (rc56: the photo locked) | views (rc55) | train (rc54)
+    real3d_fill: bool = True             # Real 3D locked: AI-paint what the photo hides from moved views (rc57)
     ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
 
 
@@ -342,6 +343,7 @@ class JobRunner:
                      "trajectory": opts.generative if opts.generative != "off" else None,
                      "engine": opts.gen_engine,
                      "real3d_assembly": "train" if opts.real3d_method == "train" else "sharp",
+                     "real3d_fill": opts.real3d_fill,
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None,
                      # several photos: each one's field of view (the frames are PNG copies without EXIF)
                      "hfov_list": [exif_hfov_deg(p) for p in job.inputs] if kind == "images" else None}
