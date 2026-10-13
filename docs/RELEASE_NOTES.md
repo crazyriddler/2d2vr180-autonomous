@@ -1,3 +1,42 @@
+# 2D2VR180 1.0.0-rc56 — Real 3D v3, step 1: the photo locked
+
+Owner verdict on rc55: the 3D and the scale are mediocre, and it was not clear the AI views added
+anything. After researching how others make the best splat from one photo
+(docs/research/single-image-splat.md, "Real 3D v3"), Real 3D changes approach.
+
+The photo now rules everything it shows. New content will only fill holes, with its geometry tied to the
+known one; that is the next step, rc57. This release builds the foundation and makes it measurable.
+
+## Real 3D (the default): the photo locked
+
+1. **The photo's real lens.** It comes from the original file's EXIF, otherwise from MoGe's estimate. A
+   wrong lens flattens or stretches the whole scene. rc55's SHARP never saw the lens, because the working
+   copy is a PNG without EXIF.
+2. **Measured metric depth of the photo.** MoGe-3, or MoGe-2 Large when MoGe-3 is not installed.
+3. **Real-world scale check on people's eyes.**
+   - A tiny face finder (YuNet, MIT, 0.2 MB, CPU) locates the eyes, and their 3D distance is measured.
+   - Adults' eyes are 56-70 mm apart. When the median face falls outside that range, the depth is
+     rescaled to the nearest edge.
+   - With no faces, nothing changes.
+4. **Apple SHARP aligned to that depth.** SHARP's network has a learned alignment module, released with
+   its weights, that bends its own depth to a given one. The command line never uses it; Real 3D now does.
+   You keep SHARP's sharpness and its second layer behind edges, with measured geometry and scale instead
+   of SHARP's monocular guess.
+5. **Diagnostics, so you can see the difference:**
+   - `compare_sharp_alone.ply`: SHARP without the measured depth, for comparison.
+   - `views_sheet.png`: both versions seen from the photo, from the head 15 cm left, 15 cm right and
+     10 cm up, and from 15° to each side.
+   - `run_report.json` has, under `backend.extra`:
+     - how far SHARP's own depth was from the measured one (`sharp_own_scale`);
+     - the faces found and the correction (`face_scale`);
+     - the lens used (`hfov_used_deg`).
+
+No AI views are drawn, so it takes about a minute. The earlier methods stay under Advanced → *Real 3D
+method*: *AI views joined* (rc55) and *AI views trained* (rc54). The CLI flag is `--real3d locked|views|train`.
+Without SHARP or MoGe installed, Real 3D falls back to the AI-views method, with a log line saying so.
+
+Components: installing MoGe-3 now also installs Apple SHARP and the face finder.
+
 # 2D2VR180 1.0.0-rc55 — Real 3D by Apple SHARP: the photo and 3 views given volume and joined
 
 Owner verdict on rc54: still worse than rc19. Owner design for rc55:

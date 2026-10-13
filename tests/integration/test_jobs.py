@@ -453,7 +453,8 @@ def test_real3d_gives_the_photo_and_three_views_volume_with_sharp_and_joins_them
     exif.get_ifd(0x8769)[0xA405] = 26                     # a phone's 26 mm lens
     p = tmp_path / "phone.jpg"
     Image.fromarray(synthetic_image(seed=3)).save(p, exif=exif)
-    job, rep, _ = run_job(ctx, rtx4080, p, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    job, rep, _ = run_job(ctx, rtx4080, p, mode="auto", generative="tri", real3d_method="views", layouts=["sbs"],
+                          renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     log = (job.dir / "job.log").read_text(encoding="utf-8")
     calls = json.loads((job.dir / "generated_views" / "stage_calls.json").read_text())
@@ -488,7 +489,8 @@ def test_real3d_with_sharp_when_the_camera_engine_fails_uses_the_requested_orbit
     for mid in QWEN_IDS:
         install_fake_model(ctx.models, mid)
     monkeypatch.setattr(MultiViewBackend, "worker_script", str(FAKE_WORKER))     # answers with a bad request
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", real3d_method="views",
+                          layouts=["sbs"], renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["backend"]["extra"]["poses_from"] == "requested orbit"
     assert "SHARP lens: 30 mm" in (job.dir / "job.log").read_text(encoding="utf-8")
@@ -549,3 +551,68 @@ def test_real3d_takes_the_photos_geometry_from_moge3_when_installed(ctx, rtx4080
     mv = json.loads((job.dir / "worker" / "fake_multiview_worker_request.json").read_text())
     assert mv["photo_geometry"].endswith("photo.npz") and Path(mv["photo_geometry"]).exists()
     assert MOGE3 in {m["id"] for m in rep["models"]}
+
+
+def _fake_locked(ctx, monkeypatch):
+    from conftest import FAKE_WORKER, REPO, install_fake_model
+    from twod2vr180.backends.locked import LockedPhotoBackend
+
+    monkeypatch.setattr(LockedPhotoBackend, "geometry_script", str(FAKE_WORKER))
+    monkeypatch.setattr(LockedPhotoBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_sharp_depth_worker.py"))
+    install_fake_model(ctx.models, "sharp")
+
+
+def test_real3d_locks_the_photo_by_default(ctx, rtx4080, tmp_path, monkeypatch):
+    """rc56: Real 3D = SHARP aligned to the photo's measured depth at its real lens; no AI views needed."""
+    from PIL import Image
+
+    from conftest import install_fake_model, synthetic_image
+
+    _fake_locked(ctx, monkeypatch)
+    install_fake_model(ctx.models, "yunet-face")
+    exif = Image.Exif()
+    exif.get_ifd(0x8769)[0xA405] = 26
+    p = tmp_path / "phone.jpg"
+    Image.fromarray(synthetic_image(seed=4)).save(p, exif=exif)
+    job, rep, _ = run_job(ctx, rtx4080, p, mode="auto", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["id"] == "photo_locked"
+    geo = json.loads((job.dir / "worker" / "fake_moge_worker_request.json").read_text())
+    assert geo["version"] == "v2" and 55 < geo["images"][0]["fov_x"] < 75          # MoGe-2 here, at the EXIF lens
+    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+    assert req["geometry"].endswith("photo.npz") and req["face_model"].endswith(".onnx") and req["plain"]
+    ex = rep["backend"]["extra"]
+    assert ex["assembly"] == "locked" and ex["sharp_own_scale"] == 1.2 and ex["face_scale"] == 1.0
+    out = rep["outputs"]
+    assert Path(out["views_sheet"]).exists() and Path(out["compare_sharp_alone"]).exists()
+    from PIL import Image as I
+
+    with I.open(out["views_sheet"]) as im:          # 6 columns (photo + 5 views) x 2 rows
+        assert im.width > 5 * im.height / 2
+    assert {"sharp", "moge-2-vitl-normal", "yunet-face"} <= {m["id"] for m in rep["models"]}
+    assert rep["coverage"]["by_splat"]["inferred"] == 1.0
+
+
+def test_real3d_locked_uses_moge3_when_installed(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_locked(ctx, monkeypatch)
+    install_fake_model(ctx.models, "moge-3-vitl")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    geo = json.loads((job.dir / "worker" / "fake_moge_worker_request.json").read_text())
+    assert geo["version"] == "v3"
+    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+    assert req["face_model"] is None                                                 # not installed: no check
+
+
+def test_real3d_without_sharp_falls_back_to_the_ai_views_method(ctx, rtx4080, photo, monkeypatch):
+    from conftest import install_fake_model
+
+    _fake_generative(monkeypatch)
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert rep["backend"]["id"] == "generative_scene"
+    assert "the photo locked) cannot run" in (job.dir / "job.log").read_text(encoding="utf-8")

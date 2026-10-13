@@ -99,7 +99,7 @@
    "entry_point": "sharp predict -i DIR -o DIR -c sharp_2572gikvuh.pt -> <stem>.ply (OpenCV convention, sRGB SH DC)",
    "model_url": "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt",
    "gpu_smoke_test": "not run",
-   "integration": "backend 'sharp' (Quick 3D) and Real 3D (rc55): SHARP on the photo and each of the 3 Qwen views, joined by src/twod2vr180/fusion.py; research profile only; user downloads weights after accepting the Apple license"
+   "integration": "backend 'sharp' (Quick 3D); Real 3D 'the photo locked' (rc56, workers/sharp_depth_worker.py): RGBGaussianPredictor.forward(image, disparity_factor, depth=MoGe metric depth) - the released LearnedAlignment UNet aligns SHARP's depth to the measured one; the AI-views method (rc55) joins SHARP on the photo and 3 Qwen views (fusion.py); research profile only; user downloads weights after accepting the Apple license"
   },
   {
    "name": "longsplat",

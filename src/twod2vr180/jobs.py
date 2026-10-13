@@ -54,6 +54,7 @@ class JobOptions:
     allow_cpu: bool = False              # allow CPU inference for cpu-capable backends (slow)
     generative: str = "off"              # off | capture | arc | orbit | explore | spiral: invent unseen views
     gen_engine: str = "auto"             # auto | qwen | wan: model that invents the other views
+    real3d_method: str = "locked"        # Real 3D: locked (rc56: the photo locked) | views (rc55) | train (rc54)
     ai_hole_fill: bool = True            # LaMa inpainting of VR180 disocclusions when installed
 
 
@@ -277,7 +278,14 @@ class JobRunner:
                                    code="bad_input")
             if wants_mv:
                 log("multi-view backend on one photo: generating the views first, then a trained multi-view splat")
-            if (opts.generative != "off" and (not opts.backend or wants_mv)
+            if (opts.generative == "tri" and opts.real3d_method == "locked" and not opts.backend
+                    and (kind == "photo" or inp.video_kind == "static_scene")):
+                sel = select(inp, hw, self.ctx, opts.mode, "photo_locked")
+                if sel.backend is None:
+                    why = "; ".join("; ".join(r["reasons"]) for r in sel.rejected)
+                    log(f"Real 3D (the photo locked) cannot run: {why}; using the AI-views method instead")
+                    sel = None
+            if (sel is None and opts.generative != "off" and (not opts.backend or wants_mv)
                     and (kind == "photo" or inp.video_kind == "static_scene")):
                 sel = select(inp, hw, self.ctx, opts.mode, "generative_scene")
                 if sel.backend is None:
@@ -333,6 +341,7 @@ class JobRunner:
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index, "fps": inp.fps,
                      "trajectory": opts.generative if opts.generative != "off" else None,
                      "engine": opts.gen_engine,
+                     "real3d_assembly": "train" if opts.real3d_method == "train" else "sharp",
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None,
                      # several photos: each one's field of view (the frames are PNG copies without EXIF)
                      "hfov_list": [exif_hfov_deg(p) for p in job.inputs] if kind == "images" else None}
@@ -377,7 +386,7 @@ class JobRunner:
             report["coverage"] = {"by_splat": scene.coverage(), "note": result.provenance_note}
             outputs: dict = {"scene_ply": str(result.scene_ply), "splat": str(result.splat) if result.splat else None,
                              "obj": str(result.obj) if result.obj else None, "gaussians": len(scene),
-                             "metric_scale": scene.metric_scale}
+                             "metric_scale": scene.metric_scale, **(result.extra.get("files") or {})}
             if s4 is not None:
                 outputs.update(scene4d=result.extra["scene4d"], splatv=result.extra.get("splatv"), frames=s4.frames,
                                fps=s4.fps, moving_gaussians=len(s4.dynamic))

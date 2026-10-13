@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .base import Backend
 from .generative import GenerativeSceneBackend
+from .locked import LockedPhotoBackend
 from .photo import DepthAnythingBackend, MoGeRGBDBackend, SharpBackend
 from .multiview import MultiViewBackend
 from .video import RESEARCH_BACKENDS
@@ -12,6 +13,7 @@ from .video4d import Video4DBackend
 
 def all_backends() -> list[Backend]:
     return [SharpBackend(), MoGeRGBDBackend(), DepthAnythingBackend(), MultiViewBackend(), GenerativeSceneBackend(),
+            LockedPhotoBackend(),
             Video4DBackend(), *RESEARCH_BACKENDS]
 
 

@@ -31,7 +31,10 @@ COMPONENTS: list[Component] = [
               "multi-view engine its real-world scale.", True, ("engine-photo",)),
     Component("model-moge3", "MoGe-3 Large — the photo's geometry for Real 3D", "model", "moge-3-vitl",
               "Sharper depth, field of view and real-world scale of your photo for Real 3D (MIT). Without it "
-              "Real 3D uses MoGe-2.", True, ("engine-photo",)),
+              "Real 3D uses MoGe-2.", True, ("engine-photo", "model-sharp", "model-face")),
+    Component("model-face", "YuNet face finder — real-world scale check for Real 3D", "model", "yunet-face",
+              "Finds the eyes of the people in your photo so Real 3D can check its depth against the real eye "
+              "distance of adults (MIT, 0.2 MB, runs on the CPU).", True, ("engine-photo",)),
     Component("model-moge-s", "MoGe-2 Small — fast metric depth", "model", "moge-2-vits-normal",
               "Fast mode for photos.", True, ("engine-photo",)),
     Component("model-da2", "Depth-Anything-V2 Small — commercial-safe depth", "model", "depth-anything-v2-small",
@@ -39,8 +42,8 @@ COMPONENTS: list[Component] = [
               "commercial use.", False,
               ("engine-photo",)),
     Component("model-sharp", "Apple SHARP — best direct single-photo 3D (research only)", "model", "sharp",
-              "Feed-forward 3D Gaussians from one photo: Quick 3D, and the volume of the photo and of each AI view "
-              "in Real 3D. Apple research licence: non-commercial.", True,
+              "Feed-forward 3D Gaussians from one photo: Quick 3D, and Real 3D (aligned to the photo's measured "
+              "depth). Apple research licence: non-commercial.", True,
               ("engine-photo",)),
     # ---------------------------------------------------------------- multi-view
     Component("engine-video", "Multi-view and 4D video engine (several photos, videos)", "runtime", "recon3d-cu124",
@@ -62,9 +65,8 @@ COMPONENTS: list[Component] = [
               "of RAM.", False, ("engine-gen", "engine-video", "model-vggt", "model-moge-l")),
     Component("model-qwen", "Qwen-Image-Edit-2511 + Multiple-Angles — the views of Real 3D (Apache-2.0)", "model",
               "qwen-image-edit-2511-q5", "Image model that redraws your photo from other camera angles at about 1 "
-              "megapixel. Real 3D, the recommended way to make 3D from one photo, draws 3 views with it and gives "
-              "them volume with Apple SHARP (installed with it). ~33 GB with its text encoder and LoRAs; needs "
-              "~32 GB of RAM.", True,
+              "megapixel: the 360° capture, and the AI-views methods of Real 3D. ~33 GB with its text encoder and "
+              "LoRAs; needs ~32 GB of RAM.", True,
               ("engine-gen", "model-qwen-base", "model-qwen-angles", "model-qwen-lightning", "engine-video",
                "model-vggt", "model-moge-l", "model-sharp")),
     Component("model-qwen-base", "Qwen-Image-Edit-2511 text encoder and VAE (for Qwen views)", "model",

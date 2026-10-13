@@ -27,10 +27,9 @@ MODE_HELP = {
 # "What do you want to make?" — each preset sets the advanced reconstruction controls.
 PRESETS = {
     "real3d": ("Real 3D from one photo (recommended)",
-               "AI draws your subject from 3 nearby angles (45° to each side and from above); Apple SHARP gives your "
-               "photo and each view volume and they are joined into one 3D splat: real depth for looking around "
-               "from the front, as in VR. A few minutes. Needs Qwen-Image-Edit, Apple SHARP and the Multi-view "
-               "engine."),
+               "Your photo locked: Apple SHARP's 3D of your photo aligned to its measured depth (MoGe-3) at the "
+               "real lens, with a scale check on people's eyes. True depth and scale for looking around from the "
+               "front, as in VR. About a minute. Needs Apple SHARP and MoGe-3 (or MoGe-2 Large)."),
     "quick": ("Quick 3D",
               "Depth from the photo alone (MoGe-2 / SHARP). Seconds. Sharp from the front, nothing behind objects."),
     "around": ("360° capture (experimental)",
@@ -251,7 +250,7 @@ class CreatePage(QWidget):
         gbox = QGroupBox("One photo")
         gf = QFormLayout(gbox)
         self.generative = QComboBox()
-        for label, val in (("Real 3D — rings around the subject, back included (recommended)", "tri"),
+        for label, val in (("Real 3D — from the front, for VR (recommended)", "tri"),
                            ("360° capture — more angles at once, overhead and from below", "capture"),
                            ("Explore the surroundings — for VR180 (needs Wan 2.2)", "explore"),
                            ("Off — only what the photo shows (Quick 3D)", "off")):
@@ -260,6 +259,16 @@ class CreatePage(QWidget):
         self.generative.setToolTip("An AI model draws the photo's other views, then one 3D splat is trained from "
                                    "the photo and the views. Invented parts are labelled 'generative'.")
         gf.addRow("AI views", self.generative)
+        self.real3d_method = QComboBox()
+        for label, val in (("The photo locked — SHARP aligned to the measured depth (recommended)", "locked"),
+                           ("AI views joined — SHARP on the photo and 3 AI views (rc55)", "views"),
+                           ("AI views trained — photo + 3 AI views, trained splat (rc54)", "train")):
+            self.real3d_method.addItem(label, val)
+        self.real3d_method.setCurrentIndex(max(self.real3d_method.findData(win.settings.real3d_method), 0))
+        self.real3d_method.setToolTip("How Real 3D builds the splat. 'The photo locked' keeps everything your "
+                                      "photo shows exactly, at its measured depth and real lens.")
+        self.real3d_method.currentIndexChanged.connect(self._save_opts)
+        gf.addRow("Real 3D method", self.real3d_method)
         self.engine = QComboBox()
         for label, val in (("Automatic — Qwen-Image-Edit if installed, otherwise Wan 2.2", "auto"),
                            ("Qwen-Image-Edit — sharp ~1 MP image per angle (recommended)", "qwen"),
@@ -371,22 +380,28 @@ class CreatePage(QWidget):
         elif not any(self.win.ctx.models.is_installed(m) for m in
                      ("moge-2-vitl-normal", "moge-2-vits-normal", "depth-anything-v2-small", "sharp")):
             msgs.append("No reconstruction model is installed yet.")
-        if getattr(self, "preset_group", None) is not None and self.preset() in ("real3d", "around"):
+        if getattr(self, "preset_group", None) is not None and self.preset() == "real3d":
+            from ..backends.generative import sharp_installed
+            from ..backends.locked import moge_model
+
+            ctx = self.win.ctx
+            need = []
+            if not sharp_installed(ctx):
+                need.append("Apple SHARP")
+            if moge_model(ctx) is None:
+                need.append("MoGe-3 (or MoGe-2 Large)")
+            if need:
+                msgs.append(f"'{PRESETS['real3d'][0]}' needs {' and '.join(need)} — until they are installed, "
+                            "the AI-views method (or Quick 3D) is used.")
+        if getattr(self, "preset_group", None) is not None and self.preset() == "around":
             from ..backends.generative import installed
 
             ctx = self.win.ctx
             need = []
-            if not (installed(ctx, "qwen") or (self.preset() == "around" and installed(ctx, "wan"))):
-                need.append("Qwen-Image-Edit-2511 + Multiple-Angles" if self.preset() == "real3d"
-                            else "Qwen-Image-Edit or Wan 2.2")
+            if not (installed(ctx, "qwen") or installed(ctx, "wan")):
+                need.append("Qwen-Image-Edit or Wan 2.2")
             if not all(m in ctx.models.entries and ctx.models.is_installed(m) for m in ("vggt-1b", "moge-2-vitl-normal")):
                 need.append("the multi-view models (VGGT, MoGe-2 Large)")
-            if self.preset() == "real3d" and not need:
-                from ..backends.generative import sharp_installed
-
-                if not sharp_installed(ctx):
-                    msgs.append("Real 3D works best with Apple SHARP installed (Components); without it the views "
-                                "are reconstructed by slower training.")
             if need:
                 msgs.append(f"'{PRESETS[self.preset()][0]}' needs {' and '.join(need)} — until they are installed, "
                             "Quick 3D is used.")
@@ -444,6 +459,7 @@ class CreatePage(QWidget):
         s.projection = self.projection.currentData()
         s.generative = self.generative.currentData()
         s.gen_engine = self.engine.currentData()
+        s.real3d_method = self.real3d_method.currentData()
         s.video_seconds = float(self.video_len.currentData())
         s.video_fps = float(self.video_fps.currentData())
         s.combine_photos = self.combine.isChecked()

@@ -12,7 +12,10 @@ Legend: ✅ done and tested here · 🟡 implemented, not verified on target har
 ## Milestone 2 — photo backend
 - 🟡 `moge_rgbd`: MoGe-2 point map → surface-aligned Gaussians + textured OBJ (conversion tested; model never run)
 - 🟡 `sharp`: Apple SHARP adapter (research profile only)
-- 🟡 Real 3D (rc55, default): 3 Qwen views (one attempt each) + SHARP on the photo and each view, joined by
+- 🟡 Real 3D v3 (rc56, default): the photo locked — SHARP aligned to MoGe-3 metric depth at the real lens,
+  eye-distance scale check, A/B export + views sheet (`backends/locked.py`, `workers/sharp_depth_worker.py`).
+  Next (rc57): progressive warp-and-inpaint fill of holes.
+- 🟡 Real 3D AI views joined (rc55, now an option): 3 Qwen views (one attempt each) + SHARP on the photo and each view, joined by
   `fusion.py` (VGGT poses or requested orbit, coloured ICP, photo-first dedup, rubber-sheet filter, colour gain).
   Fusion unit-tested on synthetic scenes; job path tested with fake workers; not yet run on the RTX 4080
 

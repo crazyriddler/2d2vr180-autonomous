@@ -52,13 +52,19 @@ verified (SHA256) before use.
    photo alone), *360° capture* (more angles at once) or *Custom*. **Advanced options** show every setting:
    - **VR180 output** — layouts (side-by-side, top/bottom) and projection.
    - **One photo**
-     - **AI views** — *Real 3D* (the default) draws your subject from exactly 3 nearby angles, straight from
-       your photo and one attempt each: 45° left, 45° right and from above. Apple SHARP then gives your photo and
-       each view volume, and the four are joined into one 3D splat: your photo's splats exactly as SHARP made
-       them, and from each view only what your photo cannot show (the sides of the subject and what it hides),
-       placed with the camera engine (VGGT) and laid onto your photo's surfaces, its colours matched to your
-       photo. No training, so it is fast. It is made for looking around from the front (VR): no back is
-       invented. Without Apple SHARP installed, the photo and the views are reconstructed by training instead.
+     - **AI views** — *Real 3D* (the default) locks your photo:
+       - It uses your photo's real lens (EXIF) and its measured metric depth (MoGe-3).
+       - It checks the scale against the eyes of the people in it (adults' eyes are 56-70 mm apart).
+       - It aligns Apple SHARP's 3D of the photo to that depth.
+
+       You get correct depth and scale for looking around from the front in VR. Next to the result are:
+       - `compare_sharp_alone.ply`: SHARP without the measured depth;
+       - `views_sheet.png`: both versions from 15 cm to each side and from 15° around the subject.
+
+       **Real 3D method** chooses how it is built:
+       - *The photo locked* (default);
+       - *AI views joined*: SHARP on the photo and 3 AI views (rc55);
+       - *AI views trained*: photo + 3 AI views, trained (rc54).
        *360° capture* draws 45°, 90°, 135°, 180°, 270°, overhead and from below at once (Quality adds 225°,
        315° and raised diagonals). *Explore the surroundings* (Wan 2.2) films the view around the photo's
        position so a VR180 is filled. *Off* uses only what the photo shows. These are reconstructed together with

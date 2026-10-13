@@ -41,6 +41,7 @@
    "backends": [
     "moge_rgbd",
     "multiview",
+    "photo_locked",
     "video4d"
    ],
    "requires_acceptance": true,
@@ -66,7 +67,8 @@
    "redistributable": true,
    "required_vram_gb": 6,
    "backends": [
-    "generative"
+    "generative",
+    "photo_locked"
    ],
    "requires_acceptance": true,
    "gated": false,
@@ -79,6 +81,31 @@
     }
    ],
    "notes": "Real 3D (rc48): depth, field of view and metric scale of the original photo; runs in photo-cu128 (FlexGEMM Triton kernels). MoGe-2 is used when it is not installed."
+  },
+  {
+   "id": "yunet-face",
+   "display_name": "YuNet face detector — real-world scale check for Real 3D (eye distance)",
+   "source": "https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet",
+   "revision": "2023mar",
+   "license": "MIT (opencv_zoo models/face_detection_yunet/LICENSE)",
+   "license_url": "https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/LICENSE",
+   "commercial_use": true,
+   "redistributable": true,
+   "required_vram_gb": 0,
+   "backends": [
+    "photo_locked"
+   ],
+   "requires_acceptance": false,
+   "gated": false,
+   "files": [
+    {
+     "path": "face_detection_yunet_2023mar.onnx",
+     "url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+     "sha256": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+     "size_bytes": 232589
+    }
+   ],
+   "notes": "Real 3D (rc56): finds faces and eyes (OpenCV FaceDetectorYN, CPU) so the photo's measured depth can be checked against the adult eye distance (56-70 mm)."
   },
   {
    "id": "depth-anything-v2-small",
@@ -128,6 +155,7 @@
    "redistributable": false,
    "required_vram_gb": 6,
    "backends": [
+    "photo_locked",
     "sharp"
    ],
    "requires_acceptance": true,
