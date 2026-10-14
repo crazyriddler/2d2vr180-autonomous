@@ -1,4 +1,4 @@
-from twod2vr180.sysmem import MemoryStatus, low_memory_warning, memory_status, parse_processes
+from twod2vr.sysmem import MemoryStatus, low_memory_warning, memory_status, parse_processes
 
 
 def test_memory_status_reads_something():

@@ -1,6 +1,6 @@
-# Third-party notices — 2D2VR180
+# Third-party notices — 2D2VR
 
-2D2VR180 itself is MIT-licensed (see LICENSE). The Windows package bundles or
+2D2VR itself is MIT-licensed (see LICENSE). The Windows package bundles or
 downloads the components below. **No model weights are bundled.**
 
 ## Bundled in the installer / portable ZIP
@@ -11,46 +11,32 @@ downloads the components below. **No model weights are bundled.**
 | NumPy | 2.4.6 | BSD-3-Clause | |
 | Pillow | 12.3.0 | MIT-CMU (HPND) | |
 | Qt for Python (PySide6-Essentials, shiboken6) | 6.11.2 | LGPL-3.0 | dynamically linked, unmodified Qt libraries in the install folder may be replaced by the user |
-| three.js | 0.170.0 | MIT | assets/webxr/three.module.js — WebXR splat viewer |
-| GaussianSplats3D (@mkkellogg/gaussian-splats-3d) | 0.4.7 | MIT | assets/webxr/gaussian-splats-3d.module.js — WebXR splat viewer |
-| splaTV (antimatter15/splaTV, hybrid.js) | main, 2024 | MIT | assets/webxr/player4d.js — 4D splat rasteriser (shaders, depth sort, .splatv layout) adapted for the 4D player; LICENSE-splatv.txt |
+| splaTV / splat (antimatter15, Kevin Kwok) | main, 2024 | MIT | assets/webxr/player.js — the player's splat rasteriser (shaders, instanced quads, worker depth sort) adapted for .splat and .splv; LICENSE-splatv.txt |
+| Sapiens2 backbone (facebookresearch/sapiens2) | see config/upstream-lock.json | Sapiens2 License (workers/LICENSE-sapiens2.md) | workers/sapiens2_backbone.py, vendored verbatim; runs only inside the downloaded runtime |
 | uv | 0.12.19 | MIT OR Apache-2.0 | bin/uv.exe — installs the backend runtimes |
 | FFmpeg | 7.1 (imageio-ffmpeg 0.6.0 build) | **GPL-3.0-or-later** | bin/ffmpeg.exe, run as a separate process. Source: https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz ; configuration: `ffmpeg -buildconf`. |
 
-## Downloaded on demand into %LOCALAPPDATA%\2D2VR180 (never bundled)
+## Downloaded on demand into %LOCALAPPDATA%\2D2VR (never bundled)
 
-Runtimes (config/runtime-manifest.json): PyTorch (BSD-3-Clause, bundles NVIDIA CUDA
-runtime libraries under the NVIDIA EULA), torchvision, gsplat (Apache-2.0), MoGe
-(MIT), utils3d-moge, pipeline, transformers (Apache-2.0), Apple ml-sharp (Apple Sample Code License), recon3d
-(MIT), VGGT (VGGT License v1), Open3D (MIT), scikit-learn (BSD-3-Clause), Stability AI stable-virtual-camera
-(Stability AI Non-Commercial Research Community License), diffusers (Apache-2.0), open_clip (MIT),
-kornia (Apache-2.0), roma (BSD-3-Clause), VideoX-Fun (Apache-2.0), peft (Apache-2.0), gguf (MIT),
-bitsandbytes (MIT), transformers (Apache-2.0), omegaconf (BSD-3-Clause),
-librosa (ISC), TRELLIS.2 code and its Windows wheels from the TRELLIS.2-stableprojectorz fork (MIT; cumesh,
-flex_gemm, o_voxel MIT; nvdiffrast and nvdiffrec under the NVIDIA Source Code License), xformers (BSD-3-Clause),
-triton-windows (MIT), timm (Apache-2.0), trimesh (MIT) and their dependencies.
+Runtimes (config/runtime-manifest.json): PyTorch (BSD-3-Clause, bundles NVIDIA CUDA runtime libraries under
+the NVIDIA EULA), torchvision, gsplat (Apache-2.0), MoGe (MIT), utils3d-moge, pipeline, FlexGEMM (MIT), Apple
+ml-sharp (Apple Sample Code License), transformers (Apache-2.0), safetensors (Apache-2.0), OpenCV (Apache-2.0),
+diffusers (Apache-2.0), peft (Apache-2.0), gguf (MIT), kornia (Apache-2.0), VideoX-Fun (Apache-2.0, part of the
+1.x painter runtime kept so existing installs stay valid), triton-windows (MIT), timm (Apache-2.0) and their
+dependencies.
 
 Models (config/model-manifest.json) — shown with their license before download:
 
 | Model | License | Commercial use |
 |---|---|---|
-| MoGe-2 ViT-S / ViT-L (normal) | MIT (Hugging Face model cards, verified 2026-09-27) | yes |
-| Depth-Anything-V2 Small | Apache-2.0 (Hugging Face model card) | yes |
 | Apple SHARP | Apple ML Research Model License — research only | **no** |
-| VGGT-1B | CC-BY-NC-4.0 (Hugging Face model card) | **no** |
-| Wan 2.2 Fun 5B Control-Camera (alibaba-pai) | Apache-2.0 | yes |
+| MoGe-3 ViT-L (Microsoft) | MIT | yes |
+| YuNet face detector (OpenCV Zoo) | MIT | yes |
+| Sapiens2 seg 0.4B and pointmap 1B (Meta) | Sapiens2 License | see licence |
 | Qwen-Image-Edit-2511 (Qwen; text encoder Qwen2.5-VL-7B, VAE) | Apache-2.0 | yes |
 | Qwen-Image-Edit-2511 GGUF Q5_K_M (unsloth) | Apache-2.0 | yes |
-| TRELLIS.2-4B (shape models) and TRELLIS-image-large sparse-structure decoder (Microsoft) | MIT | yes |
-| DINOv3 ViT-L/16 (Meta) and RMBG-2.0 (BRIA AI), mirrored by the TRELLIS.2 Windows fork | Meta DINOv3 License; CC BY-NC 4.0 | **no** (RMBG-2.0) |
-| Qwen-Image-Edit-2511 Multiple-Angles LoRA (fal) | Apache-2.0 | yes |
 | Qwen-Image-Edit-2511 Lightning LoRA (lightx2v) | Apache-2.0 | yes |
-| Stable Virtual Camera 1.1 | Stability AI Non-Commercial Research Community License (gated; outputs non-commercial) | **no** |
-| Stable Diffusion 2.1 VAE (sd2-community mirror) | CreativeML Open RAIL++-M | yes (use restrictions apply) |
-| OpenCLIP ViT-H/14 LAION-2B | MIT | yes |
-| LaMa (big-lama) | Apache-2.0 | yes |
 
-The default license profile is "Personal / research use". The "Commercial use"
-profile disables every backend whose model license does not permit commercial use
-(SHARP, the VGGT multi-view engine and Stable Virtual Camera); MoGe-2, Depth-Anything-V2 Small and LaMa
-remain available.
+The default license profile is "Personal / research use". The "Commercial use" profile disables every
+backend whose model license does not permit commercial use; Real 3D needs Apple SHARP, so it is not available
+there.

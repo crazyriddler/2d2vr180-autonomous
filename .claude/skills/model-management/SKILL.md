@@ -15,6 +15,6 @@ Rules:
 - do not bundle non-redistributable weights.
 
 Model storage:
-`%LOCALAPPDATA%/2D2VR180/models/<model-id>/`
+`%LOCALAPPDATA%/2D2VR/models/<model-id>/`
 
 A release is invalid if its model manifest points to a dead URL or an unverified license.

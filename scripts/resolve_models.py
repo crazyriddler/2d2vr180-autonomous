@@ -49,7 +49,7 @@ URLS: list[str] = [  # non-HF downloads: hashed by streaming
 
 
 def get(url: str):
-    req = urllib.request.Request(url, headers={"User-Agent": "2D2VR180-resolver"})
+    req = urllib.request.Request(url, headers={"User-Agent": "2D2VR-resolver"})
     with urllib.request.urlopen(req, timeout=120) as r:
         return json.load(r)
 
@@ -58,7 +58,7 @@ def gguf_tensor_names(url: str, nbytes: int = 16 << 20) -> dict:
     """Parse a GGUF header (metadata + tensor infos) from the start of the file."""
     import struct
 
-    req = urllib.request.Request(url, headers={"User-Agent": "2D2VR180-resolver", "Range": f"bytes=0-{nbytes - 1}"})
+    req = urllib.request.Request(url, headers={"User-Agent": "2D2VR-resolver", "Range": f"bytes=0-{nbytes - 1}"})
     with urllib.request.urlopen(req, timeout=300) as r:
         b = r.read()
     pos = 0
@@ -109,7 +109,7 @@ def safetensors_header(url: str) -> dict:
     import struct
 
     def rng(a, b):
-        req = urllib.request.Request(url, headers={"User-Agent": "2D2VR180-resolver", "Range": f"bytes={a}-{b}"})
+        req = urllib.request.Request(url, headers={"User-Agent": "2D2VR-resolver", "Range": f"bytes={a}-{b}"})
         with urllib.request.urlopen(req, timeout=300) as r:
             return r.read()
 
@@ -152,7 +152,7 @@ def main() -> int:
         org, name, path = spec.split("/", 2)
         try:
             req = urllib.request.Request(f"https://huggingface.co/{org}/{name}/resolve/main/{path}",
-                                         headers={"User-Agent": "2D2VR180-resolver"})
+                                         headers={"User-Agent": "2D2VR-resolver"})
             with urllib.request.urlopen(req, timeout=120) as r:
                 out["text"][spec] = r.read(60000).decode("utf-8", "replace")
         except Exception as e:  # noqa: BLE001
@@ -177,7 +177,7 @@ def main() -> int:
         try:
             h = hashlib.sha256()
             n = 0
-            req = urllib.request.Request(url, headers={"User-Agent": "2D2VR180-resolver"})
+            req = urllib.request.Request(url, headers={"User-Agent": "2D2VR-resolver"})
             with urllib.request.urlopen(req, timeout=300) as r:
                 while True:
                     b = r.read(1 << 22)

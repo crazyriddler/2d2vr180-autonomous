@@ -2,13 +2,13 @@
 # app with Python/Git removed from PATH, run acceptance checks, uninstall.
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
-$setup = Get-ChildItem release\2D2VR180-*-setup.exe | Select-Object -First 1
+$setup = Get-ChildItem release\2D2VR-*-setup.exe | Select-Object -First 1
 if (-not $setup) { throw "installer not found" }
-$dir = Join-Path $env:LOCALAPPDATA "Programs\2D2VR180-installtest"
+$dir = Join-Path $env:LOCALAPPDATA "Programs\2D2VR-installtest"
 Start-Process $setup.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/CURRENTUSER", "/NORESTART", "/DIR=`"$dir`"" -Wait
-$cli = Join-Path $dir "2d2vr180-cli.exe"
+$cli = Join-Path $dir "2d2vr-cli.exe"
 if (-not (Test-Path $cli)) { throw "installed CLI missing" }
-if (-not (Test-Path (Join-Path $dir "2D2VR180.exe"))) { throw "installed GUI missing" }
+if (-not (Test-Path (Join-Path $dir "2D2VR.exe"))) { throw "installed GUI missing" }
 
 # The installed app must not depend on a system Python, Git or CUDA toolkit.
 $savedPath = $env:PATH

@@ -1,3 +1,103 @@
+# 2D2VR 2.0.0-rc1 — the reform: Real 3D photos and splat videos
+
+2D2VR180 becomes **2D2VR**. The app now does two things, both with the Real 3D method of rc58 (the one the
+owner liked):
+
+- **a photo → a Real 3D Gaussian splat**, as in rc58;
+- **a video → a splat video**: every frame made like a Real 3D photo, in one file with the sound, played
+  smoothly in the app's 3D viewer and in the browser VR player.
+
+VR180, the 4D video method and every model they needed are gone.
+
+## Splat videos
+
+- **How a video is made**, frame by frame, with the Real 3D technique (without the AI painting, which
+  takes minutes per frame):
+  - MoGe-3's measured depth at the video's lens;
+  - the people's real shape from Sapiens2;
+  - the real-world size from their eyes;
+  - Apple SHARP aligned to that depth.
+- **Steadier than one photo after another:**
+  - the lens and the real-world size are measured once on frames spread over the clip, so the scene
+    does not "breathe";
+  - each frame's depth is matched to the previous frame's where the picture did not change.
+    Monocular depth jumps a few percent from frame to frame; in tests a 3 % wobble became 0.1 %.
+- **Slow but steady and safe for memory:**
+  - every model is loaded once;
+  - each frame is written to disk as soon as it is made, so RAM and VRAM stay flat however long the
+    video is;
+  - an interrupted run resumes from the last finished frame;
+  - if the GPU runs out of memory, the job continues with lighter settings instead of failing.
+  - Expect about 3-5 s per frame on an RTX 4080 (a minute at 24 fps takes 1.5-2 hours) and 2-5 GB of disk
+    per minute.
+- **Options** (Create page): start, length (whole video by default) and frames per second (the video's own,
+  up to 24). Quality decides the splats per frame: Fast 184k, Auto 328k, Quality 526k.
+- **A new file format, `.splv`, invented for this** (details in docs/ARCHITECTURE.md):
+  - every frame keeps the same splats in the same order;
+  - each frame is quantized to 17 bytes per splat, filtered against the previous frame or neighbour and
+    compressed;
+  - a keyframe every second allows seeking;
+  - the sound is stored in the same file (Opus).
+  - The first frame is also exported as `scene.ply` / `scene.splat`.
+
+## Players
+
+- **Browser VR player** (View in VR), new for 2.0: one player for splats and splat videos.
+  - It streams the video from the app with range requests (videos can be gigabytes) and decodes it a
+    second or so ahead on several CPU cores.
+  - The sound is the clock: the speed never drifts. When a frame is not ready, it waits instead of
+    skipping.
+  - **Size buttons**, for when the IPD scale did not come out right:
+    - hold **A/X** to make everything smaller, **B/Y** to make it bigger;
+    - click a stick to go back to the start at the original size;
+    - the trigger plays/pauses;
+    - the size is remembered per scene.
+  - On the desktop: + / − change the size, Space plays/pauses, , and . step frames.
+- **App 3D viewer**:
+  - plays `.splv` with its sound and a timeline;
+  - a background thread decodes frames ahead, and when a frame is late playback waits instead of skipping;
+  - **Size in VR** sets the starting size for View in VR.
+
+## Cleaner app
+
+- **Create page**, one workflow:
+  - drop photos or videos (each one becomes its own result);
+  - Quality;
+  - **Eye distance (IPD)** selector;
+  - "AI paints what the photo hides" for photos;
+  - start / length / frames per second for videos.
+  - No presets, no VR180 options, no engine choices.
+- **Components**: only what Real 3D uses, all recommended:
+  - Real 3D engine, SHARP, MoGe-3, YuNet, Sapiens2 ×2;
+  - AI painter engine, Qwen-Image-Edit-2511 + text encoder + Lightning.
+  - "Install recommended" installs everything.
+- **Old downloads**: Components lists the models and engines of 1.x that 2.0 no longer uses (VGGT,
+  MoGe-2, Depth Anything, Wan 2.2, LaMa, angles LoRA, the multi-view engine) with a **Delete them** button.
+- **Removed:**
+  - VR180 images and videos;
+  - the 4D video method;
+  - multi-photo reconstruction;
+  - Quick 3D and the older Real 3D methods;
+  - the three.js viewer.
+- **Your data is kept**, nothing to download again:
+  - the installer replaces 2D2VR180 1.x;
+  - the data folder `%LOCALAPPDATA%\2D2VR180` is renamed to `%LOCALAPPDATA%\2D2VR` on first start;
+  - the installed engines stay valid (their contents did not change).
+
+## Checks
+
+- **Test suite**: 98 tests on Linux CI.
+  - The browser player runs in headless Chromium: it loads, plays at the video's speed with the sound,
+    seeks and resizes.
+  - The app viewer plays a splat video with the CPU preview and with real OpenGL.
+  - Video jobs: frames, sound, keyframes, options, OOM resume, cancel and low disk, with test-only fake
+    workers.
+- **Video worker**: exercised with stand-in models for calibration, stabilisation, keyframes and resume.
+- **Acceptance**: 8/8 checks on the packaged CLI.
+- **Not run here**: the real models on the RTX 4080 (owner test).
+
+---
+
 # 2D2VR180 1.0.0-rc58 — Real 3D: people at their real size and with their real shape
 
 Owner verdict on rc57: the best so far in speed and quality by far, but:

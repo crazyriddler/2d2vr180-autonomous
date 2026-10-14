@@ -2,35 +2,32 @@ import json
 import re
 from pathlib import Path
 
-from conftest import install_fake_model
-
-from twod2vr180.backends.base import JobInput
-from twod2vr180.selector import select
+from twod2vr.backends.base import JobInput
+from twod2vr.selector import select
 
 
-def test_sharp_preferred_when_installed(ctx, rtx4080, tmp_path):
-    install_fake_model(ctx.models, "sharp")
-    inp = JobInput(tmp_path / "a.jpg", "photo", tmp_path)
-    assert select(inp, rtx4080, ctx, "quality").backend.id == "sharp"
-    assert select(inp, rtx4080, ctx, "fast").backend.id == "moge_rgbd"
+def test_photo_goes_to_real3d_and_video_to_splat_video(ctx, rtx4080, tmp_path):
+    for mode in ("auto", "quality", "fast"):
+        assert select(JobInput(tmp_path / "a.jpg", "photo", tmp_path), rtx4080, ctx, mode).backend.id == "photo_locked"
+        assert select(JobInput(tmp_path / "a.mp4", "video", tmp_path), rtx4080, ctx, mode).backend.id == "splat_video"
 
 
-def test_fallback_is_explained(ctx, rtx4080, tmp_path):
-    rtx4080.gpus[0].total_mib = 8192  # too small for the 4D engine
-    inp = JobInput(tmp_path / "a.mp4", "video", tmp_path, video_kind="moving_camera")
-    sel = select(inp, rtx4080, ctx, "auto")
-    assert sel.backend.id == "moge_rgbd" and sel.effective_kind == "video:frame"
+def test_missing_models_are_explained(ctx, rtx4080, tmp_path):
+    ctx.models.delete("moge-3-vitl")
+    sel = select(JobInput(tmp_path / "a.mp4", "video", tmp_path), rtx4080, ctx, "auto")
+    assert sel.backend is None
     rej = {r["backend"]: r["reasons"] for r in sel.rejected}
-    assert any("10 GB" in r for r in rej["video4d"])
-    assert "10 GB" in sel.notes[0] and "sharpest frame" in sel.notes[0]
-    assert "longsplat" in rej  # unsupported research backends are listed with reasons
+    assert any("moge-3-vitl" in r for r in rej["splat_video"])
+    rtx4080.gpus[0].total_mib = 6144
+    sel = select(JobInput(tmp_path / "a.jpg", "photo", tmp_path), rtx4080, ctx, "auto")
+    assert sel.backend is None and any("8 GB" in r for r in sel.rejected[0]["reasons"])
 
 
 def test_runtime_manager_state(tmp_path):
-    from twod2vr180.runtimes import RuntimeManager, load_runtime_manifest
+    from twod2vr.runtimes import RuntimeManager, load_runtime_manifest
 
     specs = load_runtime_manifest()
-    assert {"photo-cu128", "recon3d-cu124"} <= set(specs)
+    assert set(specs) == {"photo-cu128", "gen-cu128"}
     for s in specs.values():
         lines = RuntimeManager(tmp_path, specs).lock_lines(s.id)
         assert len(lines) > 20 and all("==" in p for p in lines), "runtimes must install an exact lock"
@@ -52,7 +49,7 @@ def test_runtime_manager_state(tmp_path):
 
 
 def test_low_disk_job_failure(ctx, rtx4080, photo):
-    from twod2vr180.jobs import Job, JobOptions, JobRunner
+    from twod2vr.jobs import Job, JobOptions, JobRunner
 
     rtx4080.disk_free_mib = 10
     job = Job(photo, JobOptions())
@@ -74,7 +71,7 @@ def test_copy_package_installs_subpackages_from_archive(tmp_path, monkeypatch):
     import urllib.request
     import zipfile
 
-    from twod2vr180.runtimes import RuntimeManager
+    from twod2vr.runtimes import RuntimeManager
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:

@@ -1,4 +1,4 @@
-# Building 2D2VR180 (reproducible)
+# Building 2D2VR (reproducible)
 
 ## Windows release build (what CI runs)
 
@@ -7,7 +7,7 @@ Inno Setup 6 (installed automatically via Chocolatey if missing). End users need
 
 ```powershell
 ./scripts/bootstrap.ps1   # venv from requirements-dev.txt (pinned) + SHA256-verified uv.exe / ffmpeg.exe
-./scripts/build.ps1       # PyInstaller -> dist\2D2VR180 (2D2VR180.exe GUI, 2d2vr180-cli.exe) + frozen smoke test
+./scripts/build.ps1       # PyInstaller -> dist\2D2VR (2D2VR.exe GUI, 2d2vr-cli.exe) + frozen smoke test
 ./scripts/test.ps1        # pytest + scripts/acceptance.py against the frozen CLI
 ./scripts/package.ps1     # release\: portable ZIP, setup EXE, RELEASE_NOTES, checksums.sha256, release-manifest.json
 ./scripts/release.ps1     # refuses unless docs/status/gates.json mandatory gates pass
@@ -24,8 +24,8 @@ Pinned inputs: `requirements-app.txt`, `requirements-dev.txt`, `config/build-too
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
 export PYTHONPATH=src
-python -m twod2vr180.cli doctor
-python -m twod2vr180.cli gui
+python -m twod2vr.cli doctor
+python -m twod2vr.cli gui
 QT_QPA_PLATFORM=offscreen python -m pytest -q
 ```
 
@@ -33,9 +33,9 @@ QT_QPA_PLATFORM=offscreen python -m pytest -q
 
 | Location | Content |
 |---|---|
-| `%LOCALAPPDATA%\Programs\2D2VR180` | application (installer, per-user, no admin) |
-| `%LOCALAPPDATA%\2D2VR180\runtimes\<id>` | isolated Python + PyTorch/CUDA wheels per backend family (created by `uv`) |
-| `%LOCALAPPDATA%\2D2VR180\models\<id>` | model weights (downloaded after license acceptance) |
-| `%LOCALAPPDATA%\2D2VR180\jobs\<job-id>` | inputs' frames, outputs, `run_report.json`, logs |
+| `%LOCALAPPDATA%\Programs\2D2VR` | application (installer, per-user, no admin) |
+| `%LOCALAPPDATA%\2D2VR\runtimes\<id>` | isolated Python + PyTorch/CUDA wheels per backend family (created by `uv`) |
+| `%LOCALAPPDATA%\2D2VR\models\<id>` | model weights (downloaded after license acceptance) |
+| `%LOCALAPPDATA%\2D2VR\jobs\<job-id>` | inputs' frames, outputs, `run_report.json`, logs |
 
-Set `TWOD2VR180_HOME` to relocate the data directory (e.g. to a larger drive).
+Set `TWOD2VR_HOME` to relocate the data directory (e.g. to a larger drive).

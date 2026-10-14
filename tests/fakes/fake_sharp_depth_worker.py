@@ -14,8 +14,8 @@ from _protocol import emit, progress, run  # noqa: E402
 def main(req):
     import numpy as np
 
-    from twod2vr180.rgbd import pointmap_to_gaussians
-    from twod2vr180.scene import Camera, write_gaussian_ply
+    from twod2vr.rgbd import pointmap_to_gaussians
+    from twod2vr.scene import Camera, write_gaussian_ply
 
     emit("env", torch=None, cuda="12.8", cuda_available=True, device="fake")
     if req.get("mode") == "fill":      # each filled view: its known depth, the holes 10 % behind the farthest

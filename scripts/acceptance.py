@@ -1,11 +1,11 @@
 """GPU-free acceptance checks against a built CLI executable.
 
 Covers the Definition-of-done items that do not need a GPU: launch, clear
-errors instead of crashes (corrupted input, no GPU, license gate), and a
-VR180 render from an existing splat file. GPU items (model download,
+errors instead of crashes (corrupted input, no GPU, license gate), and the
+VR player serving a splat and a splat video. GPU items (model download,
 inference, video) are in docs/QUALITY_GATES.md and docs/status/gates.json.
 
-    python scripts/acceptance.py --app dist/2D2VR180/2d2vr180-cli[.exe]
+    python scripts/acceptance.py --app dist/2D2VR/2d2vr-cli[.exe]
 """
 
 import argparse
@@ -26,8 +26,8 @@ def main() -> int:
     ap.add_argument("--app", required=True)
     a = ap.parse_args()
     app = str(Path(a.app).resolve())
-    tmp = Path(tempfile.mkdtemp(prefix="2d2vr180-acc-"))
-    env = dict(os.environ, TWOD2VR180_HOME=str(tmp / "home"))
+    tmp = Path(tempfile.mkdtemp(prefix="2d2vr-acc-"))
+    env = dict(os.environ, TWOD2VR_HOME=str(tmp / "home"))
     results = []
 
     def run(*args):
@@ -43,7 +43,7 @@ def main() -> int:
         return json.loads(Path(m.group(1).strip()).read_text()) if m else None
 
     rc, out = run("--version")
-    check("launch --version", rc == 0 and "2D2VR180" in out, out)
+    check("launch --version", rc == 0 and "2D2VR" in out, out)
     rc, out = run("doctor", "--json")
     try:
         d = json.loads(out[out.index("{"):])
@@ -74,8 +74,8 @@ def main() -> int:
     rc, out = run("models", "download", "sharp")
     check("license must be accepted before download", rc == 4, out)
 
-    from twod2vr180.rgbd import pointmap_to_gaussians
-    from twod2vr180.scene import Camera, write_gaussian_ply
+    from twod2vr.rgbd import pointmap_to_gaussians
+    from twod2vr.scene import Camera, write_gaussian_ply
 
     h, w, f = 120, 160, 150.0
     ys, xs = np.mgrid[0:h, 0:w]
@@ -83,17 +83,21 @@ def main() -> int:
     pts = np.stack([(xs + .5 - w / 2) / f * z, (ys + .5 - h / 2) / f * z, z], -1)
     ply = write_gaussian_ply(pointmap_to_gaussians(pts, img, None, Camera(w, h, f, f, w / 2, h / 2)),
                              tmp / "scene.ply")
-    rc, out = run("vr180", str(ply), "--layout", "sbs,tb", "--eye-resolution", "512", "--out", str(tmp / "vr"))
-    sbs, tb = tmp / "vr" / "scene_180_LR.jpg", tmp / "vr" / "scene_180_TB.jpg"
-    ok = rc == 0 and sbs.exists() and tb.exists()
-    if ok:
-        ok = Image.open(sbs).size == (1024, 512) and Image.open(tb).size == (512, 1024)
-        md = json.loads((tmp / "vr" / "scene_180_LR.json").read_text())
-        ok = ok and md["eye_order"] == "left_first" and md["is_full_vr180"] is False
-    check("VR180 SBS/TB from splat file", ok, out)
-
     rc, out = run("view-vr", str(ply), "--check")
-    check("WebXR splat viewer serves page, modules and scene", rc == 0 and "VR viewer OK" in out, out)
+    check("WebXR player serves page, script and a splat", rc == 0 and "VR player OK" in out, out)
+
+    from twod2vr.splv import codec
+
+    c = codec()
+    g = pointmap_to_gaussians(pts, img, None, Camera(w, h, f, f, w / 2, h / 2))
+    quant = c.default_quant(60, 45)
+    arr = c.quantize(g.means, g.scales, g.quats, g.colors, g.opacity, quant)
+    video = tmp / "scene.splv"
+    c.write_file(video, {"fps": 2, "count": len(g), "quant": quant,
+                         "camera": {"width": w, "height": h, "fx": f, "fy": f, "cx": w / 2, "cy": h / 2}},
+                 [(c.encode_frame(arr, None), True), (c.encode_frame(arr, arr), False)])
+    rc, out = run("view-vr", str(video), "--check")
+    check("WebXR player serves a splat video", rc == 0 and "VR player OK" in out, out)
 
     (tmp / "acceptance.json").write_text(json.dumps(results, indent=2))
     failed = [r for r in results if not r["pass"]]

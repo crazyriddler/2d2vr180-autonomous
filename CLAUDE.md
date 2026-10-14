@@ -4,7 +4,7 @@ You are the lead engineer for this repository. Work autonomously unless a decisi
 
 ## Mission
 
-Build and maintain a Windows desktop application named **2D2VR180**.
+Build and maintain a Windows desktop application named **2D2VR**.
 
 Input:
 - JPG/JPEG/PNG/WebP
@@ -15,11 +15,10 @@ Primary hardware target:
 - Windows 11
 - CUDA-capable NVIDIA driver
 
-Primary outputs:
-- interactive 3D scene;
-- Gaussian Splat (`.ply` and/or `.splat`);
-- OBJ mesh when possible;
-- VR180 stereoscopic SBS and Top/Bottom;
+Primary outputs (2.0, the owner's decision: VR180 was dropped):
+- photo → Real 3D Gaussian splat (`.ply` and `.splat`);
+- video → splat video (`.splv`: every frame a Real 3D splat, with the sound);
+- playback in the app's 3D viewer and the browser VR player (WebXR), with a size control in VR;
 - diagnostics/report.
 
 The user must not need Python, Conda, Git, Node, Visual Studio, PyTorch or CUDA toolkit installed separately.
@@ -103,7 +102,7 @@ P0 — application launches and detects RTX 4080.
 P0 — photo/video ingestion works.
 P0 — at least one reliable 3D backend works locally.
 P0 — outputs can be viewed/exported.
-P1 — VR180 SBS/TB renderer works.
+P1 — splat videos play smoothly with sound in the app and in VR.
 P1 — model/runtime manager works.
 P1 — installer works on clean Windows.
 P1 — video reconstruction is stable.
@@ -141,5 +140,5 @@ A release is done only when a fresh Windows machine can:
 6. import a test MP4;
 7. generate a video result where the selected backend supports it;
 8. export/open the 3D scene;
-9. generate a VR180 test asset where the pipeline supports it;
+9. play the splat video in the app's viewer and in the VR player;
 10. show clear errors instead of crashing when a backend is unavailable.

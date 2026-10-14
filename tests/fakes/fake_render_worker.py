@@ -13,8 +13,8 @@ from _protocol import emit, progress, run  # noqa: E402
 def main(req):
     import numpy as np
 
-    from twod2vr180.render import render_pinhole
-    from twod2vr180.scene import read_gaussian_ply
+    from twod2vr.render import render_pinhole
+    from twod2vr.scene import read_gaussian_ply
 
     emit("env", torch=None, cuda="12.8", cuda_available=True, device="fake")
     sc = read_gaussian_ply(req["ply"])

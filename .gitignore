@@ -48,3 +48,6 @@ logs/
 # OS
 Thumbs.db
 .DS_Store
+
+# packaging metadata from editable installs
+*.egg-info/

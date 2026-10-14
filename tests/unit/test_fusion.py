@@ -1,14 +1,10 @@
-"""SHARP fusion (Real 3D, rc55): synthetic 'SHARP outputs' of a box in front of a wall, seen by the photo
-and by views 30° to each side and from above, each in its own camera frame with its own wrong scale."""
-
-import math
+"""Real 3D fill geometry: synthetic splats of a box in front of a wall, seen by the photo and by moved views."""
 
 import numpy as np
 import pytest
 
-from twod2vr180.fusion import (DepthBuffer, FusionView, fuse, orbit_pose, poses_from_engine, quat_mul,
-                               rotmat_to_quat, rubber_sheet, transform_scene)
-from twod2vr180.scene import GENERATIVE, INFERRED, Camera, GaussianScene, quat_to_rotmat
+from twod2vr.fusion import DepthBuffer, orbit_pose, quat_mul, rotmat_to_quat, rubber_sheet, transform_scene
+from twod2vr.scene import GENERATIVE, Camera, GaussianScene, quat_to_rotmat
 
 BOX_LO, BOX_HI = np.array([-0.3, -0.3, 1.7]), np.array([0.3, 0.3, 2.3])
 WALL_Z = 4.0
@@ -61,16 +57,6 @@ def _orbit_c2w(az, el, pivot=2.0):
 
 
 CAM = Camera(W, H, F, F, W / 2, H / 2)
-VIEWS = [("left", -30, 0), ("right", 30, 0), ("above", 0, 25)]
-
-
-def _views(scales=(1.0, 1.25, 0.8, 1.1), gains=(1.0, 1.15, 1.0, 0.9)):
-    out = [FusionView(_sharp(np.eye(4), scales[0]), CAM, False, "photo")]
-    for (lb, az, el), s, g in zip(VIEWS, scales[1:], gains[1:]):
-        v = FusionView(_sharp(_orbit_c2w(az, el), s, g), CAM, True, lb, azimuth=az, elevation=el)
-        v.truth = _orbit_c2w(az, el)
-        out.append(v)
-    return out
 
 
 def _surface_distance(P):
@@ -103,80 +89,6 @@ def test_transform_scene_moves_positions_sizes_and_orientations():
     assert np.allclose(quat_to_rotmat(out.quats[:1])[0], R, atol=1e-5)
 
 
-def test_fusion_with_requested_orbit_lines_views_up_and_adds_only_what_the_photo_misses():
-    views = _views()
-    res = fuse(views)
-    sc = res.scene
-    photo_n = len(views[0].scene)
-    assert (sc.provenance[:photo_n] == INFERRED).all()
-    added = sc.means[sc.provenance == GENERATIVE]
-    assert len(added) > 2000                                    # the box's sides and the wall behind it
-    # every added splat sits on the real geometry: the views were aligned despite their wrong scales
-    assert np.median(_surface_distance(added)) < 0.02
-    assert np.percentile(_surface_distance(added), 90) < 0.06
-    # nothing added on the box face or the wall the photo already shows
-    front = (np.abs(added[:, 2] - BOX_LO[2]) < 0.03) & (np.abs(added[:, :2]) < 0.27).all(1)
-    assert front.sum() < 0.01 * len(added)
-    pv = DepthBuffer(CAM).fill(views[0].scene.means)
-    u, v, z, inside = pv.project(added)
-    visible_dup = inside & (np.abs(z / pv.depth[v, u] - 1) < 0.02)
-    assert visible_dup.mean() < 0.05
-    # the sides of the box were added (green), the wall hidden behind the box too (blue)
-    cols = sc.colors[sc.provenance == GENERATIVE]
-    side = (np.abs(np.abs(added[:, 0]) - 0.3) < 0.03) & (added[:, 2] > 1.75) & (added[:, 2] < 2.25)
-    assert side.sum() > 300
-    hidden_wall = (np.abs(added[:, 2] - WALL_Z) < 0.1) & (np.abs(added[:, 0]) < 0.6)
-    assert hidden_wall.sum() > 300
-    # colours matched to the photo: the left view was 15 % too bright, the one from above 10 % too dark
-    assert res.report[1]["view"] == "left" and max(res.report[1]["colour_gain"]) < 0.92
-    assert min(res.report[3]["colour_gain"]) > 1.05
-    assert np.abs(cols[side & (cols[:, 1] > 0.4)].mean(0) - [0.075, 0.6, 0.075]).max() < 0.1
-    # cameras: the photo's plus one per view, placed where the view was taken (up to the scale)
-    assert len(sc.cameras) == 4
-    for cam, v in zip(sc.cameras[1:], views[1:]):
-        assert np.linalg.norm(cam.c2w[:3, 3] - v.truth[:3, 3]) < 0.08
-
-
-def test_fusion_from_camera_engine_poses_with_noise():
-    views = _views()
-    rng = np.random.default_rng(3)
-    k = 0.7                                                     # the engine's own units
-    c2ws, sizes, depths = [np.eye(4)], [(W, H)], []
-    for v in views[1:]:
-        noisy = v.truth.copy()
-        a = math.radians(3)
-        Rn = np.array([[math.cos(a), 0, math.sin(a)], [0, 1, 0], [-math.sin(a), 0, math.cos(a)]])
-        noisy[:3, :3] = Rn @ noisy[:3, :3]
-        noisy[:3, 3] += rng.normal(0, 0.03, 3)
-        noisy[:3, 3] *= k
-        c2ws.append(noisy)
-        sizes.append((W, H))
-    for v, c2w in zip(views, [np.eye(4)] + [v.truth for v in views[1:]]):
-        X, _ = _cast(c2w)
-        w2c = np.linalg.inv(c2w)
-        buf = DepthBuffer(CAM, max(W, H)).fill(X @ w2c[:3, :3].T + w2c[:3, 3])
-        depths.append(buf.depth * k)
-    poses = poses_from_engine(views, c2ws, sizes, depths)
-    assert poses[0][0] == 1.0
-    for v, p in zip(views[1:], poses[1:]):
-        v.pose = p
-    res = fuse(views)
-    added = res.scene.means[res.scene.provenance == GENERATIVE]
-    assert len(added) > 2000
-    assert np.median(_surface_distance(added)) < 0.02
-    assert all(r["pose_from"] == "camera engine" for r in res.report[1:])
-
-
-def test_a_view_that_does_not_match_the_photo_is_skipped():
-    views = _views()
-    rng = np.random.default_rng(5)
-    junk = views[1].scene
-    junk.means[:] = rng.normal(0, 3, junk.means.shape).astype(np.float32) + [0, 0, 8]
-    res = fuse(views)
-    assert res.report[1]["kept"] == 0 and "skipped" in res.report[1]
-    assert res.report[2]["kept"] > 0
-
-
 def test_rubber_sheet_splats_across_depth_edges_are_found():
     sc = _sharp(np.eye(4), 1.0)
     # a stretched splat half-way between the box edge and the wall, on the box's silhouette
@@ -204,8 +116,8 @@ def test_holes_are_what_the_photo_never_saw_and_fills_add_only_them():
     """rc57: a head move to the right uncovers the wall behind the box's right edge. The render of the
     photo's splats there is empty; a fill made from that view (here: the true surfaces) adds exactly that
     strip and the box's side, and nothing the photo already shows."""
-    from twod2vr180.fusion import add_fills, unseen_by_photo
-    from twod2vr180.render import render_pinhole
+    from twod2vr.fusion import add_fills, unseen_by_photo
+    from twod2vr.render import render_pinhole
 
     base = _sharp(np.eye(4), 1.0)
     photo_buf = DepthBuffer(CAM).fill(base.means)
@@ -232,8 +144,8 @@ def test_holes_are_what_the_photo_never_saw_and_fills_add_only_them():
 def test_rendered_holes_include_guesses_behind_the_photo_surfaces():
     """A splat behind the box (a 'second layer' guess) is drawn in a moved view, but the photo never saw
     it: its pixels still count as holes, and new content there replaces the guess."""
-    from twod2vr180.fusion import add_fills, unseen_by_photo
-    from twod2vr180.render import render_pinhole
+    from twod2vr.fusion import add_fills, unseen_by_photo
+    from twod2vr.render import render_pinhole
 
     base = _sharp(np.eye(4), 1.0)
     n = 400

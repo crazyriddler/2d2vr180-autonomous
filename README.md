@@ -1,89 +1,55 @@
-# 2D2VR180 Autonomous Reconstruction
+# 2D2VR
 
-An autonomous build-and-integration project for Claude Code.
+A Windows desktop application that turns, on your own NVIDIA GPU (target: RTX 4080 16 GB):
 
-**Goal:** produce a Windows desktop application that accepts a photo or video and, using the user's local NVIDIA RTX 4080 16 GB GPU, can generate:
+- **a photo into a Real 3D Gaussian splat**: Apple SHARP's 3D Gaussians aligned to the photo's measured
+  metric depth (MoGe-3) at its real lens, people with their real 3D shape (Sapiens2), the real-world size set
+  from their eyes, and what the photo hides painted by AI (Qwen-Image-Edit) and added only where it is missing;
+- **a video into a splat video** (`.splv`): every frame made the same way, one file with the sound, played
+  smoothly in the app's 3D viewer and in the browser VR player (WebXR), where the controller buttons resize
+  the scene.
 
-- an explorable 3D scene;
-- Gaussian Splat output;
-- optional mesh/OBJ output;
-- stereoscopic VR180 SBS and/or Top/Bottom video;
-- novel-view reconstruction/completion where technically possible.
+Nothing you process leaves the computer. The end user never installs Python, CUDA, Git or anything else:
+the app downloads its engines and models once, with their licences shown first.
 
-The application must hide Python/CUDA/Conda/Git/Node/Visual Studio/PyTorch from the end user. Models and large runtimes are downloaded separately and are never committed to the Git repository.
+2.0 is a complete reform of 1.x ("2D2VR180"): the VR180 stereo output, the 4D video method and the models they
+needed were removed. See `docs/RELEASE_NOTES.md` and `docs/USER_GUIDE.md`.
 
-## Important reality check
-
-This repository is an **autonomous engineering blueprint**, not a claim that one current open-source model can perfectly reconstruct unseen geometry from a single photo/video. Single-view reconstruction is under-constrained. The project therefore uses a modular backend architecture and must preserve uncertainty instead of silently pretending generated geometry is observed geometry.
-
-The first production target is a **working, reproducible Windows release for RTX 4080 16 GB**, not a research benchmark winner.
-
-## Primary strategy
-
-1. Photo:
-   - fast single-view 3DGS backend;
-   - optional single-image explorable-scene backend;
-   - novel-view completion as an experimental stage.
-2. Video:
-   - frame selection;
-   - VGGT/reconstruction backend;
-   - LongSplat/3DGS where compatible;
-   - mesh export;
-   - optional generative novel-view repair.
-3. VR180:
-   - render two virtual eyes from the reconstructed scene;
-   - fill missing/unsupported regions only when a validated completion backend is available;
-   - encode Quest-friendly SBS/TB output.
-4. Packaging:
-   - Windows GUI;
-   - self-contained application/runtime;
-   - model manager;
-   - no model weights in Git;
-   - GitHub Release assets for installers and runtime bundles where size permits.
-
-## Current state (2026-09-27)
-
-The application skeleton, job system, VR180 renderer, exporters, model/runtime
-managers, desktop GUI and Windows packaging are implemented and tested on CPU.
-**No ML backend has yet been run on an RTX 4080**, so no release has been published.
-See `docs/status/BOOTSTRAP.md`, `docs/status/EXECUTION_PLAN.md` and `docs/status/gates.json`.
-
-### Quick start (source checkout)
+## Quick start (source checkout)
 
 ```bash
 pip install -r requirements-dev.txt
-PYTHONPATH=src python -m twod2vr180.cli doctor          # GPU / driver / FFmpeg diagnostics
-PYTHONPATH=src python -m twod2vr180.cli backends        # what can run here, and why not
-PYTHONPATH=src python -m twod2vr180.cli runtimes install photo-cu128
-PYTHONPATH=src python -m twod2vr180.cli models download moge-2-vitl-normal --accept-license
-PYTHONPATH=src python -m twod2vr180.cli run photo.jpg   # -> jobs/<id>/export + run_report.json
-PYTHONPATH=src python -m twod2vr180.cli vr180 scene.ply --layout sbs,tb
-PYTHONPATH=src python -m twod2vr180.cli gui
+PYTHONPATH=src python -m twod2vr.cli doctor          # GPU / driver / FFmpeg diagnostics
+PYTHONPATH=src python -m twod2vr.cli backends        # what can run here, and why not
+PYTHONPATH=src python -m twod2vr.cli runtimes install photo-cu128
+PYTHONPATH=src python -m twod2vr.cli models download moge-3-vitl --accept-license
+PYTHONPATH=src python -m twod2vr.cli models download sharp --accept-license
+PYTHONPATH=src python -m twod2vr.cli run photo.jpg   # -> jobs/<id>/export + run_report.json
+PYTHONPATH=src python -m twod2vr.cli run clip.mp4    # -> jobs/<id>/export/scene.splv
+PYTHONPATH=src python -m twod2vr.cli view-vr jobs/<id>/export/scene.splv
+PYTHONPATH=src python -m twod2vr.cli gui
 ```
 
-Build instructions: `docs/BUILDING.md`.
+Build instructions: `docs/BUILDING.md`. Architecture: `docs/ARCHITECTURE.md`.
 
-### Layout
+## Layout
 
 | Path | Content |
 |---|---|
-| `src/twod2vr180/` | application: hardware probe, media analysis, job system, selector, scene I/O, renderer, VR180, model & runtime managers, CLI, GUI |
-| `src/twod2vr180/backends/` | adapters: `moge_rgbd`, `sharp`, `recon3d_video`, plus evaluated-but-unsupported research backends |
-| `workers/` | scripts executed inside isolated backend runtimes (JSON-lines protocol) |
+| `src/twod2vr/` | application: hardware probe, media, job system, selector, scene I/O, splat video I/O, model & runtime managers, VR player server, CLI, GUI |
+| `src/twod2vr/backends/` | `photo_locked` (Real 3D for photos, with the AI painter in `painter.py`) and `splat_video` (videos) |
+| `workers/` | scripts executed inside the isolated GPU runtimes (JSON-lines protocol); `splv_codec.py` is the splat video format |
+| `assets/webxr/` | the browser player (`player.html`, `player.js`) for `.splat` and `.splv` |
 | `config/` | upstream commit lock, model manifest, runtime manifest, bundled-tool lock |
 | `packaging/` | PyInstaller spec, Inno Setup installer |
 | `scripts/` | bootstrap/build/test/package/release scripts and helpers |
-| `tests/` | unit + integration tests (GPU-free; a test-only fake worker stands in for the model) |
+| `tests/` | unit + integration tests (GPU-free; test-only fake workers stand in for the models; the player runs in headless Chromium) |
 
-## What Claude Code must NOT do
+## Rules for contributors (and Claude Code)
 
-- Do not blindly vendor third-party repositories into this repository.
-- Do not commit model weights.
-- Do not commit CUDA/PyTorch/Conda runtimes.
-- Do not redistribute weights whose license forbids redistribution.
-- Do not replace a failed scientific backend with an unannounced fake/placeholder.
-- Do not declare a pipeline production-ready without running its acceptance tests.
-- Do not use `main` of an upstream repository at release time without recording the exact resolved commit.
-- Do not put secrets in source, GitHub Actions logs, artifacts, or generated configuration.
+- Do not commit model weights or runtimes; do not vendor third-party repositories without a licence note.
+- Never present AI-generated geometry as observed: every splat carries its provenance.
+- Do not declare a pipeline ready without its tests; record exact upstream commits.
+- No secrets in source, logs or artifacts.
 
-See `CLAUDE.md`, `docs/PLAN.md`, `docs/ARCHITECTURE.md`, `docs/REPOSITORY_MATRIX.md`, and `.claude/skills/`.
+See `CLAUDE.md`, `docs/PLAN.md`, `docs/ARCHITECTURE.md` and `.claude/skills/`.

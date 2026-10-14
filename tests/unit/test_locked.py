@@ -49,8 +49,8 @@ def test_people_shape_is_fused_inside_their_outline_at_the_scene_distance():
 
 
 def test_sheet_cameras_move_the_head_and_turn_around_the_subject():
-    from twod2vr180.backends.locked import SHEET_VIEWS, sheet_cameras
-    from twod2vr180.scene import Camera
+    from twod2vr.backends.locked import SHEET_VIEWS, sheet_cameras
+    from twod2vr.scene import Camera
 
     cams = sheet_cameras(Camera(1600, 1200, 1400, 1400, 800, 600), pivot=2.5, side=400)
     assert [c[0] for c in cams] == ["photo"] + [v[0] for v in SHEET_VIEWS]
