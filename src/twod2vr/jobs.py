@@ -365,11 +365,12 @@ class JobRunner:
             # Only now, with the report on disk, does the job leave the "running" state.
             job.report = report
             job.state = final_state
-            try:
-                if job.state == "succeeded":
+            try:      # also after a failure or a cancel: a video's frames can take gigabytes
+                bid = (report.get("backend") or {}).get("id") or (report.get("selection") or {}).get("backend")
+                if bid:
                     from .backends import get_backend
 
-                    get_backend(report["backend"]["id"]).cleanup(JobInput(job.input, "", job.dir))
+                    get_backend(bid).cleanup(JobInput(job.input, "", job.dir))
             except Exception:
                 pass
             log_file.close()

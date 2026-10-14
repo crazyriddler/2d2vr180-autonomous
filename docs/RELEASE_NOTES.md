@@ -26,8 +26,8 @@ VR180, the 4D video method and every model they needed are gone.
   - every model is loaded once;
   - each frame is written to disk as soon as it is made, so RAM and VRAM stay flat however long the
     video is;
-  - an interrupted run resumes from the last finished frame;
-  - if the GPU runs out of memory, the job continues with lighter settings instead of failing.
+  - if the GPU runs out of memory, the job continues from the last finished frame with lighter settings
+    instead of failing.
   - Expect about 3-5 s per frame on an RTX 4080 (a minute at 24 fps takes 1.5-2 hours) and 2-5 GB of disk
     per minute.
 - **Options** (Create page): start, length (whole video by default) and frames per second (the video's own,

@@ -223,7 +223,7 @@ class CreatePage(QWidget):
         vf.addRow("Frames per second", self.video_fps)
         vf.addRow(note("Slow but steady: about 3-5 s per frame on an RTX 4080 (a minute of video at 24 fps takes "
                        "1.5-2 hours) and 2-5 GB of disk per minute. Memory stays the same however long the video "
-                       "is; an interrupted run resumes from the last finished frame."))
+                       "is; if the GPU runs out of memory, the job continues from the last finished frame."))
         opts.addWidget(vbox)
         opts.addStretch(1)
         for w in (self.quality, self.video_len, self.video_fps):

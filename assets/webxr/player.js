@@ -372,7 +372,7 @@ function pump() {
   for (const w of vid.workers) {
     if (w.busy || vid.nextGop >= vid.keys.length) continue;
     const [from, to] = gopRange(vid.nextGop);
-    if (vid.ready.size + vid.inflight + (to - from + 1) > vid.maxAhead && (vid.ready.size + vid.inflight) > 0) return;
+    if (vid.ready.size + vid.inflight >= vid.maxAhead) return;     // enough decoded or on the way
     w.busy = true;
     vid.inflight += to - from + 1;
     w.pending = to - from + 1;

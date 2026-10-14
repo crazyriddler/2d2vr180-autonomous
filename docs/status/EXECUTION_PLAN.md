@@ -7,7 +7,7 @@
   methods, three.js viewer; models VGGT, MoGe-2, Depth Anything, Wan 2.2, LaMa, angles LoRA; runtime recon3d-cu124
 - ✅ Components: only what Real 3D uses, all recommended; old downloads listed with a delete button
 - 🟡 `splat_video` backend + `workers/video_splat_worker.py`: Real 3D per frame (MoGe-3, Sapiens2, eye scale, SHARP with
-  depth), one lens and scale per clip, depth stabilisation, resumable frames, OOM → lighter settings. Exercised with
+  depth), one lens and scale per clip, depth stabilisation, frames written as they are made, OOM → resume with lighter settings. Exercised with
   stand-in models; real models not yet run on the RTX 4080
 - ✅ `.splv` format (`workers/splv_codec.py`): fixed splat subset, 17 B/splat quantized, per-field temporal/spatial
   filters, byte planes, deflate, keyframes, Opus sound

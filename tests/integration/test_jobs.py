@@ -296,6 +296,7 @@ def test_cancel_kills_the_video_worker(ctx, rtx4080, videos, monkeypatch):
     rep = runner.run(job, on_event)
     assert rep["status"] == "cancelled"
     assert rep["runtime_s"] < 30
+    assert not (job.dir / "frames").exists()            # a video's frames do not stay behind
 
 
 def test_not_enough_disk_for_a_splat_video(ctx, rtx4080, videos, monkeypatch):

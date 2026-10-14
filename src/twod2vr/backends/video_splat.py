@@ -199,5 +199,6 @@ class SplatVideoBackend(Backend):
     def cleanup(self, inp: JobInput) -> None:
         super().cleanup(inp)
         shutil.rmtree(inp.work_dir / "frames", ignore_errors=True)     # extracted frames: in scene.splv now
+        shutil.rmtree(inp.work_dir / "splat_video" / "frames", ignore_errors=True)   # left by a failed run
         for p in inp.work_dir.glob("audio.*"):
             p.unlink(missing_ok=True)
