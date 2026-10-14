@@ -435,7 +435,7 @@ class ResultsPage(QWidget):
                 rep = json.loads((d / "run_report.json").read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            self.reports[str(d)] = rep
+            self.reports[str(d)] = self.relocate(d, rep)
             name = Path((rep.get("input") or {}).get("path", d.name)).name
             status = rep.get("status", "?")
             backend = (rep.get("backend") or {}).get("name") or "—"
@@ -465,6 +465,21 @@ class ResultsPage(QWidget):
             return None, {}
         d = it.data(Qt.UserRole)
         return Path(d), self.reports.get(d, {})
+
+    @staticmethod
+    def relocate(d: Path, rep: dict) -> dict:
+        """Reports keep absolute paths: after the data folder moved (1.x 2D2VR180 → 2D2VR) point them into
+        this job folder again."""
+        def fix(v):
+            if isinstance(v, str) and d.name in Path(v).parts and not Path(v).exists():
+                parts = Path(v).parts
+                return str(d.joinpath(*parts[parts.index(d.name) + 1:]))
+            return v
+
+        out = rep.get("outputs")
+        if isinstance(out, dict):
+            rep["outputs"] = {k: fix(v) for k, v in out.items()}
+        return rep
 
     def show_item(self, *a):
         d, rep = self._current()

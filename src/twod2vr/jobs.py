@@ -208,6 +208,10 @@ class JobRunner:
             self._hw = hw
             report["hardware"] = hw.to_dict()
             self._memory_check(report, log, warnings)
+            ensure = getattr(self.ctx.runtimes, "ensure_working", None)
+            if ensure is not None:          # repair engines whose folder moved (1.x -> 2.0 data folder rename)
+                for rid in list(getattr(self.ctx.runtimes, "specs", {})):
+                    ensure(rid, log)
             stage("hardware")
 
             # ---------------------------------------------------- ingest

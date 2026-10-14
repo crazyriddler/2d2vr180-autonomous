@@ -1,3 +1,22 @@
+# 2D2VR 2.0.0-rc2 — the engines work again after the folder rename
+
+Owner report on rc1: a video job failed at once with "uv trampoline failed to spawn Python child process".
+
+- **Cause**: 2.0 renames the data folder from `%LOCALAPPDATA%\2D2VR180` to `%LOCALAPPDATA%\2D2VR`. Each
+  engine's `python.exe` is a small uv launcher holding the absolute path of its base Python, which was still
+  under the old folder.
+- **Fix**: when the app starts (and before every job) it checks that each installed engine starts. One that
+  does not is repaired in place in a few seconds, with nothing downloaded and its packages kept:
+  - uv's Python version links are pointed at the new folder;
+  - the engine's launcher is rewritten for the new path.
+  - If an engine still cannot start, Components shows it as not installed, and installing it again also
+    repairs it.
+- Results made by 1.x open again from the Results page: their files are found in the renamed folder.
+
+Everything else is as in rc1 below.
+
+---
+
 # 2D2VR 2.0.0-rc1 — the reform: Real 3D photos and splat videos
 
 2D2VR180 becomes **2D2VR**. The app now does two things, both with the Real 3D method of rc58 (the one the

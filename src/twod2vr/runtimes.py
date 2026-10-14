@@ -62,10 +62,24 @@ def find_uv() -> str | None:
     return shutil.which("uv")
 
 
+def _is_junction(p: Path) -> bool:
+    """A Windows directory junction (Python 3.11 has no Path.is_junction)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import stat
+
+        st = os.lstat(p)
+        return bool(getattr(st, "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003))
+    except OSError:
+        return False
+
+
 class RuntimeManager:
     def __init__(self, root: Path | None = None, specs: dict[str, RuntimeSpec] | None = None):
         self.root = Path(root) if root else app_paths().runtimes
         self.specs = specs if specs is not None else load_runtime_manifest()
+        self._checked: dict[str, bool] = {}       # runtime -> starts (checked once per process)
 
     def env_dir(self, rid: str) -> Path:
         return self.root / rid
@@ -79,7 +93,7 @@ class RuntimeManager:
 
     def is_installed(self, rid: str) -> bool:
         m = self._marker(rid)
-        if not (m.exists() and self.python(rid).exists()):
+        if not (m.exists() and self.python(rid).exists()) or self._checked.get(rid) is False:
             return False
         try:
             rec = json.loads(m.read_text())
@@ -153,12 +167,7 @@ class RuntimeManager:
             raise RuntimeInstallError("The bundled 'uv' tool is missing; reinstall 2D2VR.")
         d = self.env_dir(rid)
         d.mkdir(parents=True, exist_ok=True)
-        env = dict(os.environ)
-        env["UV_CACHE_DIR"] = str(self.root / "_uv-cache")
-        env["UV_PYTHON_INSTALL_DIR"] = str(self.root / "_python")
-        env["UV_PYTHON_PREFERENCE"] = "only-managed"
-        env["UV_PYTHON_BIN_DIR"] = str(self.root / "_python" / "bin")  # keep shims out of the user's PATH dirs
-        env.pop("VIRTUAL_ENV", None)
+        env = self._uv_env()
         venv = d / "venv"
 
         def run(args: list[str]) -> None:
@@ -175,8 +184,12 @@ class RuntimeManager:
                 raise RuntimeInstallError(f"Command failed ({proc.returncode}): {' '.join(args[:4])} ...")
 
         run([uv, "python", "install", spec.python])
-        if not self.python(rid).exists():
-            run([uv, "venv", "--python", spec.python, str(venv)])
+        self._fix_python_links(log)
+        # --allow-existing keeps the installed packages and re-points the venv's interpreter (needed when the
+        # data folder moved: the venv's launcher holds the base interpreter's absolute path)
+        run([uv, "venv", "--allow-existing", "--python", str(self._managed_python(spec.python) or spec.python),
+             str(venv)])
+        self._checked.pop(rid, None)
         py = str(self.python(rid))
         idx = ["--index-url", spec.torch_index, "--extra-index-url", "https://pypi.org/simple",
                "--index-strategy", "unsafe-best-match"]
@@ -206,6 +219,105 @@ class RuntimeManager:
         if smoke and not smoke["ok"]:
             raise RuntimeInstallError(f"Runtime '{rid}' installed but its smoke test failed: "
                                 f"{smoke['stderr'].strip().splitlines()[-1:] or ['?']}")
+
+    # ------------------------------------------------------------ moved data folder
+    def _uv_env(self) -> dict[str, str]:
+        env = dict(os.environ)
+        env["UV_CACHE_DIR"] = str(self.root / "_uv-cache")
+        env["UV_PYTHON_INSTALL_DIR"] = str(self.root / "_python")
+        env["UV_PYTHON_PREFERENCE"] = "only-managed"
+        env["UV_PYTHON_BIN_DIR"] = str(self.root / "_python" / "bin")  # keep shims out of the user's PATH dirs
+        env.pop("VIRTUAL_ENV", None)
+        return env
+
+    def _managed_python(self, version: str) -> Path | None:
+        """The interpreter of the newest uv-managed CPython ``version`` (e.g. "3.12") in this data folder, from
+        its real installation folder (not a version link)."""
+        pyroot = self.root / "_python"
+        best = None
+        if not pyroot.is_dir():
+            return None
+        for d in pyroot.iterdir():
+            if not d.name.startswith(f"cpython-{version}.") or os.path.islink(d) or _is_junction(d):
+                continue
+            exe = d / ("python.exe" if sys.platform == "win32" else "bin/python3")
+            if exe.exists():
+                key = tuple(int(x) for x in d.name.split("-")[1].split("+")[0].split(".") if x.isdigit())
+                if best is None or key > best[0]:
+                    best = (key, exe)
+        return best[1] if best else None
+
+    def _fix_python_links(self, log: Callable[[str], None] | None = None) -> None:
+        """uv links e.g. cpython-3.12-windows-x86_64-none to the installed patch version with an absolute path
+        (a junction on Windows): after the data folder moved, point the broken links at the same folder name
+        here."""
+        pyroot = self.root / "_python"
+        if not pyroot.is_dir():
+            return
+        for link in pyroot.iterdir():
+            if link.exists() or not (os.path.islink(link) or _is_junction(link)):
+                continue
+            try:
+                target = pyroot / Path(os.readlink(link)).name
+            except OSError:
+                continue
+            if not target.exists():
+                continue
+            try:
+                if sys.platform == "win32":
+                    os.rmdir(link)                     # removes the junction itself, not its target
+                    import _winapi
+
+                    _winapi.CreateJunction(str(target), str(link))
+                else:
+                    link.unlink()
+                    os.symlink(target, link, target_is_directory=True)
+                if log:
+                    log(f"re-linked {link.name} -> {target}")
+            except OSError as e:
+                if log:
+                    log(f"could not re-link {link.name}: {e}")
+
+    def starts(self, rid: str) -> bool:
+        py = self.python(rid)
+        if not py.exists():
+            return False
+        try:
+            r = subprocess.run([str(py), "-c", "import sys, encodings"], capture_output=True, timeout=120,
+                               creationflags=_NO_WINDOW)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return r.returncode == 0
+
+    def ensure_working(self, rid: str, log: Callable[[str], None] | None = None) -> bool:
+        """Check once per process that an installed runtime's interpreter starts, and repair it when it does
+        not because the data folder moved (2.0 renamed %LOCALAPPDATA%\\2D2VR180 to 2D2VR): the venv's launcher
+        and uv's version links hold absolute paths. No download. A runtime that cannot be repaired is reported
+        as not installed, so Components offers to install it again."""
+        if rid in self._checked:
+            return self._checked[rid]
+        if not (self._marker(rid).exists() and os.path.lexists(self.python(rid))) or rid not in self.specs:
+            return False
+        ok = self.starts(rid)
+        if not ok:
+            if log:
+                log(f"engine '{rid}' does not start (its folder moved?); repairing it")
+            uv = find_uv()
+            if uv:
+                self._fix_python_links(log)
+                base = self._managed_python(self.specs[rid].python)
+                r = subprocess.run([uv, "venv", "--allow-existing", "--python",
+                                    str(base or self.specs[rid].python), str(self.env_dir(rid) / "venv")],
+                                   capture_output=True, text=True, errors="replace", env=self._uv_env(),
+                                   creationflags=_NO_WINDOW)
+                if log and r.returncode != 0:
+                    log(f"repair failed: {(r.stderr or r.stdout)[-400:]}")
+                ok = self.starts(rid)
+            if log:
+                log(f"engine '{rid}' " + ("repaired" if ok else "could not be repaired: install it again in "
+                                                                "Components"))
+        self._checked[rid] = ok
+        return ok
 
     def _copy_package(self, py: str, archive: dict, log, cancel) -> None:
         """Install a pure-Python package straight from a commit archive, for upstream projects

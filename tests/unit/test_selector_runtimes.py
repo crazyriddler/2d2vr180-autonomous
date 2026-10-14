@@ -100,3 +100,42 @@ def test_copy_package_installs_subpackages_from_archive(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", real_run)
     assert (site / "seva" / "modules" / "layers.py").read_text() == "X = 1\n"
     assert not (site / "demo.py").exists() and not (site / "third_party").exists()
+
+
+def test_moved_data_folder_relinks_uv_python(tmp_path):
+    """2.0 renamed the data folder (2D2VR180 -> 2D2VR): uv's version links point to the old place."""
+    import os
+    import sys
+
+    import pytest
+
+    from twod2vr.runtimes import RuntimeManager, load_runtime_manifest
+
+    if sys.platform == "win32":
+        pytest.skip("symlink variant of the check (Windows uses junctions)")
+    old, new = tmp_path / "2D2VR180" / "runtimes", tmp_path / "2D2VR" / "runtimes"
+    real = old / "_python" / "cpython-3.12.11-linux-x86_64-gnu"
+    (real / "bin").mkdir(parents=True)
+    (real / "bin" / "python3").write_text("")
+    (old / "_python" / "cpython-3.11.9-linux-x86_64-gnu" / "bin").mkdir(parents=True)
+    (old / "_python" / "cpython-3.11.9-linux-x86_64-gnu" / "bin" / "python3").write_text("")
+    os.symlink(real, old / "_python" / "cpython-3.12-linux-x86_64-gnu")
+    old.parent.rename(new.parent)
+    rm = RuntimeManager(new, load_runtime_manifest())
+    link = new / "_python" / "cpython-3.12-linux-x86_64-gnu"
+    assert not link.exists()                                   # broken by the move
+    rm._fix_python_links()
+    assert link.exists() and os.readlink(link) == str(new / "_python" / real.name)
+    assert rm._managed_python("3.12") == new / "_python" / real.name / "bin" / "python3"
+    assert rm.ensure_working("photo-cu128") is False           # not installed: nothing to check
+
+
+def test_results_of_a_moved_data_folder_point_into_the_job(tmp_path):
+    from twod2vr.gui.pages import ResultsPage
+
+    d = tmp_path / "2D2VR" / "jobs" / "20261001-120000-abcdef"
+    (d / "export").mkdir(parents=True)
+    (d / "export" / "scene.ply").write_text("x")
+    old = str(tmp_path / "2D2VR180" / "jobs" / d.name / "export" / "scene.ply")
+    rep = ResultsPage.relocate(d, {"outputs": {"scene_ply": old, "gaussians": 5, "splat": None}})
+    assert rep["outputs"] == {"scene_ply": str(d / "export" / "scene.ply"), "gaussians": 5, "splat": None}

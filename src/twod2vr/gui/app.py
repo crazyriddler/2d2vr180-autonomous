@@ -175,6 +175,10 @@ class MainWindow(QMainWindow):
         from ..hardware import probe
 
         self.hw = probe()
+        ensure = getattr(self.ctx.runtimes, "ensure_working", None)
+        if ensure is not None:           # engines whose folder moved (1.x data folder renamed): repair them
+            for rid in list(getattr(self.ctx.runtimes, "specs", {})):
+                ensure(rid, lambda m: self.statusBar().showMessage(m))
         self._components_changed()
         if not self.settings.setup_completed:
             QTimer.singleShot(50, self.first_run)
