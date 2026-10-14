@@ -21,8 +21,14 @@ HF_REPOS = [
     "microsoft/TRELLIS.2-4B", "microsoft/TRELLIS-image-large", "Qwen/Qwen-Image-2.1",
     # rc48: MoGe-3 (finer monocular geometry)
     "Ruicheng/moge-3-vitl", "Ruicheng/moge-3-vitg",
+    # rc58: Sapiens2 human geometry (pointmaps, normals) for people in Real 3D
+    "facebook/sapiens2-pointmap-1b", "facebook/sapiens2-pointmap-0.8b", "facebook/sapiens2-pointmap-0.4b",
+    "facebook/sapiens2-normal-1b", "facebook/sapiens2-seg-1b", "facebook/sapiens2-seg-0.4b",
 ]
-HF_SEARCH = ["Qwen-Image-Edit-2511 gguf", "Qwen-Image-Edit-2511-Multiple-Angles", "Qwen-Image-2.1",
+SAFETENSORS_HEADERS = [  # tensor names/shapes/dtypes of safetensors files (header only, not downloaded)
+    "facebook/sapiens2-pointmap-1b", "facebook/sapiens2-seg-0.4b", "facebook/sapiens2-seg-1b",
+]
+HF_SEARCH = ["sapiens2", "Qwen-Image-Edit-2511 gguf", "Qwen-Image-Edit-2511-Multiple-Angles", "Qwen-Image-2.1",
              "Qwen-Image-2.1 Multiple-Angles", "TRELLIS.2"]
 GGUF_HEADERS = [  # tensor names of GGUF files (read from the first MiBs, not downloaded)
     "unsloth/Qwen-Image-Edit-2511-GGUF/qwen-image-edit-2511-Q5_K_M.gguf",
@@ -33,6 +39,7 @@ HF_TEXT = [  # small files whose content is needed (configs, model cards)
     "microsoft/TRELLIS.2-4B/pipeline.json", "microsoft/TRELLIS.2-4B/README.md",
     "microsoft/TRELLIS-image-large/pipeline.json", "Qwen/Qwen-Image-2.1/README.md",
     "Qwen/Qwen-Image-2.1/model_index.json", "Ruicheng/moge-3-vitl/README.md",
+    "facebook/sapiens2-pointmap-1b/README.md", "facebook/sapiens2-seg-0.4b/README.md",
 ]
 URLS: list[str] = [  # non-HF downloads: hashed by streaming
     # TRELLIS.2 Windows fork (MIT): DINOv3 image encoder and RMBG-2.0 background removal it ships
@@ -97,6 +104,25 @@ def gguf_tensor_names(url: str, nbytes: int = 16 << 20) -> dict:
             "first": names[:40], "last": names[-15:]}
 
 
+def safetensors_header(url: str) -> dict:
+    """The JSON header of a safetensors file (8-byte length + JSON), via two range requests."""
+    import struct
+
+    def rng(a, b):
+        req = urllib.request.Request(url, headers={"User-Agent": "2D2VR180-resolver", "Range": f"bytes={a}-{b}"})
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return r.read()
+
+    n = struct.unpack("<Q", rng(0, 7)[:8])[0]
+    hdr = json.loads(rng(8, 8 + n - 1).decode("utf-8"))
+    meta = hdr.pop("__metadata__", None)
+    keys = sorted(hdr)
+    dtypes = sorted({v["dtype"] for v in hdr.values()})
+    return {"tensors": len(keys), "dtypes": dtypes, "metadata": meta, "first": keys[:25], "last": keys[-25:],
+            "shapes": {k: hdr[k]["shape"] for k in keys if not k.split(".")[-1].isdigit()
+                       and ("decode_head" in k or "head" in k or "patch_embed" in k)}}
+
+
 def main() -> int:
     out = {"hf": {}, "urls": {}}
     for repo in HF_REPOS:
@@ -138,6 +164,15 @@ def main() -> int:
             out["gguf"][spec] = gguf_tensor_names(f"https://huggingface.co/{org}/{name}/resolve/main/{path}")
         except Exception as e:  # noqa: BLE001
             out["gguf"][spec] = {"error": f"{type(e).__name__}: {e}"}
+    out["safetensors"] = {}
+    for repo in SAFETENSORS_HEADERS:
+        files = (out["hf"].get(repo) or {}).get("files") or {}
+        for f in [f for f in files if f.endswith(".safetensors")][:2]:
+            try:
+                out["safetensors"][f"{repo}/{f}"] = safetensors_header(
+                    f"https://huggingface.co/{repo}/resolve/main/{urllib.parse.quote(f)}")
+            except Exception as e:  # noqa: BLE001
+                out["safetensors"][f"{repo}/{f}"] = {"error": f"{type(e).__name__}: {e}"}
     for url in URLS:
         try:
             h = hashlib.sha256()
