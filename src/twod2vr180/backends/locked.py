@@ -40,6 +40,8 @@ from .base import (SCENE_STATIC, SINGLE_VIEW, Availability, Backend, BackendCont
 
 MOGE_MODELS = ("moge-3-vitl", "moge-2-vitl-normal")     # first installed wins
 FACE_MODEL = "yunet-face"
+HUMAN_SEG = "sapiens2-seg-0.4b"            # rc58: people's outline and 3D shape (Sapiens2)
+HUMAN_POINTMAP = "sapiens2-pointmap-1b"
 SHEET_VIEWS = [("head 15 cm left", "move", (-0.15, 0, 0)), ("head 15 cm right", "move", (0.15, 0, 0)),
                ("head 10 cm up", "move", (0, -0.10, 0)), ("15° left", "orbit", (-15, 0)), ("15° right", "orbit", (15, 0))]
 # Moved cameras whose holes are filled, small moves first (an earlier view's content wins where they overlap).
@@ -213,13 +215,22 @@ class LockedPhotoBackend(Backend):
         used(mg)
 
         # 2-3. scale check and SHARP with the measured depth
-        face = None
-        if FACE_MODEL in ctx.models.entries and ctx.models.is_installed(FACE_MODEL):
-            face = str(next(iter(ctx.models.paths(FACE_MODEL).values())))
-            used(FACE_MODEL)
+        def installed_file(mid):
+            if mid in ctx.models.entries and ctx.models.is_installed(mid):
+                used(mid)
+                return str(next(iter(ctx.models.paths(mid).values())))
+            return None
+
+        face = installed_file(FACE_MODEL)
+        human_seg, human_pm = installed_file(HUMAN_SEG), installed_file(HUMAN_POINTMAP)
+        if not (human_seg and human_pm):
+            human_seg = human_pm = None
+            log("people's own 3D shape needs Sapiens2 (Components); the scene's depth is used for them")
+        ipd = float(options.get("ipd_mm") or 63.0)
         out = run_worker(py, self.worker_script,
                          {"mode": "photo", "checkpoint": str(ctx.models.paths("sharp")["sharp_2572gikvuh.pt"]),
                           "geometry": item["out"], "output_dir": str(work), "face_model": face, "plain": True,
+                          "ipd_target_m": ipd / 1000.0, "human_seg": human_seg, "human_pointmap": human_pm,
                           "allow_cpu": bool(getattr(ctx, "allow_cpu", False))},
                          inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.25, 0.45),
                          timeout_s=1800)
@@ -233,8 +244,13 @@ class LockedPhotoBackend(Backend):
             scene.cameras = [Camera(w, h, res["f_px"], res["f_px"], w / 2, h / 2)]
         exp = inp.work_dir / "export"
         cam = scene.cameras[0]
+        extra_people = {}
+        if (res.get("people") or {}).get("sheet") and Path(res["people"]["sheet"]).exists():
+            exp.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(res["people"]["sheet"], exp / "people_shape.png")
+            extra_people["people_shape"] = str(exp / "people_shape.png")
         locked_ply = write_gaussian_ply(scene, work / "locked_scene.ply", include_provenance=True)
-        extra_files, fill_report, final = {}, [], scene
+        extra_files, fill_report, final = dict(extra_people), [], scene
         warnings = ["OBJ mesh is not available for SHARP output."]
 
         # 5-8. fill the holes of moved views
@@ -279,9 +295,12 @@ class LockedPhotoBackend(Backend):
             log(f"views sheet skipped: {e}")
         progress(1.0, "done")
         (work / "summary.json").write_text(json.dumps({k: v for k, v in res.items() if k != "outputs"}, indent=2))
-        if res.get("faces"):
-            warnings.append(f"Scale checked on {len(res['faces'])} face(s)"
-                            + (f", corrected ×{res['face_scale']:.3f}." if res.get("face_scale", 1.0) != 1.0 else "."))
+        if res.get("scale_from") == "eye distance":
+            warnings.append(f"Real-world scale set from the eyes of {len(res['faces'])} face(s) "
+                            f"({res.get('ipd_target_m', 0.063) * 1000:.1f} mm apart): ×{res.get('scale', 1.0):.3f}.")
+        elif res.get("scale_from") == "human model":
+            warnings.append(f"Real-world scale set from the human model's distance of the people: "
+                            f"×{res.get('scale', 1.0):.3f}.")
         added_n = int((final.provenance == GENERATIVE).sum())
         return BackendResult(
             backend=self.id, scene_ply=ply, splat=splat, obj=None, cameras=[cam.to_dict()], metric_scale=True,
@@ -294,6 +313,8 @@ class LockedPhotoBackend(Backend):
             extra={"gaussians": len(final), "assembly": "locked", "trajectory": "tri", "added_splats": added_n,
                    "sharp_own_scale": res.get("sharp_own_scale"), "depth_coverage": res.get("depth_coverage"),
                    "faces": res.get("faces") or [], "face_scale": res.get("face_scale", 1.0),
+                   "scale": res.get("scale", 1.0), "scale_from": res.get("scale_from"),
+                   "ipd_target_mm": round(res.get("ipd_target_m", 0.063) * 1000, 1), "people": res.get("people"),
                    "hfov_used_deg": float(np.degrees(2 * np.arctan(res["size"][0] / 2 / res["f_px"]))),
                    "fill": fill_report, "files": extra_files})
 

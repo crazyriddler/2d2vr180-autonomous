@@ -102,6 +102,22 @@
    "integration": "backend 'sharp' (Quick 3D); Real 3D 'the photo locked' (rc56, workers/sharp_depth_worker.py): RGBGaussianPredictor.forward(image, disparity_factor, depth=MoGe metric depth) - the released LearnedAlignment UNet aligns SHARP's depth to the measured one; the AI-views method (rc55) joins SHARP on the photo and 3 Qwen views (fusion.py); research profile only; user downloads weights after accepting the Apple license"
   },
   {
+   "name": "sapiens2",
+   "url": "https://github.com/facebookresearch/sapiens2",
+   "role": "human_geometry",
+   "commit": "7e5bae88456ac418ff0e58e74106c9fe192055d4",
+   "commit_date": "2026-10-14",
+   "code_license": "Sapiens2 License (LICENSE.md, copy in workers/LICENSE-sapiens2.md)",
+   "model_license": "Sapiens2 License (Hugging Face: license other / sapiens2-license; not gated)",
+   "category": "local-user-only",
+   "windows": "plain PyTorch; only the zero-dependency backbone is vendored (workers/sapiens2_backbone.py)",
+   "vram": "pointmap 1B ~3 GB bf16, seg 0.4B ~1 GB",
+   "entry_point": "workers/human_geometry.py: Sapiens2 backbone + inference-only copies of sapiens.dense PointmapHead / SegHead (outputs checked identical to the originals on the same weights)",
+   "model_url": "https://huggingface.co/facebook/sapiens2-pointmap-1b ; https://huggingface.co/facebook/sapiens2-seg-0.4b",
+   "gpu_smoke_test": "not run",
+   "integration": "Real 3D 'the photo locked' (rc58): people's outline (seg) and 3D shape (pointmap, canonical focal 768 converted with the photo's real lens) fused into MoGe's depth inside the people; their distance is a real-world scale cue when no face is found"
+  },
+  {
    "name": "longsplat",
    "url": "https://github.com/NVlabs/LongSplat",
    "role": "long_video_3dgs",

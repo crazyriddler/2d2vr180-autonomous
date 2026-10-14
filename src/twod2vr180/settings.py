@@ -35,6 +35,7 @@ class Settings:
     gen_engine: str = "auto"                     # auto | qwen | wan
     real3d_method: str = "locked"                # locked | views | train
     real3d_fill: bool = True                     # locked: AI-paint what the photo hides
+    ipd_mm: float = 63.0                         # Real 3D: adults' eye distance used for the real-world scale
     combine_photos: bool = True                  # several photos dropped together → one multi-view scene
     ai_hole_fill: bool = True                    # LaMa inpainting of VR180 disocclusions
     video_seconds: float = 0.0                   # 4D video: seconds used (0 = by quality: 8 / 12 / 15)
@@ -67,6 +68,10 @@ class Settings:
             self.gen_engine = "auto"
         if self.real3d_method not in ("locked", "views", "train"):
             self.real3d_method = "locked"
+        try:
+            self.ipd_mm = float(min(max(float(self.ipd_mm), 45.0), 80.0))
+        except (TypeError, ValueError):
+            self.ipd_mm = 63.0
         self.video_seconds = float(min(max(self.video_seconds, 0.0), 120.0))
         self.video_fps = float(min(max(self.video_fps, 0.0), 30.0))
         if self.projection not in ("equirect180", "flat"):
@@ -94,6 +99,7 @@ class Settings:
                        output_dir=self.output_dir or None, fill_holes=self.fill_holes, renderer=self.renderer,
                        allow_cpu=self.allow_cpu, generative=self.generative,
                        gen_engine=self.gen_engine, real3d_method=self.real3d_method, real3d_fill=self.real3d_fill,
+                       ipd_mm=self.ipd_mm,
                        ai_hole_fill=self.ai_hole_fill,
                        video_seconds=self.video_seconds, video_fps=self.video_fps)
         for k, v in overrides.items():

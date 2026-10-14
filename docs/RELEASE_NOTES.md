@@ -1,3 +1,54 @@
+# 2D2VR180 1.0.0-rc58 — Real 3D: people at their real size and with their real shape
+
+Owner verdict on rc57: the best so far in speed and quality by far, but:
+- people come out bigger than they are;
+- noses are flattened and fine geometry is missed.
+
+## Real-world scale is always calibrated
+
+- **What was wrong.** rc56/rc57 only corrected the scale when the eyes measured outside 56-70 mm. So a
+  person measured at, say, 68 mm stayed about 8 % too big.
+- **Now the scale is always set.** The median eye distance of the faces found is brought to a target
+  distance, 63 mm by default (the adult average).
+- **The target is a setting.** Advanced → *Eye distance for real scale*, or `--ipd-mm` on the CLI.
+  - Lower it if people still look too big in VR. The whole scene shrinks in proportion: 56 mm makes
+    everything 11 % smaller than 63 mm.
+  - Raise it if they look too small.
+- **No face?** Then the people's distance from the human model below sets the scale.
+- The report says which cue was used: `backend.extra.scale_from`, `scale`, `ipd_target_mm`.
+
+## People's real 3D shape: Sapiens2
+
+- **Why noses came out flat.** General depth models (MoGe) flatten people: noses, chins, the sides of the
+  face.
+- **The model.** Meta's Sapiens2 (ICLR 2026) is trained only on people: a billion human images, plus
+  synthetic scans for 3D. Its pointmap model predicts the 3D position of every pixel of a person,
+  including the fine relief of faces.
+- **How it is used.** Real 3D now:
+  1. finds the people (Sapiens2 body-part segmentation);
+  2. predicts their 3D on a crop around them at the network's full 1024×768;
+  3. converts that 3D with the photo's real lens;
+  4. puts that shape into the scene's depth inside each person's outline, blended over a few pixels at
+     the edge. The person keeps the scene's distance; only the shape changes.
+- **Its distance is also a scale cue.** How far the scene puts the people, compared with the human model,
+  is logged as `scene_vs_human_distance`.
+- **New picture `people_shape.png`.** Next to the result: the photo crop, the shaded relief before (MoGe)
+  and after (Sapiens2). You can see whether the nose and face gained depth.
+- **Footprint.** Two models, both recommended, so *Install recommended* installs them:
+  - Sapiens2-1B Pointmap, 6.5 GB;
+  - Sapiens2-0.4B segmentation, 1.6 GB.
+
+  Both are under Meta's Sapiens2 licence, and both run locally.
+- **How it was built.** Only Sapiens2's dependency-free backbone file is included in the app. The two
+  small output heads are inference-only copies with the original weight names. Their outputs were checked
+  to be identical to Meta's code on the same weights.
+
+## On using extra AI views for geometry
+
+AI-drawn views at slightly different angles are not geometrically true. Every earlier attempt to measure
+geometry from them (rc19-rc55) made the 3D worse. A model trained on real 3D people is the reliable way to
+get their shape, so that is what rc58 uses.
+
 # 2D2VR180 1.0.0-rc57 — Real 3D v3, step 2: what the photo hides, filled consistently
 
 rc56 locked the photo: Apple SHARP aligned to the measured depth at the real lens. rc57 adds what the photo

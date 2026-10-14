@@ -31,10 +31,17 @@ COMPONENTS: list[Component] = [
               "multi-view engine its real-world scale.", True, ("engine-photo",)),
     Component("model-moge3", "MoGe-3 Large — the photo's geometry for Real 3D", "model", "moge-3-vitl",
               "Sharper depth, field of view and real-world scale of your photo for Real 3D (MIT). Without it "
-              "Real 3D uses MoGe-2.", True, ("engine-photo", "model-sharp", "model-face")),
+              "Real 3D uses MoGe-2.", True, ("engine-photo", "model-sharp", "model-face", "model-sapiens-pointmap")),
     Component("model-face", "YuNet face finder — real-world scale check for Real 3D", "model", "yunet-face",
               "Finds the eyes of the people in your photo so Real 3D can check its depth against the real eye "
               "distance of adults (MIT, 0.2 MB, runs on the CPU).", True, ("engine-photo",)),
+    Component("model-sapiens-seg", "Sapiens2 body parts — where the people are (for Real 3D)", "model",
+              "sapiens2-seg-0.4b", "Finds the people in your photo so their own 3D shape can be used (Meta Sapiens2, "
+              "1.6 GB).", True, ("engine-photo",)),
+    Component("model-sapiens-pointmap", "Sapiens2 3D shape of people — real noses and faces in Real 3D", "model",
+              "sapiens2-pointmap-1b", "People's 3D shape from a model trained only on humans (Meta Sapiens2, ICLR 2026): "
+              "faces, noses and bodies keep their real relief instead of coming out flat, and their distance helps "
+              "set the real-world scale. 6.5 GB.", True, ("engine-photo", "model-sapiens-seg")),
     Component("model-moge-s", "MoGe-2 Small — fast metric depth", "model", "moge-2-vits-normal",
               "Fast mode for photos.", True, ("engine-photo",)),
     Component("model-da2", "Depth-Anything-V2 Small — commercial-safe depth", "model", "depth-anything-v2-small",

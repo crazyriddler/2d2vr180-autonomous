@@ -9,9 +9,14 @@ it; this worker does, with MoGe's metric depth of the photo at the photo's real 
 Request (mode "photo"):
   {"mode": "photo", "checkpoint": ".../sharp_2572gikvuh.pt", "geometry": ".../photo.npz" (moge_worker output:
    points, mask, intrinsics, image), "output_dir": "...", "face_model": ".../yunet.onnx" | null,
-   "ipd_range_m": [0.056, 0.070], "plain": true, "allow_cpu": false}
+   "ipd_target_m": 0.063, "human_seg": ".../sapiens2_0.4b_seg.safetensors" | null,
+   "human_pointmap": ".../sapiens2_1b_pointmap.safetensors" | null, "plain": true, "allow_cpu": false}
 Writes output_dir/locked.ply (SHARP PLY with metadata) and, with "plain", output_dir/plain.ply (SHARP alone,
-for comparison). Result: scale diagnostics (how far SHARP's own depth was from MoGe's, the face check).
+for comparison). Result: scale diagnostics (how far SHARP's own depth was from MoGe's, the scale used).
+
+rc58: people's shape from Sapiens2 (human_geometry.py) inside their outline, and the real-world scale always
+calibrated - to the adult eye distance (ipd_target_m) when faces are found, else to the human model's
+distance of the people.
 
 Request (mode "fill", rc57): new content for the holes a moved camera sees, tied to the known geometry:
   {"mode": "fill", "checkpoint": "...", "moge_path": ".../model.pt", "moge_version": "v3" | "v2",
@@ -31,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
 INTERNAL = 1536               # SHARP's working resolution (square)
-IPD_RANGE_M = (0.056, 0.070)  # adult interpupillary distance, ~5th-95th percentile
+IPD_TARGET_M = 0.063          # adult interpupillary distance, population median (women ~62, men ~64 mm)
 
 
 def eye_distances(img, points, model_path, min_face_px=40):
@@ -60,8 +65,9 @@ def eye_distances(img, points, model_path, min_face_px=40):
     return out
 
 
-def face_scale(faces, ipd_range=IPD_RANGE_M):
-    """Factor that brings the median eye distance into the adult range (1.0 when already inside it)."""
+def face_scale(faces, target=IPD_TARGET_M):
+    """Factor that brings the median eye distance of the faces to ``target`` metres (rc58: always, not only
+    outside a range - owner: people always came out too big). 1.0 without faces; never more than 2x."""
     import numpy as np
 
     if not faces:
@@ -69,8 +75,71 @@ def face_scale(faces, ipd_range=IPD_RANGE_M):
     ipd = float(np.median([f["ipd"] for f in faces]))
     if ipd <= 0:
         return 1.0
-    target = min(max(ipd, ipd_range[0]), ipd_range[1])
     return float(min(max(target / ipd, 0.5), 2.0))
+
+
+def shade(depth, f_px):
+    """Grey shaded relief of a depth map (light from the camera's upper left): shapes such as a nose
+    show up clearly, to compare two depths of the same picture."""
+    import numpy as np
+
+    z = np.where(np.isfinite(depth), depth, np.nan)
+    gy, gx = np.gradient(z)
+    zz = np.where(np.isfinite(z), z, 1.0)
+    n = np.stack([-gx * f_px / zz, -gy * f_px / zz, np.ones_like(zz)], -1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True) + 1e-9
+    light = np.array([-0.4, -0.5, 0.77])
+    light /= np.linalg.norm(light)
+    v = np.clip(n @ light, 0, 1)
+    return (np.where(np.isfinite(z), 40 + 215 * v, 0)).astype(np.uint8)
+
+
+def people_geometry(req, img, points, valid, f_px, device, torch):
+    """Sapiens2's shape of the people put into MoGe's depth. Returns (points, report or None)."""
+    import numpy as np
+
+    import human_geometry as hg
+
+    progress(0.05, "finding the people (Sapiens2)")
+    net, arch = hg.load(req["human_seg"], "seg", device, torch)
+    people = hg.people_mask(net, img, torch, device)
+    del net
+    torch.cuda.empty_cache() if device.type == "cuda" else None
+    box = hg.crop_box(people)
+    if box is None:
+        log("no person found: the scene's own depth is used")
+        return points, None
+    progress(0.12, "people's 3D shape (Sapiens2)")
+    net, arch = hg.load(req["human_pointmap"], "pointmap", device, torch)
+    d_crop, own_f = hg.pointmap_depth(net, img, box, f_px, torch, device)
+    del net
+    torch.cuda.empty_cache() if device.type == "cuda" else None
+    y0, y1, x0, x1 = box
+    human = np.full(img.shape[:2], np.nan)
+    human[y0:y1, x0:x1] = d_crop
+    z = points[..., 2]
+    fused, ratio = hg.fuse_people(np.where(valid, z, np.nan), valid, human, people)
+    if ratio is None:
+        log("the people are too small in the picture for their own 3D shape")
+        return points, None
+    k = np.where(valid & np.isfinite(fused) & (z > 0), fused / np.where(z > 0, z, 1.0), 1.0)
+    out = points * k[..., None]
+    rep = {"people_fraction": round(float(people.mean()), 4), "box": [int(v) for v in box],
+           "scene_vs_human_distance": round(ratio, 4), "human_model": arch,
+           "human_model_lens_px": round(own_f, 1), "lens_px": round(f_px, 1)}
+    log(f"people's shape from Sapiens2 ({people.mean():.0%} of the picture); the scene's depth put them "
+        f"{ratio:.3f}x as far as the human model does")
+    try:
+        from PIL import Image
+
+        a = shade(z[y0:y1, x0:x1] * np.where(people[y0:y1, x0:x1], 1, np.nan), f_px)
+        b = shade(out[y0:y1, x0:x1, 2] * np.where(people[y0:y1, x0:x1], 1, np.nan), f_px)
+        sheet = np.concatenate([img[y0:y1, x0:x1], np.repeat(a[..., None], 3, -1), np.repeat(b[..., None], 3, -1)], 1)
+        Image.fromarray(sheet).save(os.path.join(req["output_dir"], "people_shape.png"))
+        rep["sheet"] = os.path.join(req["output_dir"], "people_shape.png")
+    except Exception as e:  # noqa: BLE001 - a diagnostic
+        log(f"people shape picture skipped: {e}")
+    return out, rep
 
 
 def target_depth(z, valid, mono, torch):
@@ -256,20 +325,40 @@ def main(req):
     log(f"the photo's lens: {np.degrees(2 * np.arctan(w / 2 / f_px)):.1f}° horizontal field of view; "
         f"MoGe depth on {valid.mean():.0%} of the pixels")
 
-    # ---- real-world scale check: the distance between the eyes of the people in the photo
+    # ---- people's own 3D shape (Sapiens2)
+    people = None
+    if req.get("human_seg") and req.get("human_pointmap"):
+        try:
+            points, people = people_geometry(req, img, points, valid, f_px, device, torch)
+        except Exception as e:  # noqa: BLE001 - an improvement, not a requirement
+            log(f"people's 3D shape unavailable ({type(e).__name__}: {str(e)[:300]}); the scene's depth is used")
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+
+    # ---- real-world scale: the distance between the eyes of the people, else the human model's distance
     faces, s_face = [], 1.0
+    target = float(req.get("ipd_target_m") or IPD_TARGET_M)
     if req.get("face_model") and os.path.exists(req["face_model"]):
         try:
             faces = eye_distances(img, points, req["face_model"])
-            s_face = face_scale(faces, tuple(req.get("ipd_range_m") or IPD_RANGE_M))
+            s_face = face_scale(faces, target)
             if faces:
-                log("eye distance of the faces found: " + ", ".join(f"{f['ipd'] * 1000:.0f} mm" for f in faces) +
-                    (f"; scale corrected by {s_face:.3f}" if s_face != 1.0 else "; scale confirmed"))
+                log("eye distance of the faces found: " + ", ".join(f"{f['ipd'] * 1000:.1f} mm" for f in faces) +
+                    f"; scale x{s_face:.3f} to bring them to {target * 1000:.1f} mm")
             else:
                 log("no face found for the scale check")
         except Exception as e:  # noqa: BLE001 - a check, not a requirement
             log(f"face scale check unavailable: {e}")
-    points = points * s_face
+    scale, scale_from = 1.0, "measured depth"
+    if faces:
+        scale, scale_from = s_face, "eye distance"
+        if people:
+            hs = 1.0 / people["scene_vs_human_distance"]
+            log(f"cross-check: the human model would scale x{hs:.3f}")
+    elif people:
+        scale, scale_from = float(min(max(1.0 / people["scene_vs_human_distance"], 0.5), 2.0)), "human model"
+        log(f"no face for the eye check: scale x{scale:.3f} from the human model's distance of the people")
+    points = points * scale
     depth = np.where(valid, points[..., 2], np.nan)
 
     progress(0.2, "loading SHARP")
@@ -287,7 +376,8 @@ def main(req):
         save_ply(g2, f_px, (h, w), outputs["plain"])
     progress(1.0, "done")
     emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), f_px=f_px, size=[w, h],
-         faces=faces, face_scale=s_face, **info)
+         faces=faces, face_scale=s_face, scale=scale, scale_from=scale_from, ipd_target_m=target, people=people,
+         **info)
 
 
 if __name__ == "__main__":

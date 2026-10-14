@@ -278,6 +278,17 @@ class CreatePage(QWidget):
                                     "tied to the photo's. Shown as 'generative'.")
         self.real3d_fill.toggled.connect(self._save_opts)
         gf.addRow("", self.real3d_fill)
+        self.ipd = QDoubleSpinBox()
+        self.ipd.setRange(45.0, 80.0)
+        self.ipd.setDecimals(1)
+        self.ipd.setSingleStep(1.0)
+        self.ipd.setSuffix(" mm")
+        self.ipd.setValue(float(win.settings.ipd_mm))
+        self.ipd.setToolTip("Real 3D sets the real-world size of the scene from the eyes of the people in the "
+                            "photo: they are scaled to be this far apart (adults 56-70 mm, average 63). If people "
+                            "look too big in VR, lower it; too small, raise it.")
+        self.ipd.valueChanged.connect(self._save_opts)
+        gf.addRow("Eye distance for real scale", self.ipd)
         self.engine = QComboBox()
         for label, val in (("Automatic — Qwen-Image-Edit if installed, otherwise Wan 2.2", "auto"),
                            ("Qwen-Image-Edit — sharp ~1 MP image per angle (recommended)", "qwen"),
@@ -470,6 +481,7 @@ class CreatePage(QWidget):
         s.gen_engine = self.engine.currentData()
         s.real3d_method = self.real3d_method.currentData()
         s.real3d_fill = self.real3d_fill.isChecked()
+        s.ipd_mm = float(self.ipd.value())
         s.video_seconds = float(self.video_len.currentData())
         s.video_fps = float(self.video_fps.currentData())
         s.combine_photos = self.combine.isChecked()

@@ -16,6 +16,8 @@ Legend: ✅ done and tested here · 🟡 implemented, not verified on target har
   eye-distance scale check, A/B export + views sheet (`backends/locked.py`, `workers/sharp_depth_worker.py`).
   rc57: holes of moved views (what the photo never saw) painted by Qwen/LaMa, depth tied to the scene,
   SHARP with composite depth, only hole splats added (`fusion.unseen_by_photo`, `fusion.add_fills`).
+- 🟡 rc58: scale always calibrated to the eye distance (setting, default 63 mm; human-model fallback); people's
+  3D shape from Sapiens2 pointmap + seg fused into MoGe depth (`workers/human_geometry.py`, vendored backbone)
 - 🟡 Real 3D AI views joined (rc55, now an option): 3 Qwen views (one attempt each) + SHARP on the photo and each view, joined by
   `fusion.py` (VGGT poses or requested orbit, coloured ICP, photo-first dedup, rubber-sheet filter, colour gain).
   Fusion unit-tested on synthetic scenes; job path tested with fake workers; not yet run on the RTX 4080

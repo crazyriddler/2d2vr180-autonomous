@@ -108,6 +108,56 @@
    "notes": "Real 3D (rc56): finds faces and eyes (OpenCV FaceDetectorYN, CPU) so the photo's measured depth can be checked against the adult eye distance (56-70 mm)."
   },
   {
+   "id": "sapiens2-pointmap-1b",
+   "display_name": "Sapiens2-1B Pointmap — people's 3D shape for Real 3D",
+   "source": "https://huggingface.co/facebook/sapiens2-pointmap-1b",
+   "revision": "54215eb82a4d9cbeabdc5c2c2e1b09086212e6f1",
+   "license": "Sapiens2 License (Meta; Hugging Face card: license other / sapiens2-license)",
+   "license_url": "https://github.com/facebookresearch/sapiens2/blob/main/LICENSE.md",
+   "commercial_use": false,
+   "redistributable": false,
+   "required_vram_gb": 5,
+   "backends": [
+    "photo_locked"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "sapiens2_1b_pointmap.safetensors",
+     "url": "https://huggingface.co/facebook/sapiens2-pointmap-1b/resolve/54215eb82a4d9cbeabdc5c2c2e1b09086212e6f1/sapiens2_1b_pointmap.safetensors",
+     "sha256": "8080030066063231a47f02ce65b9ae27d7f7510d6320c4842f815620c832ec00",
+     "size_bytes": 6518452960
+    }
+   ],
+   "notes": "Real 3D (rc58): per-pixel 3D of people (Meta Sapiens2, ICLR 2026, trained on 1B human images and synthetic scans) - faces, noses and bodies with their real relief; also a distance cue for the real-world scale. Runs in photo-cu128 (vendored backbone, workers/sapiens2_backbone.py)."
+  },
+  {
+   "id": "sapiens2-seg-0.4b",
+   "display_name": "Sapiens2-0.4B body-part segmentation — where the people are, for Real 3D",
+   "source": "https://huggingface.co/facebook/sapiens2-seg-0.4b",
+   "revision": "449b3c5335e6722bb94990abdd1aa6e612432f22",
+   "license": "Sapiens2 License (Meta; Hugging Face card: license other / sapiens2-license)",
+   "license_url": "https://github.com/facebookresearch/sapiens2/blob/main/LICENSE.md",
+   "commercial_use": false,
+   "redistributable": false,
+   "required_vram_gb": 2,
+   "backends": [
+    "photo_locked"
+   ],
+   "requires_acceptance": true,
+   "gated": false,
+   "files": [
+    {
+     "path": "sapiens2_0.4b_seg.safetensors",
+     "url": "https://huggingface.co/facebook/sapiens2-seg-0.4b/resolve/449b3c5335e6722bb94990abdd1aa6e612432f22/sapiens2_0.4b_seg.safetensors",
+     "sha256": "b85fdb50b7d6123a967d5ee4a505e222baff8d2f7ad6bbf353578c1a61dfbac9",
+     "size_bytes": 1626451404
+    }
+   ],
+   "notes": "Real 3D (rc58): outline of the people (29 body parts, 0 = background) so Sapiens2's shape is used only on them."
+  },
+  {
    "id": "depth-anything-v2-small",
    "display_name": "Depth-Anything-V2 Small — commercial-safe relative depth",
    "source": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf",

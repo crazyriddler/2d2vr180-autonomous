@@ -660,3 +660,32 @@ def test_real3d_fill_can_be_turned_off(ctx, rtx4080, photo, monkeypatch):
                           renderer="cpu")
     assert rep["status"] == "succeeded", rep.get("error")
     assert rep["backend"]["extra"]["added_splats"] == 0 and not (job.dir / "locked" / "fill").exists()
+
+
+def test_real3d_uses_the_human_model_and_the_eye_distance_setting(ctx, rtx4080, photo, monkeypatch):
+    """rc58: with Sapiens2 installed the worker gets its models, the eye distance comes from the option,
+    and without faces the scale comes from the human model."""
+    from conftest import install_fake_model
+
+    _fake_locked(ctx, monkeypatch)
+    for mid in ("sapiens2-seg-0.4b", "sapiens2-pointmap-1b"):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", ipd_mm=56.0, layouts=["sbs"],
+                          renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+    assert req["human_seg"].endswith("sapiens2_0.4b_seg.safetensors")
+    assert req["human_pointmap"].endswith("sapiens2_1b_pointmap.safetensors")
+    assert req["ipd_target_m"] == pytest.approx(0.056)
+    ex = rep["backend"]["extra"]
+    assert ex["scale_from"] == "human model" and ex["people"]["human_model"] == "sapiens2_1b"
+    assert {"sapiens2-seg-0.4b", "sapiens2-pointmap-1b"} <= {m["id"] for m in rep["models"]}
+
+
+def test_real3d_without_the_human_model_says_so(ctx, rtx4080, photo, monkeypatch):
+    _fake_locked(ctx, monkeypatch)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", generative="tri", layouts=["sbs"], renderer="cpu")
+    assert rep["status"] == "succeeded", rep.get("error")
+    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+    assert req["human_seg"] is None and req["ipd_target_m"] == pytest.approx(0.063)
+    assert "needs Sapiens2" in (job.dir / "job.log").read_text(encoding="utf-8")

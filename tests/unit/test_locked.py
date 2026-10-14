@@ -9,19 +9,43 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "workers"))
 
 
-def test_face_scale_only_corrects_clearly_wrong_depth():
+def test_face_scale_always_brings_the_eyes_to_the_target_distance():
+    """rc58 (owner: people always came out too big): the scale is set from the eyes every time, not only when
+    they fall outside the adult range."""
     from sharp_depth_worker import face_scale
 
     assert face_scale([]) == 1.0
-    assert face_scale([{"ipd": 0.063}]) == 1.0                    # inside the adult range: confirmed
-    assert face_scale([{"ipd": 0.060}, {"ipd": 0.066}]) == 1.0
-    s = face_scale([{"ipd": 0.084}])                              # depth 33 % too far → brought to 70 mm
-    assert s == pytest.approx(0.070 / 0.084)
-    s = face_scale([{"ipd": 0.040}])                              # too near → brought to 56 mm
-    assert s == pytest.approx(0.056 / 0.040)
-    assert face_scale([{"ipd": 0.5}]) == 0.5                      # never more than 2x either way
-    # several faces: the median decides (one child or a poster does not)
-    assert face_scale([{"ipd": 0.050}, {"ipd": 0.080}, {"ipd": 0.081}]) == pytest.approx(0.070 / 0.080)
+    assert face_scale([{"ipd": 0.063}]) == pytest.approx(1.0)
+    assert face_scale([{"ipd": 0.068}]) == pytest.approx(0.063 / 0.068)       # 8 % too big → smaller
+    assert face_scale([{"ipd": 0.068}], 0.056) == pytest.approx(0.056 / 0.068)  # a smaller target: smaller still
+    assert face_scale([{"ipd": 0.5}]) == 0.5                                    # never more than 2x either way
+    # several faces: the median decides
+    assert face_scale([{"ipd": 0.050}, {"ipd": 0.070}, {"ipd": 0.072}]) == pytest.approx(0.063 / 0.070)
+
+
+def test_people_shape_is_fused_inside_their_outline_at_the_scene_distance():
+    """A 'face' whose scene depth is flat (as monocular depth flattens noses) gets the human model's relief,
+    at the scene's own distance, blended over a few pixels inside the outline; outside nothing changes."""
+    from human_geometry import crop_box, fuse_people, inner_weight
+
+    h, w = 120, 100
+    ys, xs = np.mgrid[0:h, 0:w]
+    person = (xs - 50) ** 2 / 30 ** 2 + (ys - 60) ** 2 / 45 ** 2 < 1
+    scene = np.where(person, 2.4, 5.0)                                   # flat person 2.4 m away
+    nose = 0.04 * np.exp(-((xs - 50) ** 2 + (ys - 55) ** 2) / 60.0)
+    human = np.where(person, 2.0 - nose, np.nan)                          # relief, but 2 m away
+    fused, ratio = fuse_people(scene, np.ones((h, w), bool), human, person)
+    assert ratio == pytest.approx(1.2, rel=0.01)                          # scene puts them 1.2x as far
+    assert np.allclose(fused[~person], 5.0)
+    relief = fused[55, 50] - fused[55, 32]
+    assert relief == pytest.approx(-0.04 * 1.2, rel=0.15)                 # the nose sticks out (scaled)
+    wgt = inner_weight(person, 6)
+    assert wgt[~person].max() == 0 and wgt[60, 50] == 1.0 and 0 < wgt[60, 21] < 1
+    box = crop_box(person)
+    y0, y1, x0, x1 = box
+    assert y0 <= 15 and y1 >= 105 and x0 <= 20 and x1 >= 80
+    assert abs((x1 - x0) / (y1 - y0) - 0.75) < 0.05                       # the network's 3:4 aspect
+    assert crop_box(np.zeros((50, 50), bool)) is None
 
 
 def test_sheet_cameras_move_the_head_and_turn_around_the_subject():

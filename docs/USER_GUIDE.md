@@ -54,7 +54,9 @@ verified (SHA256) before use.
    - **One photo**
      - **AI views** — *Real 3D* (the default) locks your photo:
        - It uses your photo's real lens (EXIF) and its measured metric depth (MoGe-3).
-       - It checks the scale against the eyes of the people in it (adults' eyes are 56-70 mm apart).
+       - It sets the real-world scale from the eyes of the people in it (63 mm apart by default; change it
+         in *Eye distance for real scale*). Lower it if people look too big in VR.
+       - People get their real 3D shape (noses, faces) from Sapiens2, a model trained only on humans.
        - It aligns Apple SHARP's 3D of the photo to that depth.
 
        Then what the photo hides is filled:
@@ -68,6 +70,7 @@ verified (SHA256) before use.
        - `compare_sharp_alone.ply`: SHARP without the measured depth;
        - `views_sheet.png`: the versions from 15 cm to each side and from 15° around the subject;
        - `added_layer.ply`: only the added splats;
+       - `people_shape.png`: the people's relief before and after Sapiens2;
        - `fill_steps.png`: for each moved view, its holes, what was painted and the result.
 
        **Real 3D method** chooses how it is built:

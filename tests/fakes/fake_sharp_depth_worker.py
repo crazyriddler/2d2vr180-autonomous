@@ -57,8 +57,14 @@ def main(req):
         if not req.get("plain", True):
             break
     progress(1.0, "fake SHARP with depth")
+    people = None
+    if req.get("human_seg") and req.get("human_pointmap"):
+        people = {"people_fraction": 0.3, "box": [0, h, 0, w], "scene_vs_human_distance": 1.1,
+                  "human_model": "sapiens2_1b"}
     emit("result", outputs=outputs, vram_peak_mib=None, f_px=float(K[0, 0]), size=[w, h], faces=[],
-         face_scale=1.0, sharp_own_scale=1.2, depth_coverage=1.0)
+         face_scale=1.0, sharp_own_scale=1.2, depth_coverage=1.0, people=people,
+         scale=1 / 1.1 if people else 1.0, scale_from="human model" if people else "measured depth",
+         ipd_target_m=req.get("ipd_target_m", 0.063))
 
 
 if __name__ == "__main__":

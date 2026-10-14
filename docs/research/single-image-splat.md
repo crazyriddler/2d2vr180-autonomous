@@ -206,3 +206,27 @@ Sources:
 - SAM 3D (CVPR 2026).
 - Difix3D+ (CVPR 2025).
 - "Sharp Depth Injection" (LinkedIn post by its author).
+
+
+## rc58: people's size and shape (October 2026)
+
+Owner feedback on rc57: the best so far in speed and quality, but people come out bigger than they are,
+and noses are flat and fine geometry is missed.
+
+**Size.** The eye check only corrected the scale outside 56-70 mm. It now always calibrates, to a target
+that the user can change (63 mm by default).
+
+**Shape.** MoGe-2/3 are general scene models and flatten people. Sapiens2 (Meta, ICLR 2026, arXiv
+2604.21681) is a human-only model family, pretrained on 1B human images, with pointmap and normal heads
+trained on synthetic scans. Its paper reports pointmap errors below MoGe, VGGT, UniDepth and DUSt3R on
+humans, and clearly finer facial detail.
+- Checkpoints on Hugging Face: `facebook/sapiens2-pointmap-1b` (6.5 GB) and `facebook/sapiens2-seg-0.4b`
+  (1.6 GB). They are not gated; the licence is the Sapiens2 License.
+- The pointmap is in a canonical focal space (768 px at 1024×768). It is converted with the photo's own
+  lens.
+
+DAViD (Microsoft, ICCV 2025, MIT) is an alternative with lower resolution (384 px), kept in reserve.
+
+The owner also suggested using slightly different AI views to improve the geometry. This is not pursued:
+generated views are not geometrically true, and every attempt to triangulate from them (rc19-rc55) degraded
+the 3D.
