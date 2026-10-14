@@ -62,8 +62,9 @@ def splat_radii(scene) -> np.ndarray:
 
 
 def radii_of(scales: np.ndarray) -> np.ndarray:
-    s = np.sort(scales.astype(np.float32), axis=1)
-    return (1.5 * np.sqrt((s[:, 1] ** 2 + s[:, 2] ** 2) / 2)).astype(np.float32)
+    s = scales.astype(np.float32, copy=False)
+    sq = s * s                         # the two largest axes: all three minus the smallest
+    return (1.5 * np.sqrt(np.maximum(sq.sum(1) - sq.min(1), 0) / 2)).astype(np.float32)
 
 
 def perspective(fovy_deg: float, aspect: float, near: float, far: float) -> np.ndarray:

@@ -33,17 +33,23 @@ def _subsample(scene: GaussianScene, n: int, seed: int = 0) -> GaussianScene:
 
 
 class FrameDecoder:
-    """Decodes the frames of a splat video ahead of playback on a background thread (zlib and numpy
-    release the GIL), into the GPU view's vertex layout. Memory stays bounded: at most ``ahead`` frames."""
+    """Decodes the frames of a splat video ahead of playback, into the GPU view's vertex layout, in two
+    stages that run at the same time (zlib and numpy release the GIL): a thread decodes the frames in order
+    (each may depend on the previous one), a small pool turns them into vertices. Memory stays bounded: at
+    most ``ahead`` frames."""
 
     def __init__(self, path: Path, ahead_bytes: float = 400e6):
+        from concurrent.futures import ThreadPoolExecutor
+
         from .. import splv
 
         self.reader = splv.open_reader(path)
+        self.fast = splv.codec().FastDequantizer(self.reader.header["quant"])
         n = self.reader.count
         self.ahead = int(min(max(ahead_bytes // max(n * 28, 1), 4), 3 * max(self.reader.fps, 1)))
+        self.pool = ThreadPoolExecutor(2, thread_name_prefix="splv-vertices")
         self.cond = threading.Condition()
-        self.ready: dict[int, np.ndarray] = {}
+        self.ready: dict = {}                 # frame -> Future of its vertex array
         self.next = 0
         self.gen = 0
         self.stop_flag = False
@@ -52,11 +58,6 @@ class FrameDecoder:
         self.thread.start()
 
     def _run(self) -> None:
-        from .. import splv
-        from .gl_view import GLSplatView, radii_of
-
-        codec = splv.codec()
-        quant = self.reader.header["quant"]
         while True:
             with self.cond:
                 while not self.stop_flag and (self.next >= self.reader.frames or len(self.ready) >= self.ahead):
@@ -65,8 +66,8 @@ class FrameDecoder:
                     return
                 k, gen = self.next, self.gen
             try:
-                f = codec.dequantize(self.reader.quantized(k), quant)
-                data = GLSplatView.pack(f["means"], f["colors"], radii_of(f["scales"]))
+                q = self.reader.quantized(k)
+                fut = self.pool.submit(self.fast.packed, q)
             except Exception as e:  # noqa: BLE001 - shown in the viewer
                 with self.cond:
                     self.error = f"{type(e).__name__}: {e}"
@@ -74,18 +75,25 @@ class FrameDecoder:
                 return
             with self.cond:
                 if gen == self.gen:
-                    self.ready[k] = data
+                    self.ready[k] = fut
                     self.next = k + 1
                     self.cond.notify_all()
 
     def take(self, k: int) -> np.ndarray | None:
-        """Frame ``k`` if decoded (older frames are dropped). Decoding jumps to ``k`` when the decoder is not
-        on its way there."""
+        """Frame ``k`` if ready (older frames are dropped). Decoding jumps to ``k`` when the decoder is not on
+        its way there."""
         with self.cond:
             for old in [j for j in self.ready if j < k]:
-                del self.ready[old]
-            data = self.ready.pop(k, None)
-            if data is None and not (k in self.ready or self.next <= k <= self.next + self.ahead):
+                self.ready.pop(old).cancel()
+            fut = self.ready.get(k)
+            data = None
+            if fut is not None and fut.done():
+                del self.ready[k]
+                try:
+                    data = fut.result()
+                except Exception as e:  # noqa: BLE001 - shown in the viewer
+                    self.error = f"{type(e).__name__}: {e}"
+            elif fut is None and not (self.next <= k <= self.next + self.ahead):
                 self.seek(k)
             self.cond.notify_all()
             return data
@@ -93,6 +101,8 @@ class FrameDecoder:
     def seek(self, k: int) -> None:
         with self.cond:
             self.gen += 1
+            for f in self.ready.values():
+                f.cancel()
             self.ready.clear()
             self.next = k
             self.cond.notify_all()
@@ -101,6 +111,7 @@ class FrameDecoder:
         with self.cond:
             self.stop_flag = True
             self.cond.notify_all()
+        self.pool.shutdown(wait=False, cancel_futures=True)
 
 
 class SceneViewer(QWidget):

@@ -113,6 +113,54 @@ def _planes(a) -> bytes:
     return np.ascontiguousarray(a).tobytes()
 
 
+class FastDequantizer:
+    """Lookup-table dequantization in float32 for playback (the app's viewer): means, scales and colours of a
+    frame several times faster than :func:`dequantize`."""
+
+    def __init__(self, quant: dict):
+        def lut(lo, hi, levels, f=None):
+            x = lo + np.arange(levels + 1, dtype=np.float64) / levels * (hi - lo)
+            return (f(x) if f else x).astype(np.float32)
+
+        self.u, self.v = lut(*quant["u"], 65535), lut(*quant["v"], 65535)
+        self.z, self.s = lut(*quant["logz"], 65535, np.exp), lut(*quant["logs"], 255, np.exp)
+        self.c = (np.arange(256, dtype=np.float32) / 255)
+
+    def __call__(self, arr: dict) -> dict:
+        z = self.z[arr["z"]]
+        means = np.empty((len(z), 3), np.float32)
+        np.multiply(self.u[arr["u"]], z, out=means[:, 0])
+        np.multiply(self.v[arr["v"]], z, out=means[:, 1])
+        means[:, 2] = z
+        scales = np.empty_like(means)
+        for i in range(3):
+            np.multiply(self.s[arr[f"s{i}"]], z, out=scales[:, i])
+        colors = np.empty_like(means)
+        for i, k in enumerate("rgb"):
+            colors[:, i] = self.c[arr[k]]
+        return {"means": means, "scales": scales, "colors": colors, "opacity": self.c[arr["a"]]}
+
+    def packed(self, arr: dict) -> np.ndarray:
+        """(K, 7) float32 rows of x, y, z, r, g, b and the footprint radius (1.5 sigma of the two largest axes):
+        the app viewer's vertex layout, made from 1-D lookups only."""
+        z = self.z[arr["z"]]
+        out = np.empty((len(z), 7), np.float32)
+        np.multiply(self.u[arr["u"]], z, out=out[:, 0])
+        np.multiply(self.v[arr["v"]], z, out=out[:, 1])
+        out[:, 2] = z
+        for i, k in enumerate("rgb"):
+            out[:, 3 + i] = self.c[arr[k]]
+        if not hasattr(self, "s2"):
+            self.s2 = self.s.astype(np.float64) ** 2
+        a, b, c = self.s2[arr["s0"]], self.s2[arr["s1"]], self.s2[arr["s2"]]
+        m = np.minimum(np.minimum(a, b), c)
+        t = a + b + c - m
+        np.sqrt(t * 0.5, out=t)
+        np.multiply(t, 1.5 * z, out=t)
+        out[:, 6] = t
+        return out
+
+
 def encode_frame(arr: dict, prev: dict | None) -> bytes:
     """One frame: whole (prev None, a keyframe) or using ``prev``; each field with its best filters."""
     modes, parts = bytearray(), []
