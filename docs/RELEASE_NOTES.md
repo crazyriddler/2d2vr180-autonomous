@@ -1,3 +1,26 @@
+# 2D2VR 2.0.0-rc4 — photos get the people's real relief too
+
+The owner asked for the rc3 improvement of splat videos to apply to photos as well.
+
+- **People at their measured 3D shape in photos.** Real 3D now does to photos what rc3 does to videos.
+  After SHARP, the people's splats are placed along their lines of sight at the depth measured by MoGe-3 +
+  Sapiens2:
+  - their sizes are adjusted so the photo seen from the camera does not change;
+  - the splat behind each one keeps its distance ratio;
+  - a few pixels of ramp at the outline keep the edges from tearing.
+  - Before, SHARP followed that depth only through its smooth learned alignment, so part of the fine relief
+    of faces and bodies was lost.
+  - The rest of the scene is placed as before.
+  - In tests where SHARP flattened an 11 cm relief to 7.5 cm, the photo's splats came out at 10.8 cm.
+- **Painting follows the people's shape.** The AI fill of what the photo hides now starts from these placed
+  splats.
+- **`people_shape.png` has a fourth panel:** the splats as made, next to the picture, the scene's depth and
+  the depth with the people's own shape. The report adds `people.snapped` and `people.snap_change_p90`.
+
+Everything else is as in rc3 below.
+
+---
+
 # 2D2VR 2.0.0-rc3 — people in splat videos with their real relief
 
 Owner report on rc2: photos and videos work. In a video of a person sitting, full body, from the front, the

@@ -90,12 +90,14 @@ def shade(depth, f_px):
     n /= np.linalg.norm(n, axis=-1, keepdims=True) + 1e-9
     light = np.array([-0.4, -0.5, 0.77])
     light /= np.linalg.norm(light)
-    v = np.clip(n @ light, 0, 1)
+    v = np.nan_to_num(np.clip(n @ light, 0, 1), nan=0.0)
     return (np.where(np.isfinite(z), 40 + 215 * v, 0)).astype(np.uint8)
 
 
 def people_geometry(req, img, points, valid, f_px, device, torch):
-    """Sapiens2's shape of the people put into MoGe's depth. Returns (points, report or None)."""
+    """Sapiens2's shape of the people put into MoGe's depth. Returns (points, report or None, parts or None);
+    parts (for snapping SHARP's splats and the people_shape.png sheet): the people's weight map (1 inside, 0
+    outside, a ramp at the outline), their mask and box, and MoGe's own depth."""
     import numpy as np
 
     import human_geometry as hg
@@ -108,7 +110,7 @@ def people_geometry(req, img, points, valid, f_px, device, torch):
     box = hg.crop_box(people)
     if box is None:
         log("no person found: the scene's own depth is used")
-        return points, None
+        return points, None, None
     progress(0.12, "people's 3D shape (Sapiens2)")
     net, arch = hg.load(req["human_pointmap"], "pointmap", device, torch)
     d_crop, own_f = hg.pointmap_depth(net, img, box, f_px, torch, device)
@@ -121,7 +123,7 @@ def people_geometry(req, img, points, valid, f_px, device, torch):
     fused, ratio = hg.fuse_people(np.where(valid, z, np.nan), valid, human, people)
     if ratio is None:
         log("the people are too small in the picture for their own 3D shape")
-        return points, None
+        return points, None, None
     k = np.where(valid & np.isfinite(fused) & (z > 0), fused / np.where(z > 0, z, 1.0), 1.0)
     out = points * k[..., None]
     rep = {"people_fraction": round(float(people.mean()), 4), "box": [int(v) for v in box],
@@ -129,17 +131,32 @@ def people_geometry(req, img, points, valid, f_px, device, torch):
            "human_model_lens_px": round(own_f, 1), "lens_px": round(f_px, 1)}
     log(f"people's shape from Sapiens2 ({people.mean():.0%} of the picture); the scene's depth put them "
         f"{ratio:.3f}x as far as the human model does")
-    try:
-        from PIL import Image
+    both = valid & people & np.isfinite(human) & (human > 0)
+    parts = {"weight": hg.inner_weight(both, ramp=6), "mask": people, "box": box, "scene_z": z.copy()}
+    return out, rep, parts
 
-        a = shade(z[y0:y1, x0:x1] * np.where(people[y0:y1, x0:x1], 1, np.nan), f_px)
-        b = shade(out[y0:y1, x0:x1, 2] * np.where(people[y0:y1, x0:x1], 1, np.nan), f_px)
-        sheet = np.concatenate([img[y0:y1, x0:x1], np.repeat(a[..., None], 3, -1), np.repeat(b[..., None], 3, -1)], 1)
-        Image.fromarray(sheet).save(os.path.join(req["output_dir"], "people_shape.png"))
-        rep["sheet"] = os.path.join(req["output_dir"], "people_shape.png")
-    except Exception as e:  # noqa: BLE001 - a diagnostic
-        log(f"people shape picture skipped: {e}")
-    return out, rep
+
+def people_sheet(path, img, parts, depths, f_px):
+    """people_shape.png: the picture of the people, then each depth map (H, W) shaded so the relief shows."""
+    import numpy as np
+    from PIL import Image
+
+    y0, y1, x0, x1 = parts["box"]
+    m = np.where(parts["mask"][y0:y1, x0:x1], 1.0, np.nan)
+    panels = [img[y0:y1, x0:x1]]
+    for d in depths:
+        panels.append(np.repeat(shade(d[y0:y1, x0:x1] * m, f_px)[..., None], 3, -1))
+    Image.fromarray(np.concatenate(panels, 1).astype(np.uint8)).save(path)
+    return path
+
+
+def front_depth(means, h, w, torch):
+    """The depth of SHARP's front splats as an (h, w) map of the picture."""
+    import torch.nn.functional as F
+
+    g = SHARP_GRID
+    zf = means[: g * g, 2].reshape(1, 1, g, g).float()
+    return F.interpolate(zf, size=(h, w), mode="bilinear", align_corners=False)[0, 0].cpu().numpy()
 
 
 def target_depth(z, valid, mono, torch):
@@ -365,10 +382,10 @@ def main(req):
         f"MoGe depth on {valid.mean():.0%} of the pixels")
 
     # ---- people's own 3D shape (Sapiens2)
-    people = None
+    people = parts = None
     if req.get("human_seg") and req.get("human_pointmap"):
         try:
-            points, people = people_geometry(req, img, points, valid, f_px, device, torch)
+            points, people, parts = people_geometry(req, img, points, valid, f_px, device, torch)
         except Exception as e:  # noqa: BLE001 - an improvement, not a requirement
             log(f"people's 3D shape unavailable ({type(e).__name__}: {str(e)[:300]}); the scene's depth is used")
             if device.type == "cuda":
@@ -404,6 +421,26 @@ def main(req):
     predictor = load_predictor(req["checkpoint"], device, torch)
     progress(0.4, "SHARP with the photo's measured depth")
     g, info = predict(predictor, img, f_px, device, torch, depth, valid)
+    if parts is not None:
+        sheet_depths = [parts["scene_z"] * scale, depth]
+        if req.get("snap_people", True):
+            # SHARP follows the injected depth only through a smooth learned alignment: put the people's
+            # splats exactly at their measured 3D shape (MoGe-3 + Sapiens2), as for splat videos
+            with torch.no_grad():
+                means, scales, k = snap_to_depth(g, depth, parts["weight"], torch)
+                g = g._replace(mean_vectors=means[None], singular_values=scales[None])
+            inside = k[k != 1]
+            moved = float((inside - 1).abs().quantile(0.9)) if inside.numel() else 0.0
+            people["snapped"] = True
+            people["snap_change_p90"] = round(moved, 4)
+            log(f"people's splats placed at their measured 3D shape (90 % moved by up to {moved * 100:.1f} %)")
+        with torch.no_grad():
+            sheet_depths.append(front_depth(g.mean_vectors[0], h, w, torch))
+        try:
+            people["sheet"] = people_sheet(os.path.join(out_dir, "people_shape.png"), img, parts, sheet_depths, f_px)
+            log("people_shape.png: the picture | scene depth | with the people's own shape | the splats as made")
+        except Exception as e:  # noqa: BLE001 - a diagnostic
+            log(f"people shape picture skipped: {e}")
     locked = os.path.join(out_dir, "locked.ply")
     save_ply(g, f_px, (h, w), locked)
     outputs = {"locked": locked}
