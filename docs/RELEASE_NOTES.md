@@ -1,3 +1,48 @@
+# 2D2VR 2.0.0-rc3 — people in splat videos with their real relief
+
+Owner report on rc2: photos and videos work. In a video of a person sitting, full body, from the front, the
+person looked rather flat; up close the depth and the detail of the shape were missing.
+
+## Why video came out flatter than photos
+
+- **SHARP smooths the relief.** SHARP follows the depth it is given only through its learned alignment,
+  which is smooth: it keeps the overall distance but much of the fine relief comes from SHARP's own depth.
+  - On a sharp photo that own depth is good.
+  - On a soft, compressed video frame it is flat, so the person stayed flat even though Sapiens2 had
+    measured their shape.
+- **Reduced frame.** The video worker ran the people model and the depth fusion on a reduced copy of each
+  frame.
+- **Fewer splats.** Videos kept fewer splats per frame than photos, so up close the people looked coarse.
+
+## What changes
+
+- **People at their measured 3D shape.**
+  - After SHARP, each splat of the people is moved along its line of sight to the depth measured by
+    MoGe-3 + Sapiens2, with its size adjusted so the picture from the camera does not change.
+  - The splat behind it keeps its distance ratio.
+  - It is blended over a few pixels at the outline, so the edges do not tear.
+  - The rest of the scene is placed as before.
+  - In tests where SHARP flattened a 11 cm relief to 7.5 cm, the splats came out at 10.7 cm.
+- **Full-size frames.** The people model and the depth fusion now work on the full-size frame.
+- **Denser splat videos** (splats per frame):
+
+  | Mode | Before | Now |
+  |---|---|---|
+  | Fast | 184k | 328k |
+  | Auto | 328k | 473k |
+  | Quality | 526k | 737k (as dense as SHARP's front layer) |
+
+  Files are about 45 % bigger.
+- **Player buffering.** The VR player keeps up to two seconds decoded, so dense videos play without
+  waiting.
+- **`people_shape.png`** in the result folder shows, on the first frame with people, four panels: the
+  picture, the scene's depth, the depth with the people's own shape, and the splats as made.
+  - The report gives `people_frames`: in how many frames people were found.
+
+Everything else is as in rc2 and rc1 below.
+
+---
+
 # 2D2VR 2.0.0-rc2 — the engines work again after the folder rename
 
 Owner report on rc1: a video job failed at once with "uv trampoline failed to spawn Python child process".

@@ -97,6 +97,7 @@ in one file with the video's sound:
 | `scene.ply` | the splat (photos) or the first frame (videos), standard 3DGS format |
 | `scene.splat` | the same in the compact web format |
 | `views_sheet.png` | the splat seen from a few moved positions (photos) |
+| `people_shape.png` | the people's relief: the scene's depth, with their own shape, and the splats as made |
 | `added_layer.ply`, `fill_steps.png` | what the AI painted, and how (photos) |
 | `compare_sharp_alone.ply` | SHARP without the measured depth, for comparison (photos) |
 | `../run_report.json` | every detail of the run: models, timings, scale, warnings |

@@ -26,9 +26,10 @@ from .locked import FACE_MODEL, HUMAN_POINTMAP, HUMAN_SEG
 
 MOGE = "moge-3-vitl"
 # per quality mode: SHARP grid steps (front, back layer: splats per frame), depth map size, seconds per frame
-PLANS = {"fast": {"grid": [2.0, 4.0], "moge_max_side": 768, "s_per_frame": 2.5},
-         "auto": {"grid": [1.5, 3.0], "moge_max_side": 1024, "s_per_frame": 3.5},
-         "quality": {"grid": [1.25, 2.0], "moge_max_side": 1536, "s_per_frame": 5.0}}
+# (2.0.0-rc3: denser grids - people looked coarse up close)
+PLANS = {"fast": {"grid": [1.5, 3.0], "moge_max_side": 768, "s_per_frame": 2.5},
+         "auto": {"grid": [1.25, 2.5], "moge_max_side": 1024, "s_per_frame": 3.5},
+         "quality": {"grid": [1.0, 2.0], "moge_max_side": 1536, "s_per_frame": 5.0}}
 FRAME_SIDE = 1536            # frames are extracted at most this big (SHARP's own input size)
 BYTES_PER_SPLAT = 10         # after compression, a keyframe of a real video (estimate for the disk check)
 
@@ -173,6 +174,7 @@ class SplatVideoBackend(Backend):
         first.provenance[:] = INFERRED
         ply = write_gaussian_ply(first, exp / "scene.ply", include_provenance=True)
         splat = write_splat(first, exp / "scene.splat")
+        people_frames = sum(1 for p in fdir.glob("*.bin.json") if json.loads(p.read_text()).get("people"))
         shutil.rmtree(fdir, ignore_errors=True)       # the frames now live in scene.splv
         progress(1.0, "done")
         if audio is None:
@@ -184,17 +186,22 @@ class SplatVideoBackend(Backend):
                             f"×{res['scale']:.3f}.")
         warnings.append("OBJ mesh is not available for splat videos.")
         size = video.stat().st_size
+        files = {"splv": str(video)}
+        if res.get("people_shape") and Path(res["people_shape"]).exists():
+            shutil.copy2(res["people_shape"], exp / "people_shape.png")
+            files["people_shape"] = str(exp / "people_shape.png")
         return BackendResult(
             backend=self.id, scene_ply=ply, splat=splat, obj=None, cameras=[res["camera"]], metric_scale=True,
             provenance_note=(f"{head['count']:,} splats per frame, every one INFERRED from its frame: Apple SHARP "
-                             "aligned to the measured depth (MoGe-3). Nothing hidden in a frame is invented."),
+                             "aligned to the measured depth (MoGe-3); people placed at their own 3D shape "
+                             f"(Sapiens2) in {people_frames} of {n} frames. Nothing hidden in a frame is invented."),
             vram_peak_mib=res.get("vram_peak_mib"), worker_env=out["env"], models_used=models_used,
             warnings=warnings,
             extra={"splv": str(video), "frames": n, "fps": fps, "splats_per_frame": int(head["count"]),
                    "size_mb": round(size / 2**20, 1), "audio": audio is not None, "scale": res.get("scale"),
                    "scale_from": res.get("scale_from"), "fov_x": res.get("fov_x"),
                    "ipd_target_mm": round(req["ipd_target_m"] * 1000, 1), "grid": plan["grid"],
-                   "files": {"splv": str(video)}})
+                   "people_frames": people_frames, "files": files})
 
     def cleanup(self, inp: JobInput) -> None:
         super().cleanup(inp)

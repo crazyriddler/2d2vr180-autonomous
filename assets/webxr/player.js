@@ -656,7 +656,7 @@ async function loadVideo() {
   vid.keys = header.index.map((e, k) => (e[2] ? k : -1)).filter((k) => k >= 0);
   if (!vid.keys.length || vid.keys[0] !== 0) throw new Error('the splat video does not start with a keyframe');
   const frameBytes = vid.rows * 1024 * 32;
-  vid.maxAhead = Math.max(Math.min(Math.floor(600e6 / frameBytes), Math.ceil(3 * vid.fps)), 4);
+  vid.maxAhead = Math.max(Math.min(Math.floor(1.2e9 / frameBytes), Math.ceil(4 * vid.fps)), Math.ceil(2 * vid.fps) + 2, 4);
   const nWorkers = Math.min(Math.max((navigator.hardwareConcurrency || 4) >> 2, 2), 4);
   for (let i = 0; i < nWorkers; i++) {
     const w = workerOf(decodeWorker);

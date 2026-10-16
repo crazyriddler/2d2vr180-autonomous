@@ -190,6 +190,45 @@ def predict(predictor, img, f_px, device, torch, depth=None, valid=None):
     return g, info
 
 
+SHARP_GRID = 768          # SHARP: 2 layers of 768 x 768 pixel-aligned splats over its (stretched) input
+
+
+def to_grid(a, torch, g=SHARP_GRID):
+    """An (H, W) map (NaN = unknown) resampled to SHARP's g x g splat grid (the image stretched to a square,
+    as SHARP sees it). Returns (values, known share) as torch tensors on a's device."""
+    import torch.nn.functional as F
+
+    a = torch.as_tensor(a, dtype=torch.float32)
+    ok = torch.isfinite(a).float()
+    num = F.interpolate((torch.nan_to_num(a, nan=0.0) * ok)[None, None], size=(g, g), mode="bilinear",
+                        antialias=True, align_corners=False)[0, 0]
+    den = F.interpolate(ok[None, None], size=(g, g), mode="bilinear", antialias=True, align_corners=False)[0, 0]
+    return num / den.clamp(min=1e-6), den
+
+
+def snap_to_depth(g, depth, weight, torch, lo=0.6, hi=1.6):
+    """Put SHARP's splats exactly at ``depth`` (H, W metres, NaN = unknown) where ``weight`` (H, W in [0, 1])
+    says so, blending to SHARP's own placement where it falls to 0.
+
+    SHARP only follows an injected depth through its learned alignment, which is smooth: the fine relief of
+    a person (nose, face, folds of clothes) from the human model is mostly lost, more so on soft video frames
+    whose own SHARP depth is flat. Each pixel's front splat is moved along its line of sight to the given
+    depth, and the splat behind it by the same factor (sizes too, so the picture from the camera does not
+    change). Returns (means, scales) for all 2 x 768 x 768 splats."""
+    gsz = SHARP_GRID
+    means, scales = g.mean_vectors[0], g.singular_values[0]
+    dev = means.device
+    t, known = to_grid(depth, torch)
+    w, _ = to_grid(weight, torch)
+    t, known, w = t.to(dev), known.to(dev), w.to(dev).clamp(0, 1)
+    zf = means[: gsz * gsz, 2].reshape(gsz, gsz)
+    k = torch.where((known > 0.5) & (zf > 1e-4) & torch.isfinite(t), t / zf.clamp(min=1e-4),
+                    torch.ones_like(zf)).clamp(lo, hi)
+    k = 1 + w * (k - 1)
+    kk = torch.cat([k.reshape(-1)] * (means.shape[0] // (gsz * gsz)))[:, None]
+    return means * kk, scales * kk, k
+
+
 def align_affine(z_src, z_ref, iters=4, keep=0.8):
     """Robust (a, b) with a z_src + b ≈ z_ref (a > 0), trimmed least squares; scale only as a fallback."""
     import numpy as np

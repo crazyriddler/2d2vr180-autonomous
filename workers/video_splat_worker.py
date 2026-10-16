@@ -108,57 +108,73 @@ def main(req):
     max_side = int(req.get("moge_max_side", 1024))
 
     def geometry(img, fov):
+        """MoGe-3 on the frame (at most max_side px), its depth brought back to the frame's full size.
+        Returns (depth (H, W) metres with NaN where unknown, the lens in full-size pixels, the field of view)."""
+        import torch.nn.functional as F
+
         h, w = img.shape[:2]
         s = min(1.0, max_side / max(h, w))
         small = img if s >= 1 else np.asarray(Image.fromarray(img).resize((round(w * s), round(h * s)), Image.BILINEAR))
         t = torch.from_numpy(np.ascontiguousarray(small).copy()).to(device).float().div(255).permute(2, 0, 1)
         with torch.no_grad():
             o = moge.infer(t, resolution_level=9, fov_x=fov, use_fp16=device.type == "cuda", refine_steps=2)
-        pts = o["points"].float().cpu().numpy().astype(np.float64)
-        ok = (o["mask"].cpu().numpy().astype(bool) if "mask" in o else np.ones(pts.shape[:2], bool))
-        K = o["intrinsics"].float().cpu().numpy().astype(np.float64).copy()
-        K[0] *= small.shape[1]
-        K[1] *= small.shape[0]
-        ok &= np.isfinite(pts).all(-1) & (pts[..., 2] > 0)
-        return small, pts, ok, K
+            z = o["points"][..., 2].float()
+            ok = torch.isfinite(z) & (z > 0)
+            if "mask" in o:
+                ok &= o["mask"].bool()
+            if z.shape != (h, w):                       # normalised bilinear: unknown pixels do not leak in
+                num = F.interpolate(torch.where(ok, z, 0)[None, None], size=(h, w), mode="bilinear",
+                                    align_corners=False)[0, 0]
+                den = F.interpolate(ok.float()[None, None], size=(h, w), mode="bilinear", align_corners=False)[0, 0]
+                z, ok = num / den.clamp(min=1e-6), den > 0.99
+            depth = torch.where(ok, z, torch.nan).cpu().numpy().astype(np.float64)
+        K = o["intrinsics"].float().cpu().numpy().astype(np.float64)
+        f_px = float(K[0, 0]) * w                        # normalised intrinsics → full-size pixels
+        return depth, f_px, float(np.degrees(2 * np.arctan(0.5 / K[0, 0])))
 
-    def people(small, pts, ok, f_px):
+    def unproject(depth, f_px):
+        h, w = depth.shape
+        ys, xs = np.mgrid[0:h, 0:w]
+        return np.stack([(xs + 0.5 - w / 2) / f_px * depth, (ys + 0.5 - h / 2) / f_px * depth, depth], -1)
+
+    def people(img, depth, f_px):
+        """The people's own 3D shape (Sapiens2, on the full frame) put into the depth. Returns (depth, ratio of
+        the scene's distance of the people to the human model's, weight map: 1 inside the people, 0 outside)."""
+        none = (depth, None, None)
         if seg is None:
-            return pts, None
-        mask = hg.people_mask(seg, small, torch, device)
+            return none
+        mask = hg.people_mask(seg, img, torch, device)
         box = hg.crop_box(mask)
         if box is None:
-            return pts, None
-        d_crop, _ = hg.pointmap_depth(pm, small, box, f_px, torch, device)
+            return none
+        d_crop, _ = hg.pointmap_depth(pm, img, box, f_px, torch, device)
         y0, y1, x0, x1 = box
-        human = np.full(small.shape[:2], np.nan)
+        human = np.full(img.shape[:2], np.nan)
         human[y0:y1, x0:x1] = d_crop
-        z = pts[..., 2]
-        fused, ratio = hg.fuse_people(np.where(ok, z, np.nan), ok, human, mask)
+        valid = np.isfinite(depth) & (depth > 0)
+        fused, ratio = hg.fuse_people(np.where(valid, depth, np.nan), valid, human, mask)
         if ratio is None:
-            return pts, None
-        k = np.where(ok & np.isfinite(fused) & (z > 0), fused / np.where(z > 0, z, 1.0), 1.0)
-        return pts * k[..., None], ratio
+            return none
+        both = valid & mask & np.isfinite(human) & (human > 0)
+        return np.where(valid, fused, np.nan), ratio, hg.inner_weight(both, ramp=6)
 
     # ---- calibration: one lens and one real-world scale for the clip
     if "fov_x" not in meta:
         sample = sorted({int(round(v)) for v in np.linspace(0, len(frames) - 1, min(8, len(frames)))})
         progress(0.02, f"measuring the lens and the real-world scale on {len(sample)} frames")
-        fovs = []
-        for i in sample:
-            small, pts, ok, K = geometry(load(i), req.get("fov_x"))
-            fovs.append(float(np.degrees(2 * np.arctan(small.shape[1] / 2 / K[0, 0]))))
+        fovs = [geometry(load(i), req.get("fov_x"))[2] for i in sample]
         fov = float(req.get("fov_x") or np.median(fovs))
         eyes, humans = [], []
         target = float(req.get("ipd_target_m") or sd.IPD_TARGET_M)
         for i in sample:
-            small, pts, ok, K = geometry(load(i), fov)
-            pts, ratio = people(small, pts, ok, float(K[0, 0]))
+            img = load(i)
+            depth, f_px, _ = geometry(img, fov)
+            depth, ratio, _ = people(img, depth, f_px)
             if ratio:
                 humans.append(1.0 / ratio)
             if req.get("face_model") and os.path.exists(req["face_model"]):
                 try:
-                    faces = sd.eye_distances(small, pts, req["face_model"])
+                    faces = sd.eye_distances(img, unproject(depth, f_px), req["face_model"])
                     if faces:
                         eyes.append(sd.face_scale(faces, target))
                 except Exception as e:  # noqa: BLE001
@@ -175,6 +191,36 @@ def main(req):
         log(f"clip lens {fov:.1f}° horizontal; real-world scale ×{scale:.3f} from the {scale_from}"
             + (f" ({len(eyes)} of {len(sample)} frames with faces)" if eyes else ""))
     fov, scale = meta["fov_x"], meta["scale"]
+    snap = bool(req.get("snap_people", True))
+    sheet_done = os.path.exists(os.path.join(out, "people_shape.png"))
+
+    def people_sheet(img, scene_depth, fused_depth, means, g, weight, f_px, k):
+        """people_shape.png (first frame with people): the picture, the scene's depth, with the people's own
+        shape, and the splats' depth as made - shaded so the relief shows."""
+        try:
+            import torch.nn.functional as F
+
+            gsz = sd.SHARP_GRID
+            h, w = img.shape[:2]
+            zf = means[: gsz * gsz, 2].reshape(1, 1, gsz, gsz).float()
+            zf = F.interpolate(zf, size=(h, w), mode="bilinear", align_corners=False)[0, 0].cpu().numpy()
+            ys, xs = np.nonzero(weight > 0)
+            y0, y1 = max(ys.min() - 20, 0), min(ys.max() + 20, h)
+            x0, x1 = max(xs.min() - 20, 0), min(xs.max() + 20, w)
+            people_px = weight[y0:y1, x0:x1] > 0
+            panels = [img[y0:y1, x0:x1]]
+            for d in (scene_depth, fused_depth, zf):
+                sh = sd.shade(np.where(people_px, d[y0:y1, x0:x1], np.nan), f_px)
+                panels.append(np.repeat(sh[..., None], 3, -1))
+            Image.fromarray(np.concatenate(panels, 1).astype(np.uint8)).save(os.path.join(out, "people_shape.png"))
+            log("people_shape.png: the picture | scene depth | with the people's own shape | the splats as made")
+            if k is not None:
+                kk = k.float().cpu().numpy()
+                log(f"people's splats moved to their measured shape by {np.percentile(np.abs(kk - 1), 90) * 100:.1f} % "
+                    "(90th percentile of the depth change)")
+        except Exception as e:  # noqa: BLE001 - a diagnostic
+            log(f"people shape picture skipped: {e}")
+        return True
 
     # ---- frames
     step_f, step_b = (req.get("grid") or [1.5, 3])[:2]
@@ -195,27 +241,31 @@ def main(req):
             first = True               # resume: the next new frame must be a keyframe
             continue
         img = load(i)
-        small, pts, ok, K = geometry(img, fov)
-        f_small = float(K[0, 0])
-        pts, _ = people(small, pts, ok, f_small)
-        depth = np.where(ok, pts[..., 2] * scale, np.nan)
+        depth0, f_px, _ = geometry(img, fov)
+        depth, ratio, weight = people(img, depth0, f_px)
+        ok = np.isfinite(depth) & (depth > 0)
+        depth = depth * scale
         # follow the previous frame where the picture did not change, drifting slowly back to the clip's scale
-        r, still = stabilise(depth, prev_depth, small, prev_img, ok)
+        r, still = stabilise(depth, prev_depth, img, prev_img, ok)
         corr = float(min(max((r if r is not None else corr) * 0.97 + 0.03, 0.8), 1.25))
         depth = depth * corr
-        prev_depth, prev_img = depth, small
-        # SHARP sees the frame at full size (its own input is 1536 px); the depth is resized inside predict
-        f_px = f_small * img.shape[1] / small.shape[1]
+        prev_depth, prev_img = depth, img
         g, info = sd.predict(predictor, img, f_px, device, torch, depth, ok)
         with torch.no_grad():
             from sharp.utils import color_space as cs
 
-            means = g.mean_vectors[0][keep_t]
-            scales = g.singular_values[0][keep_t] * steps_t
+            all_means, all_scales = g.mean_vectors[0], g.singular_values[0]
+            k = None
+            if snap and weight is not None:          # the people exactly at their measured 3D shape
+                all_means, all_scales, k = sd.snap_to_depth(g, depth, weight, torch)
+            means = all_means[keep_t]
+            scales = all_scales[keep_t] * steps_t
             quats = g.quaternions[0][keep_t]
             cols = cs.linearRGB2sRGB(g.colors[0][keep_t]).clamp(0, 1)
             op = g.opacities[0][keep_t]
             m, s_, q_, c_, o_ = (x.float().cpu().numpy() for x in (means, scales, quats, cols, op))
+            if not sheet_done and weight is not None:
+                sheet_done = people_sheet(img, depth0 * scale * corr, depth, all_means, g, weight, f_px, k)
         h, w = img.shape[:2]
         if quant is None:
             quant = codec.default_quant(fov, float(np.degrees(2 * np.arctan(h / 2 / f_px))))
@@ -228,7 +278,8 @@ def main(req):
         with open(path + ".tmp", "wb") as f:
             f.write(data)
         os.replace(path + ".tmp", path)
-        json.dump({"key": bool(key), "stabilise": round(corr, 4), "still_share": round(still, 3)},
+        json.dump({"key": bool(key), "stabilise": round(corr, 4), "still_share": round(still, 3),
+                   "people": ratio is not None},
                   open(path + ".json", "w"))
         prev_q, first = arr, False
         n_done = i + 1
@@ -244,7 +295,8 @@ def main(req):
                 f"({still:.0%} of the pixels unchanged)")
     emit("result", outputs={"frames_dir": fdir, "meta": meta_path}, frames=len(frames), count=int(len(keep)),
          camera=meta.get("camera"), quant=meta.get("quant"), scale=meta["scale"], scale_from=meta["scale_from"],
-         fov_x=meta["fov_x"], vram_peak_mib=vram_peak_mib(torch))
+         fov_x=meta["fov_x"], people_shape=os.path.join(out, "people_shape.png") if sheet_done else None,
+         vram_peak_mib=vram_peak_mib(torch))
 
 
 if __name__ == "__main__":

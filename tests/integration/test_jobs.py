@@ -246,7 +246,7 @@ def test_video_becomes_a_splat_video_with_sound(ctx, rtx4080, tmp_path):
     first = load_scene(Path(out["scene_ply"]))
     assert len(first) == r.count and np.allclose(first.means, frame_scene(r, 0).means, atol=1e-5)
     req = json.loads((job.dir / "splat_video" / "fake_requests.json").read_text())[0]
-    assert req["grid"] == [2.0, 4.0] and req["keyframe_interval"] == 10 and req["people"] is True
+    assert req["grid"] == [1.5, 3.0] and req["keyframe_interval"] == 10 and req["people"] is True
     assert req["checkpoint"].endswith("sharp_2572gikvuh.pt") and req["moge_path"].endswith("model.pt")
     assert not (job.dir / "splat_video" / "frames").exists()     # the frames now live in scene.splv
     assert not (job.dir / "frames").exists() and not list(job.dir.glob("audio.*"))   # cleaned after success
