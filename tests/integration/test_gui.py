@@ -187,7 +187,14 @@ def test_viewer_plays_a_splat_video(window, qapp, tmp_path):
     v.set_playing(True)
     _wait(qapp, 1.0)
     assert 3 <= v.frame <= 9
-    _wait(qapp, 1.4)
-    assert v.frame < 6                             # looped
+    # it reaches the end and loops (a slow machine waits for frames instead of skipping: allow time)
+    import time
+
+    seen_end, looped, t0 = False, False, time.time()
+    while time.time() - t0 < 10 and not looped:
+        _wait(qapp, 0.05)
+        seen_end |= v.frame >= FRAMES - 2
+        looped = seen_end and v.frame < 6
+    assert seen_end and looped
     w.open_scene(_scene_ply(tmp_path))             # a still scene stops the video and hides the timeline
     assert v.video is None and not v.timeline.isVisibleTo(w)
