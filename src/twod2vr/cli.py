@@ -135,7 +135,7 @@ def cmd_run(a) -> int:
     from .jobs import Job, JobOptions, JobRunner
 
     opts = JobOptions(mode=a.mode, backend=a.backend, license_profile=a.license_profile, output_dir=a.out,
-                      allow_cpu=a.allow_cpu, real3d_fill=not a.no_fill, ipd_mm=a.ipd_mm,
+                      allow_cpu=a.allow_cpu, real3d_fill=not a.no_fill, ipd_mm=a.ipd_mm, photo_detail=a.detail,
                       video_seconds=a.video_seconds, video_fps=a.video_fps, video_start_s=a.video_start)
     job = Job(Path(a.input), opts)
     runner = JobRunner(_ctx(a.license_profile))
@@ -241,6 +241,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the people's eyes are scaled to this distance in mm (adults 56-70; default 63). "
                         "A smaller value makes the whole scene smaller")
     j.add_argument("--no-fill", action="store_true", help="photos: do not AI-paint what the photo hides")
+    j.add_argument("--detail", action="store_true",
+                   help="photos: maximum detail - more small geometry, several million splats (on in --mode quality)")
     j.add_argument("--video-seconds", type=float, default=0.0, help="video: seconds used (0 = all of it)")
     j.add_argument("--video-fps", type=float, default=0.0,
                    help="video: frames per second made in 3D (0 = the video's own, up to 24)")

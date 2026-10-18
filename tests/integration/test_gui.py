@@ -72,10 +72,12 @@ def test_viewer_and_open_scene(window, qapp, tmp_path):
 def test_settings_persist(window, app_home):
     w = window
     w.create.ipd.setValue(58)
+    w.create.photo_detail.setChecked(True)
     w.create.video_fps.setCurrentIndex(w.create.video_fps.findData(15.0))
     w.settings_page.cpu.setChecked(True)
     saved = json.loads((app_home / "settings.json").read_text())
     assert saved["ipd_mm"] == 58 and saved["video_fps"] == 15.0 and saved["allow_cpu"] is True
+    assert saved["photo_detail"] is True
     assert w.ctx.allow_cpu is True
     o = w.settings.job_options()
     assert o.ipd_mm == 58 and o.video_fps == 15.0

@@ -142,6 +142,25 @@ def test_real3d_without_the_human_model_says_so(ctx, rtx4080, photo):
     assert "needs Sapiens2" in (job.dir / "job.log").read_text(encoding="utf-8")
 
 
+def test_maximum_detail_for_photos(ctx, rtx4080, photo):
+    """The detail option (always on in Quality) reaches the worker with the full photo; the normal result is
+    kept for comparison in the views sheet."""
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", photo_detail=True, real3d_fill=False)
+    assert rep["status"] == "succeeded", rep.get("error")
+    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+    assert req["detail"] is True and req["photo"].endswith("frame_00000.png") and req["moge_path"].endswith("model.pt")
+    ex = rep["backend"]["extra"]
+    assert ex["detail"]["splats"] == ex["gaussians"] and Path(rep["outputs"]["compare_normal_detail"]).exists()
+    std = load_scene(Path(rep["outputs"]["compare_normal_detail"]))
+    assert ex["gaussians"] == 2 * len(std)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality", real3d_fill=False)
+    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+    assert req["detail"] is True                                   # Quality: always maximum detail
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", real3d_fill=False)
+    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+    assert req["detail"] is False and "compare_normal_detail" not in rep["outputs"]
+
+
 def test_commercial_profile_blocks_noncommercial_models(ctx, rtx4080, photo):
     job, rep, _ = run_job(ctx, rtx4080, photo, license_profile="commercial")
     assert rep["status"] == "failed" and rep["error"]["code"] == "no_backend"

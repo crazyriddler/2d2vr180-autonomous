@@ -42,6 +42,7 @@ class JobOptions:
     allow_cpu: bool = False              # allow CPU inference for cpu-capable backends (slow)
     real3d_fill: bool = True             # photo: AI-paint what the photo hides from moved views
     ipd_mm: float = 63.0                 # the people's eyes are scaled to this distance (real-world scale)
+    photo_detail: bool = False           # photos: maximum detail (always on in the Quality mode)
     video_fps: float = 0.0               # splat video: frames per second (0 = the video's own, up to 24)
     video_seconds: float = 0.0           # splat video: how much of the video (0 = all of it)
     video_start_s: float = 0.0           # splat video: where to start in the video
@@ -287,6 +288,7 @@ class JobRunner:
             ref_index = 0
             bopts = {"mode": opts.mode, "log": log, "reference_frame_index": ref_index, "fps": inp.fps,
                      "real3d_fill": opts.real3d_fill, "ipd_mm": opts.ipd_mm,
+                     "detail": opts.photo_detail or opts.mode == "quality",
                      "audio_path": str(audio_path) if audio_path else None,
                      "video_start_s": report.get("processing", {}).get("video_start_s", 0.0),
                      "hfov_deg": exif_hfov_deg(job.input) if kind == "photo" else None}
@@ -422,6 +424,11 @@ class JobRunner:
         if (cam is None and not scene.cameras) or not inp.frames:
             return {"source_view": "skipped (no reference camera)"}
         cam = cam or scene.cameras[0]
+        if len(scene) > 1_500_000:          # maximum-detail photos: a sample is enough for this check
+            idx = np.sort(np.random.default_rng(0).choice(len(scene), 1_500_000, replace=False))
+            sub = scene.subset(idx)
+            sub.scales = sub.scales * np.float32(np.sqrt(len(scene) / len(idx)))
+            scene = sub
         src = np.asarray(Image.open(inp.frames[min(ref_index, len(inp.frames) - 1)]).convert("RGB"))
         s = min(1.0, 640 / max(cam.width, cam.height))
         w, h = max(8, int(cam.width * s)), max(8, int(cam.height * s))

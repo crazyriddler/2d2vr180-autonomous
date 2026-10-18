@@ -240,13 +240,18 @@ class LockedPhotoBackend(Backend):
             human_seg = human_pm = None
             log("people's own 3D shape needs Sapiens2 (Components); the scene's depth is used for them")
         ipd = float(options.get("ipd_mm") or 63.0)
+        detail = bool(options.get("detail"))
+        if detail:
+            log("maximum detail: the photo at up to 3072 px, fine relief from MoGe-3 on parts of it, SHARP on parts")
         out = run_worker(py, self.worker_script,
                          {"mode": "photo", "checkpoint": str(ctx.models.paths("sharp")["sharp_2572gikvuh.pt"]),
                           "geometry": item["out"], "output_dir": str(work), "face_model": face, "plain": True,
                           "ipd_target_m": ipd / 1000.0, "human_seg": human_seg, "human_pointmap": human_pm,
+                          "detail": detail, "photo": str(ref), "moge_path": str(ctx.models.paths(mg)["model.pt"]),
+                          "moge_version": "v3" if mg == MOGE_MODELS[0] else "v2",
                           "allow_cpu": bool(getattr(ctx, "allow_cpu", False))},
                          inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.25, 0.45),
-                         timeout_s=1800)
+                         timeout_s=3600)
         used("sharp")
         res = out["result"]
         scene = read_gaussian_ply(Path(res["outputs"]["locked"]))
@@ -294,6 +299,13 @@ class LockedPhotoBackend(Backend):
                  ply, final)]
         if final is not scene:
             rows.append(("photo locked, no fill", locked_ply, scene))
+        if res["outputs"].get("standard"):          # maximum detail: the normal result next to it
+            std = read_gaussian_ply(Path(res["outputs"]["standard"]))
+            std.provenance[:] = INFERRED
+            std.cameras = [cam]
+            p3 = write_gaussian_ply(std, exp / "compare_normal_detail.ply")
+            extra_files["compare_normal_detail"] = str(p3)
+            rows.append(("normal detail (for comparison)", p3, std))
         if res["outputs"].get("plain"):
             plain = read_gaussian_ply(Path(res["outputs"]["plain"]))
             plain.provenance[:] = INFERRED
@@ -337,7 +349,8 @@ class LockedPhotoBackend(Backend):
                    "scale": res.get("scale", 1.0), "scale_from": res.get("scale_from"),
                    "ipd_target_mm": round(res.get("ipd_target_m", 0.063) * 1000, 1), "people": res.get("people"),
                    "hfov_used_deg": float(np.degrees(2 * np.arctan(res["size"][0] / 2 / res["f_px"]))),
-                   "fill": fill_report, "fill_status": fill_status, "files": extra_files})
+                   "fill": fill_report, "fill_status": fill_status, "detail": res.get("detail"),
+                   "files": extra_files})
 
     def _fill(self, inp, ctx, options, progress, cancel, log, scene, locked_ply, cam, mg, used):
         """Holes of moved views → painted → SHARP with tied depth → added. None when it cannot run."""

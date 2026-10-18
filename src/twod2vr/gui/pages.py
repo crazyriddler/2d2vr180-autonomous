@@ -199,6 +199,14 @@ class CreatePage(QWidget):
                                     "saw (behind edges) is painted by Qwen-Image-Edit and added at a depth tied to the "
                                     "photo's. Shown as 'generative'. Not used for videos (too slow per frame).")
         f.addRow("", self.real3d_fill)
+        self.photo_detail = QCheckBox("Photos: maximum detail (slower, more splats)")
+        self.photo_detail.setChecked(win.settings.photo_detail)
+        self.photo_detail.setToolTip("More of the photo's small geometry: the photo at up to 3072 px, fine relief "
+                                     "from the depth model on parts of it, SHARP on parts of it, and everything the "
+                                     "photo sees placed at that depth. About 2-3x the detail up close, a minute "
+                                     "more, and several million splats (heavier in VR). Always on in Quality.")
+        self.photo_detail.setEnabled(win.settings.mode != "quality")
+        f.addRow("", self.photo_detail)
         opts.addWidget(box)
 
         vbox = QGroupBox("Videos → splat video")
@@ -231,6 +239,7 @@ class CreatePage(QWidget):
         for w in (self.ipd, self.video_start):
             w.valueChanged.connect(self._save_opts)
         self.real3d_fill.toggled.connect(self._save_opts)
+        self.photo_detail.toggled.connect(self._save_opts)
         top.addLayout(opts, 2)
         v.addLayout(top)
 
@@ -295,6 +304,8 @@ class CreatePage(QWidget):
         s = self.win.settings
         s.mode = self.mode()
         s.real3d_fill = self.real3d_fill.isChecked()
+        s.photo_detail = self.photo_detail.isChecked()
+        self.photo_detail.setEnabled(self.mode() != "quality")      # Quality always uses maximum detail
         s.ipd_mm = float(self.ipd.value())
         s.video_start_s = float(self.video_start.value())
         s.video_seconds = float(self.video_len.currentData())

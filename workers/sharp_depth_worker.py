@@ -174,9 +174,11 @@ def load_predictor(path, device, torch):
     return p.eval().to(device)
 
 
-def predict(predictor, img, f_px, device, torch, depth=None, valid=None):
+def predict(predictor, img, f_px, device, torch, depth=None, valid=None, cx=None, cy=None):
     """SHARP on an image (H,W,3 uint8) with focal length f_px; ``depth`` (H,W metric, ``valid`` mask) is
-    injected when given. Returns (gaussians in metric camera space, diagnostics)."""
+    injected when given. ``cx, cy``: the principal point in the image's pixels when it is a crop of a larger
+    picture (default its centre), so the splats land in the larger picture's camera frame. Returns
+    (gaussians in metric camera space, diagnostics)."""
     import numpy as np
     import torch.nn.functional as F
     from sharp.utils.gaussians import unproject_gaussians
@@ -200,7 +202,8 @@ def predict(predictor, img, f_px, device, torch, depth=None, valid=None):
             tgt, ratio = target_depth(z, ok, mono, torch)
             info = {"sharp_own_scale": round(1.0 / ratio, 4), "depth_coverage": round(float(ok.float().mean()), 4)}
         g = predictor(image, disparity_factor, depth=tgt)
-        K = torch.tensor([[f_px, 0, w / 2, 0], [0, f_px, h / 2, 0], [0, 0, 1, 0], [0, 0, 0, 1]]).float().to(device)
+        px, py = (w / 2 if cx is None else cx), (h / 2 if cy is None else cy)
+        K = torch.tensor([[f_px, 0, px, 0], [0, f_px, py, 0], [0, 0, 1, 0], [0, 0, 0, 1]]).float().to(device)
         K[0] *= INTERNAL / w
         K[1] *= INTERNAL / h
         g = unproject_gaussians(g, torch.eye(4).to(device), K, (INTERNAL, INTERNAL))
@@ -353,6 +356,93 @@ def fill(req, torch, device):
     emit("result", outputs=[v["out"] for v in views], stats=stats, vram_peak_mib=vram_peak_mib(torch))
 
 
+def detail_photo(req, predictor, img, depth, f_px, parts, device, torch):
+    """Maximum detail (workers/detail_geometry.py): the photo at up to 3072 px, MoGe-3 on crops fused into
+    the whole-photo depth, SHARP on crops with every seen splat placed at that depth. Returns (gaussians,
+    (W, H), focal length in those pixels, report)."""
+    import numpy as np
+    import torch.nn.functional as F
+    from PIL import Image
+
+    import detail_geometry as dg
+
+    h, w = img.shape[:2]
+    full = Image.open(req["photo"]).convert("RGB") if req.get("photo") else Image.fromarray(img)
+    s = min(1.0, dg.WORK_SIDE / max(full.size))
+    W, H = max(round(full.width * s), w), max(round(full.height * s), h)
+    work = np.asarray(full.resize((W, H), Image.LANCZOS)) if (W, H) != full.size else np.asarray(full)
+    fw = f_px * W / w
+    G = dg.resize_nan(depth, (H, W), torch)
+    n = dg.tile_count(W, H)
+    boxes = dg.tile_boxes(W, H, n) if n > 1 else [((0, 0, W, H), (0, 0, W, H))]
+    rep = {"work_size": [W, H], "tiles": n * n}
+    fused = G
+    if n > 1 and req.get("moge_path"):
+        progress(0.45, f"fine relief: MoGe-3 on {n * n} parts of the photo at {W}x{H}")
+        moge = load_moge(req["moge_path"], req.get("moge_version", "v3"), device, torch)
+        crops = []
+        for k, (crop, _) in enumerate(boxes):
+            x0, y0, x1, y1 = crop
+            c = work[y0:y1, x0:x1]
+            cs = min(1.0, 1536 / max(c.shape[:2]))
+            ci = c if cs >= 1 else np.asarray(Image.fromarray(c).resize((round(c.shape[1] * cs), round(c.shape[0] * cs)),
+                                                                            Image.LANCZOS))
+            t = torch.from_numpy(np.array(ci, copy=True)).to(device).float().div(255).permute(2, 0, 1)
+            fov = float(np.degrees(2 * np.arctan((x1 - x0) / 2 / fw)))
+            kw = {"refine_steps": 3} if req.get("moge_version", "v3") == "v3" else {}
+            with torch.no_grad():
+                o = moge.infer(t, resolution_level=9, fov_x=fov, use_fp16=device.type == "cuda", **kw)
+            d = o["depth"].float()
+            ok = torch.isfinite(d) & (d > 0)
+            if "mask" in o:
+                ok &= o["mask"].bool()
+            d = torch.where(ok, d, torch.nan).cpu().numpy()
+            crops.append((crop, dg.resize_nan(d, (y1 - y0, x1 - x0), torch)))
+            progress(0.45 + 0.1 * (k + 1) / len(boxes), f"fine relief: part {k + 1}/{len(boxes)}")
+        del moge
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        fused, rep["depth_parts"] = dg.patch_fusion(G, crops, sigma=max(W, H) * 0.01, torch=torch)
+    pw = None
+    if parts is not None:                      # the people keep their own measured shape
+        pw = F.interpolate(torch.as_tensor(parts["weight"], dtype=torch.float32)[None, None], size=(H, W),
+                           mode="bilinear", align_corners=False)[0, 0].numpy().astype(np.float64)
+        fused = np.where(np.isfinite(G), pw * G + (1 - pw) * fused, fused)
+    weight = dg.edge_weight(fused, torch)
+    if pw is not None:
+        weight = np.maximum(weight, pw)
+    rep["placed_share"] = round(float((weight > 0.5).mean()), 3)
+    valid = np.isfinite(fused) & (fused > 0)
+    keep_parts = []
+    for k, (crop, core) in enumerate(boxes):
+        progress(0.56 + 0.14 * k / len(boxes), f"SHARP on part {k + 1}/{len(boxes)} of the photo")
+        x0, y0, x1, y1 = crop
+        g, _ = predict(predictor, np.ascontiguousarray(work[y0:y1, x0:x1]), fw, device, torch,
+                       fused[y0:y1, x0:x1], valid[y0:y1, x0:x1], cx=W / 2 - x0, cy=H / 2 - y0)
+        with torch.no_grad():
+            means, scales, _ = snap_to_depth(g, fused[y0:y1, x0:x1], weight[y0:y1, x0:x1], torch, lo=0.7, hi=1.4)
+            own = torch.from_numpy(dg.owned(crop, core, SHARP_GRID).reshape(-1)).to(means.device)
+            own = torch.cat([own] * (means.shape[0] // own.numel()))
+            sel = own & (g.opacities[0] > 0.02)
+            keep_parts.append([t.detach()[sel].cpu() for t in (means, scales, g.quaternions[0], g.colors[0],
+                                                                g.opacities[0])])
+        del g
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+    cat = [torch.cat([p[i] for p in keep_parts]) for i in range(5)]
+    gd = type_of_gaussians()(*[c[None] for c in cat])
+    rep["splats"] = int(cat[0].shape[0])
+    log(f"maximum detail: {rep['splats']:,} splats from {len(boxes)} part(s) of the photo at {W}x{H}; "
+        f"{rep['placed_share']:.0%} of it placed at the fine depth")
+    return gd, (W, H), fw, rep
+
+
+def type_of_gaussians():
+    from sharp.utils.gaussians import Gaussians3D
+
+    return Gaussians3D
+
+
 def main(req):
     import numpy as np
     import torch
@@ -444,6 +534,20 @@ def main(req):
     locked = os.path.join(out_dir, "locked.ply")
     save_ply(g, f_px, (h, w), locked)
     outputs = {"locked": locked}
+    size_out, f_out, detail = [w, h], f_px, None
+    if req.get("detail"):
+        try:
+            gd, (W, H), fw, detail = detail_photo(req, predictor, img, depth, f_px, parts, device, torch)
+            outputs["standard"] = locked                       # the normal result, for comparison
+            locked = outputs["locked"] = os.path.join(out_dir, "locked_detail.ply")
+            save_ply(gd, fw, (H, W), locked)
+            size_out, f_out = [W, H], fw
+            del gd
+        except Exception as e:  # noqa: BLE001 - fall back to the normal result
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+            detail = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+            log(f"maximum detail failed ({detail['error']}); the normal result is used")
     log(f"SHARP's own depth was {info['sharp_own_scale']:.3f}× the measured one; aligned to it")
     if req.get("plain", True):
         progress(0.75, "SHARP alone (for comparison)")
@@ -451,7 +555,7 @@ def main(req):
         outputs["plain"] = os.path.join(out_dir, "plain.ply")
         save_ply(g2, f_px, (h, w), outputs["plain"])
     progress(1.0, "done")
-    emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), f_px=f_px, size=[w, h],
+    emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), f_px=f_out, size=size_out, detail=detail,
          faces=faces, face_scale=s_face, scale=scale, scale_from=scale_from, ipd_target_m=target, people=people,
          **info)
 

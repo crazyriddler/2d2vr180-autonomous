@@ -55,10 +55,13 @@ Every model shows its licence before downloading. Downloads resume if interrupte
 4. **Photos: AI paints what the photo hides** (on by default): the photo's splat is looked at from a little to
    each side, and what the photo never saw (behind edges) is painted by Qwen-Image-Edit and added at a depth
    tied to the photo's. These parts are labelled *generative*.
-5. **Videos → splat video**:
+5. **Photos: maximum detail** (always on in *Quality*): more of the photo's small geometry. The photo is
+   worked at up to 3072 px, the depth model's fine relief is taken from parts of it, and SHARP runs on parts
+   of it. About 2-3x the detail up close, a minute more, and about 3 million splats (heavier in VR).
+6. **Videos → splat video**:
    - *Start at* and *Length* choose the part of the video.
    - *Frames per second*: by default the video's own rate, up to 24.
-6. Press **Generate**. Jobs run one after the other; the log shows every step.
+7. Press **Generate**. Jobs run one after the other; the log shows every step.
 
 ### What Real 3D does with a photo
 

@@ -1,3 +1,57 @@
+# 2D2VR 2.0.0-rc6 — maximum detail for photos
+
+The owner asked how much more of a photo's small geometry the 3D could capture, then asked for all of it to
+be done.
+
+## Where the limits were
+
+- **SHARP's splat grid.** SHARP sees the photo shrunk to 1536 x 1536 and makes 2 x 768 x 768 splats. On a
+  4000 px photo that is one splat per ~5 x 5 pixels.
+- **MoGe-3's resolution.** MoGe-3 saw the photo at 1536 px at most and works internally at less, so small
+  relief came out smooth.
+- **Smooth alignment.** Outside the people, SHARP followed that depth only through its smooth learned
+  alignment.
+
+## Maximum detail
+
+There is a new checkbox under Create → Real 3D: **"Photos: maximum detail"**. It is always on in the
+**Quality** mode. It does three things:
+
+1. **Fine relief from parts of the photo.** MoGe-3 runs on 2 x 2 overlapping parts of the photo at up to
+   3072 px. Each part is aligned to the whole-photo depth, and the result is fused:
+   - the whole photo gives the overall shape and real-world scale;
+   - the parts give the fine relief.
+   - People keep the shape measured by Sapiens2.
+   - This is the Boosting Monocular Depth / PatchFusion idea.
+2. **Everything the photo sees, placed at that depth.** In rc4 only the people were placed at their
+   measured depth; now the whole scene is. Near depth edges, where a pixel's depth is ambiguous, little or
+   nothing moves, so nothing is torn.
+3. **SHARP on 2 x 2 parts of the photo.**
+   - Each part uses its real camera geometry (its off-centre principal point) and keeps the splats of the
+     area it owns.
+   - Nearly transparent splats are dropped.
+   - The result has about 3 million splats instead of 1.2 million.
+
+What to expect:
+- **More detail:** about 2-3x more geometric detail up close.
+- **Time:** about a minute more per photo.
+- **Size:** a heavier scene (scene.splat ~100 MB, VR a little heavier).
+- **Fallback:** if anything in the detail path fails, the normal result is used and the log says why.
+
+## Checks
+
+- **Stand-in test:** a wall with 2 cm grooves that the whole-photo depth misses; the parts' depth has a
+  wrong scale and shift.
+  - The maximum-detail splats have the grooves at 1.89 cm (correlation 1.00 with the truth).
+  - The normal path had none.
+- **Comparison files:** `views_sheet.png` gets a "normal detail (for comparison)" row, and
+  `compare_normal_detail.ply` is exported.
+- **Report:** `backend.extra.detail` gives the working size, the parts and the number of splats.
+
+Everything else is as in rc5 below.
+
+---
+
 # 2D2VR 2.0.0-rc5 — the AI fill paints what lies around the photo
 
 Owner report on rc4: everything works, but "AI paints what the photo hides" seemed to do nothing; only what

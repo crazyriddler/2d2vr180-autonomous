@@ -61,7 +61,20 @@ def main(req):
     if req.get("human_seg") and req.get("human_pointmap"):
         people = {"people_fraction": 0.3, "box": [0, h, 0, w], "scene_vs_human_distance": 1.1,
                   "human_model": "sapiens2_1b"}
-    emit("result", outputs=outputs, vram_peak_mib=None, f_px=float(K[0, 0]), size=[w, h], faces=[],
+    detail = None
+    if req.get("detail"):        # maximum detail: the same splats twice as dense (a stand-in), the normal kept
+        import shutil
+
+        outputs["standard"] = outputs["locked"]
+        sc = pointmap_to_gaussians(pts, img, None, cam)
+        jit = np.random.default_rng(0).normal(0, 0.002, sc.means.shape).astype(np.float32)
+        both = sc.subset(np.r_[np.arange(len(sc)), np.arange(len(sc))])
+        both.means = both.means + np.r_[np.zeros_like(jit), jit]
+        both.cameras = [cam]
+        outputs["locked"] = str(write_gaussian_ply(both, os.path.join(out, "locked_detail.ply")))
+        detail = {"work_size": [w, h], "tiles": 1, "splats": len(both), "placed_share": 0.9}
+        shutil.copy(req["photo"], os.path.join(out, "detail_photo_seen.png"))
+    emit("result", outputs=outputs, vram_peak_mib=None, f_px=float(K[0, 0]), size=[w, h], faces=[], detail=detail,
          face_scale=1.0, sharp_own_scale=1.2, depth_coverage=1.0, people=people,
          scale=1 / 1.1 if people else 1.0, scale_from="human model" if people else "measured depth",
          ipd_target_m=req.get("ipd_target_m", 0.063))
