@@ -42,15 +42,22 @@ MOGE_MODELS = ("moge-3-vitl",)
 FACE_MODEL = "yunet-face"
 HUMAN_SEG = "sapiens2-seg-0.4b"            # rc58: people's outline and 3D shape (Sapiens2)
 HUMAN_POINTMAP = "sapiens2-pointmap-1b"
+# "move": head translation (m); "orbit": (azimuth, elevation) degrees around the subject; "turn": (yaw, pitch)
+# degrees looking around from the camera's place (positive: right, up) - what is outside the photo's frame.
+_TURNS = [("look 40° left", "turn", (-40, 0)), ("look 40° right", "turn", (40, 0)),
+          ("look 25° up", "turn", (0, 25)), ("look 25° down", "turn", (0, -25))]
 SHEET_VIEWS = [("head 15 cm left", "move", (-0.15, 0, 0)), ("head 15 cm right", "move", (0.15, 0, 0)),
-               ("head 10 cm up", "move", (0, -0.10, 0)), ("15° left", "orbit", (-15, 0)), ("15° right", "orbit", (15, 0))]
-# Moved cameras whose holes are filled, small moves first (an earlier view's content wins where they overlap).
+               ("head 10 cm up", "move", (0, -0.10, 0)), ("15° left", "orbit", (-15, 0)), ("15° right", "orbit", (15, 0)),
+               _TURNS[0], _TURNS[1]]
+# Moved cameras whose holes are filled, small moves first (an earlier view's content wins where they overlap);
+# then (2.0.0-rc5) looking around from the camera's place, so in VR there is scene beyond the photo's frame.
 _FAST = [("head 15 cm left", "move", (-0.15, 0, 0)), ("head 15 cm right", "move", (0.15, 0, 0)),
          ("15° left", "orbit", (-15, 0)), ("15° right", "orbit", (15, 0))]
 _AUTO = _FAST + [("head 10 cm up", "move", (0, -0.10, 0)), ("30° left", "orbit", (-30, 0)), ("30° right", "orbit", (30, 0))]
-FILL_VIEWS = {"fast": _FAST, "auto": _AUTO,
+FILL_VIEWS = {"fast": _FAST + _TURNS[:2], "auto": _AUTO + _TURNS,
               "quality": _AUTO + [("head 10 cm down", "move", (0, 0.10, 0)), ("15° from above", "orbit", (0, 15)),
-                                  ("head 30 cm left", "move", (-0.30, 0, 0)), ("head 30 cm right", "move", (0.30, 0, 0))]}
+                                  ("head 30 cm left", "move", (-0.30, 0, 0)), ("head 30 cm right", "move", (0.30, 0, 0))]
+              + _TURNS}
 FILL_PROMPT = ("The pure black areas are missing parts of this picture. Fill them with what is hidden behind, "
                "continuing the surrounding background, surfaces, texture and lighting seamlessly. Do not add new "
                "objects or people. Keep everything else exactly the same.")
@@ -77,6 +84,11 @@ def sheet_cameras(cam: Camera, pivot: float, side: int = 480, views=None, photo:
         c2w = np.eye(4)
         if kind == "move":
             c2w[:3, 3] = v
+        elif kind == "turn":                 # OpenCV axes: yaw about y (right +), pitch about x (up +)
+            yw, pt = np.radians(v[0]), np.radians(v[1])
+            ry = np.array([[np.cos(yw), 0, np.sin(yw)], [0, 1, 0], [-np.sin(yw), 0, np.cos(yw)]])
+            rx = np.array([[1, 0, 0], [0, np.cos(pt), -np.sin(pt)], [0, np.sin(pt), np.cos(pt)]])
+            c2w[:3, :3] = ry @ rx
         else:
             _, R, t = orbit_pose(v[0], v[1], pivot)
             c2w[:3, :3], c2w[:3, 3] = R, t
@@ -255,15 +267,19 @@ class LockedPhotoBackend(Backend):
         warnings = ["OBJ mesh is not available for SHARP output."]
 
         # 5-8. fill the holes of moved views
+        fill_status = "off (option turned off)"
         if options.get("real3d_fill", True):
+            self.fill_note = None
             try:
                 filled = self._fill(inp, ctx, options, progress, cancel, log, scene, locked_ply, cam, mg, used)
             except BackendError as e:
                 if e.code == "cancelled":
                     raise
                 filled = None
-                warnings.append(f"Filling what the photo hides failed ({str(e).splitlines()[0][:200]}); the "
-                                "photo's splat is used as it is.")
+                self.fill_note = f"failed: {str(e).splitlines()[0][:200]}"
+            if filled is None:
+                fill_status = self.fill_note or "nothing to fill"
+                warnings.append(f"AI fill of what the photo hides: {fill_status}. The photo's splat is used as it is.")
                 log(warnings[-1])
             if filled is not None:
                 final, added, fill_report, steps = filled
@@ -303,6 +319,10 @@ class LockedPhotoBackend(Backend):
             warnings.append(f"Real-world scale set from the human model's distance of the people: "
                             f"×{res.get('scale', 1.0):.3f}.")
         added_n = int((final.provenance == GENERATIVE).sum())
+        if final is not scene:
+            views_added = [r for r in fill_report if r.get("view") != "photo" and r.get("added")]
+            fill_status = (f"{added_n:,} AI-painted splats added from {len(views_added)} of "
+                           f"{len([r for r in fill_report if r.get('view') != 'photo'])} views")
         return BackendResult(
             backend=self.id, scene_ply=ply, splat=splat, obj=None, cameras=[cam.to_dict()], metric_scale=True,
             provenance_note=(f"{len(final) - added_n:,} splats INFERRED from the photo: Apple SHARP aligned to the "
@@ -317,7 +337,7 @@ class LockedPhotoBackend(Backend):
                    "scale": res.get("scale", 1.0), "scale_from": res.get("scale_from"),
                    "ipd_target_mm": round(res.get("ipd_target_m", 0.063) * 1000, 1), "people": res.get("people"),
                    "hfov_used_deg": float(np.degrees(2 * np.arctan(res["size"][0] / 2 / res["f_px"]))),
-                   "fill": fill_report, "files": extra_files})
+                   "fill": fill_report, "fill_status": fill_status, "files": extra_files})
 
     def _fill(self, inp, ctx, options, progress, cancel, log, scene, locked_ply, cam, mg, used):
         """Holes of moved views → painted → SHARP with tied depth → added. None when it cannot run."""
@@ -327,7 +347,7 @@ class LockedPhotoBackend(Backend):
         from . import painter
 
         if not painter.installed(ctx):
-            log("filling what the photo hides needs Qwen-Image-Edit (Components); skipped")
+            self.fill_note = "skipped: needs the AI painter (Components: AI painter engine and Qwen-Image-Edit)"
             return None
         mode = options.get("mode", "auto")
         work = inp.work_dir / "locked" / "fill"
@@ -338,7 +358,7 @@ class LockedPhotoBackend(Backend):
         renders = render_views(ctx, locked_ply, scene, [c for _, c in cams], work / "render", work,
                                self.render_script, log, cpu_fallback=False)
         if renders is None:
-            log("filling what the photo hides needs the GPU renderer; skipped")
+            self.fill_note = "skipped: the GPU renderer of the Real 3D engine did not run (see job.log)"
             return None
         photo_buf = DepthBuffer(cam).fill(scene.means, scene.opacity > 0.1)
         todo = []
@@ -363,7 +383,7 @@ class LockedPhotoBackend(Backend):
             np.savez(f"{base}_known.npz", depth=np.where(hole, np.inf, r["depth"]).astype(np.float32))
             todo.append({"k": k, "label": label, "cam": c, "hole": hole, "render": r["rgb"], "base": str(base)})
         if not todo:
-            log("no holes to fill from the moved positions")
+            self.fill_note = "nothing to fill: no holes seen from the moved positions"
             return None
         log(f"painting the holes of {len(todo)} views with Qwen-Image-Edit")
         req = painter.request(ctx, f"{todo[0]['base']}_holes.png", str(work / "painted"),

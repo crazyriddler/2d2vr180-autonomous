@@ -1,3 +1,40 @@
+# 2D2VR 2.0.0-rc5 — the AI fill paints what lies around the photo
+
+Owner report on rc4: everything works, but "AI paints what the photo hides" seemed to do nothing; only what
+the photo shows could be seen.
+
+## Why it seemed to do nothing
+
+- **What it covered.** The fill only painted the gaps seen when the head moves a little (±15-30 cm, 15-30°
+  around the subject, always looking at it): thin slivers behind the edges of objects.
+- **What you notice in VR.** As soon as you turn your head, everything outside the photo's frame is empty,
+  and no fill view ever looked there.
+- **It never said what it did.** When the fill was skipped (painter not installed, renderer not running)
+  or failed, the reason was only in the job log.
+
+## What changes
+
+- **Looking around from the camera's place.** The fill also looks 40° left, 40° right, 25° up and 25°
+  down. In each of these views:
+  - the part showing the photo stays exactly as rendered;
+  - Qwen-Image-Edit paints the rest, continuing the scene;
+  - SHARP gives it volume, with its depth tied to the photo's at the border.
+  - Only what was missing is added, labelled *generative* and exported separately as `added_layer.ply`.
+  - So in VR there is scene beyond the photo's frame when you look around.
+- **Views per quality mode:**
+  - Fast adds left and right (6 views in total);
+  - Auto and Quality add all four.
+  - Expect about 20 s more per view.
+- **The result is shown.** The Results page and the report (`backend.extra.fill_status`) say what the fill
+  did, for example "48,210 AI-painted splats added from 9 of 11 views", or why it did not run. If it did not
+  run, the reason is also a warning.
+- **`views_sheet.png`** includes the 40° left and right views, so the painted surroundings are visible at a
+  glance.
+
+Everything else is as in rc4 below.
+
+---
+
 # 2D2VR 2.0.0-rc4 — photos get the people's real relief too
 
 The owner asked for the rc3 improvement of splat videos to apply to photos as well.

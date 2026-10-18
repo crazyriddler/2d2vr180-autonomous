@@ -80,11 +80,16 @@ def test_real3d_fills_what_the_photo_hides_from_moved_views(ctx, rtx4080, photo)
     assert [c["stage"] for c in calls] == ["encode", "generate"]
     views = calls[1]["views"]
     assert calls[1]["angles_strength"] == 0 and all(v["prompt"].startswith("The pure black areas") for v in views)
-    assert all(v["image"].endswith("_holes.png") for v in views) and 1 <= len(views) <= 4
+    assert all(v["image"].endswith("_holes.png") for v in views) and 1 <= len(views) <= 6
+    labels = [v["label"] for v in views]
+    assert "look 40° left" in labels and "look 40° right" in labels   # beyond the photo's frame
     fill = json.loads((job.dir / "locked" / "fill" / "fake_fill_request.json").read_text())
     assert len(fill["views"]) == len(views) and fill["moge_version"] == "v3"
     ex = rep["backend"]["extra"]
     assert ex["added_splats"] > 0 and ex["fill"][-1]["view"] == "photo"
+    assert ex["fill_status"].startswith(f"{ex['added_splats']:,} AI-painted splats added from")
+    turned = [r for r in ex["fill"] if r["view"] == "look 40° left"][0]
+    assert turned["hole_fraction"] > 0.2 and turned["added"] > 0    # what lies left of the photo is painted
     out = rep["outputs"]
     assert Path(out["fill_steps"]).exists() and Path(out["added_layer"]).exists()
     added = read_gaussian_ply(Path(out["added_layer"]))
@@ -106,7 +111,9 @@ def test_real3d_fill_can_be_turned_off(ctx, rtx4080, photo):
 def test_real3d_without_the_painter_says_so(ctx, rtx4080, photo):
     job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast")
     assert rep["status"] == "succeeded", rep.get("error")
-    assert "needs Qwen-Image-Edit" in (job.dir / "job.log").read_text(encoding="utf-8")
+    assert "needs the AI painter" in (job.dir / "job.log").read_text(encoding="utf-8")
+    assert rep["backend"]["extra"]["fill_status"].startswith("skipped: needs the AI painter")
+    assert any(w.startswith("AI fill of what the photo hides: skipped") for w in rep["warnings"])
 
 
 def test_real3d_uses_the_human_model_and_the_eye_distance_setting(ctx, rtx4080, photo):

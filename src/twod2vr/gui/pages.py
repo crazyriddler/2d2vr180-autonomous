@@ -501,6 +501,9 @@ class ResultsPage(QWidget):
         if rep.get("error"):
             html.append(f"<p style='color:#e66'><b>Error</b> [{rep['error'].get('code')}]: "
                         f"{rep['error'].get('message')}</p>")
+        fs = ((rep.get("backend") or {}).get("extra") or {}).get("fill_status")
+        if fs:
+            html.append(f"<p><b>AI fill of what the photo hides</b>: {fs}</p>")
         if out.get("splv"):
             html.append(f"<p><b>Splat video</b>: {out.get('frames')} frames at {out.get('fps')} fps, "
                         f"{out.get('splats_per_frame') or 0:,} splats per frame"
