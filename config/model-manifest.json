@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "generated": "2026-09-27",
+  "generated": "2026-10-19",
   "hash_policy": "Pinned sha256/size are enforced. Hugging Face entries were resolved on 2026-09-27 by the Windows CI integration job (scripts/ci_integration.py: HF API LFS metadata + model-card licence). Non-LFS JSON files carry size only. The Apple SHARP checkpoint has no published hash: it is recorded on first download (trust-on-first-use).",
   "models": [
     {
@@ -28,6 +28,56 @@
         }
       ],
       "notes": "Real 3D (rc48): depth, field of view and metric scale of the original photo; runs in photo-cu128 (FlexGEMM Triton kernels). MoGe-2 is used when it is not installed."
+    },
+    {
+      "id": "moge-3-vitg",
+      "display_name": "MoGe-3 Giant — the photo's geometry for Real 3D, most accurate (used for photos when installed)",
+      "source": "https://huggingface.co/Ruicheng/moge-3-vitg",
+      "revision": "6ef26c5a4b4148dab5ccaacdb08b72dc66380475",
+      "license": "MIT (Hugging Face model card: license: mit)",
+      "license_url": "https://huggingface.co/Ruicheng/moge-3-vitg",
+      "commercial_use": true,
+      "redistributable": true,
+      "required_vram_gb": 8,
+      "backends": [
+        "photo_locked"
+      ],
+      "requires_acceptance": true,
+      "gated": false,
+      "files": [
+        {
+          "path": "model.pt",
+          "url": "https://huggingface.co/Ruicheng/moge-3-vitg/resolve/6ef26c5a4b4148dab5ccaacdb08b72dc66380475/model.pt",
+          "sha256": "ce7c15417e9105c2ace7b4272e2cc69e36940921211eb7fa05d4d0bb03f0a00c",
+          "size_bytes": 5003249242
+        }
+      ],
+      "notes": "Real 3D (2.0.0-rc7): MoGe-3 with the ViT-G backbone (1.25B parameters, same code as MoGe-3 Large); photos use it instead of the Large model when it is installed. Splat videos keep the Large model (speed)."
+    },
+    {
+      "id": "depth-pro",
+      "display_name": "Apple Depth Pro — a second measured depth for Real 3D photos (sharp edges, lens check)",
+      "source": "https://huggingface.co/apple/DepthPro",
+      "revision": "ccd1350a774eb2248bcdfb3be430e38f1d3087ef",
+      "license": "Apple Machine Learning Research Model License (apple-amlr: research purposes only, non-commercial)",
+      "license_url": "https://github.com/apple/ml-depth-pro/blob/9e65e4dbe9568d23c546fcec53302b10445e109e/LICENSE",
+      "commercial_use": false,
+      "redistributable": false,
+      "required_vram_gb": 4,
+      "backends": [
+        "photo_locked"
+      ],
+      "requires_acceptance": true,
+      "gated": false,
+      "files": [
+        {
+          "path": "depth_pro.pt",
+          "url": "https://huggingface.co/apple/DepthPro/resolve/ccd1350a774eb2248bcdfb3be430e38f1d3087ef/depth_pro.pt",
+          "sha256": "3eb35ca68168ad3d14cb150f8947a4edf85589941661fdb2686259c80685c0ce",
+          "size_bytes": 1904446787
+        }
+      ],
+      "notes": "Real 3D (2.0.0-rc7): metric depth with the sharpest object boundaries and its own focal-length estimate (Bochkovskii et al., ICLR 2025). Joined to MoGe-3 (overall shape from both, edges from Depth Pro) and used to check the EXIF lens. Same file as https://ml-site.cdn-apple.com/models/depth-pro/depth_pro.pt (same SHA256)."
     },
     {
       "id": "yunet-face",
@@ -78,6 +128,31 @@
         }
       ],
       "notes": "Real 3D (rc58): per-pixel 3D of people (Meta Sapiens2, ICLR 2026, trained on 1B human images and synthetic scans) - faces, noses and bodies with their real relief; also a distance cue for the real-world scale. Runs in photo-cu128 (vendored backbone, workers/sapiens2_backbone.py)."
+    },
+    {
+      "id": "sapiens2-normal-1b",
+      "display_name": "Sapiens2-1B surface normals — people's fine relief for Real 3D",
+      "source": "https://huggingface.co/facebook/sapiens2-normal-1b",
+      "revision": "3480505c6690732dfdc91e7078213dba14844ab3",
+      "license": "Sapiens2 License (Meta; Hugging Face card: license other / sapiens2-license)",
+      "license_url": "https://github.com/facebookresearch/sapiens2/blob/main/LICENSE.md",
+      "commercial_use": false,
+      "redistributable": false,
+      "required_vram_gb": 5,
+      "backends": [
+        "photo_locked"
+      ],
+      "requires_acceptance": true,
+      "gated": false,
+      "files": [
+        {
+          "path": "sapiens2_1b_normal.safetensors",
+          "url": "https://huggingface.co/facebook/sapiens2-normal-1b/resolve/3480505c6690732dfdc91e7078213dba14844ab3/sapiens2_1b_normal.safetensors",
+          "sha256": "74283c838275d30022149e14b1512797c35c95b971f74a43fc010f1dd15ea012",
+          "size_bytes": 6157412276
+        }
+      ],
+      "notes": "Real 3D (2.0.0-rc7): per-pixel surface normals of people (camera frame) - folds of clothes, fingers, the relief of a face - joined to their depth as its slopes. Same vendored backbone as the pointmap model; NormalHead checked against sapiens.dense (parameter names and shapes identical to the checkpoint)."
     },
     {
       "id": "sapiens2-seg-0.4b",

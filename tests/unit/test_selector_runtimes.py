@@ -97,9 +97,20 @@ def test_copy_package_installs_subpackages_from_archive(tmp_path, monkeypatch):
                                                                           "stderr": ""})())
     rm = RuntimeManager(root=tmp_path / "rt", specs={})
     rm._copy_package(sys.executable, {"url": "https://x/archive/abc.zip", "copy_package": "seva"}, lambda m: None, None)
-    monkeypatch.setattr(subprocess, "run", real_run)
     assert (site / "seva" / "modules" / "layers.py").read_text() == "X = 1\n"
     assert not (site / "demo.py").exists() and not (site / "third_party").exists()
+    # a src-layout project (Depth Pro): the package is under src/
+    buf.seek(0)
+    buf.truncate()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("ml-depth-pro-abc/src/depth_pro/__init__.py", "")
+        z.writestr("ml-depth-pro-abc/src/depth_pro/network/vit.py", "Y = 2\n")
+        z.writestr("ml-depth-pro-abc/tests/test_x.py", "")
+    rm._copy_package(sys.executable, {"url": "https://x/archive/abc.zip", "copy_package": "depth_pro",
+                                      "subdir": "src"}, lambda m: None, None)
+    monkeypatch.setattr(subprocess, "run", real_run)
+    assert (site / "depth_pro" / "network" / "vit.py").read_text() == "Y = 2\n"
+    assert not (site / "src").exists() and not (site / "tests").exists()
 
 
 def test_moved_data_folder_relinks_uv_python(tmp_path):

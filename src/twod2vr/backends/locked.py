@@ -14,6 +14,11 @@ This backend builds that foundation:
      second layer behind edges, with MoGe's geometry and scale instead of SHARP's monocular guess;
   4. diagnostics: SHARP alone is exported next to it, and a sheet of views (head 15 cm to each side and up,
      15° around the subject) compares the two.
+2.0.0-rc7 "precision" (workers/precision.py, refine.py): the EXIF lens checked against MoGe-3's and Depth
+Pro's own estimates; MoGe-3 several times (photo, mirror image, coarser level) joined to Apple Depth Pro; fine
+relief from surface normals (MoGe-3's; Sapiens2's for people); depth edges sent to one side; every splat the
+photo sees placed at that depth; the splat fitted to the photo from its own camera (colours, opacities,
+sizes); relief.png shows each step. MoGe-3 Giant replaces the Large model for photos when installed.
 Then (rc57) the holes are filled, consistent with the photo by construction:
   5. the locked splat is rendered from moved cameras (head 15 cm to each side, 15° around the subject; Auto and
      Quality go further). A hole is every pixel showing nothing the photo saw: empty, or SHARP's own guesses
@@ -38,10 +43,12 @@ from ..scene import GENERATIVE, INFERRED, Camera, GaussianScene, read_gaussian_p
 from .base import (SCENE_STATIC, SINGLE_VIEW, Availability, Backend, BackendContext, BackendError, BackendResult,
                    Estimate, JobInput, run_worker)
 
-MOGE_MODELS = ("moge-3-vitl",)
+MOGE_MODELS = ("moge-3-vitg", "moge-3-vitl")   # rc7: the Giant model for photos when installed
 FACE_MODEL = "yunet-face"
 HUMAN_SEG = "sapiens2-seg-0.4b"            # rc58: people's outline and 3D shape (Sapiens2)
 HUMAN_POINTMAP = "sapiens2-pointmap-1b"
+HUMAN_NORMAL = "sapiens2-normal-1b"        # rc7: people's fine relief
+DEPTH_PRO = "depth-pro"                    # rc7: a second measured depth (sharp edges, lens check)
 # "move": head translation (m); "orbit": (azimuth, elevation) degrees around the subject; "turn": (yaw, pitch)
 # degrees looking around from the camera's place (positive: right, up) - what is outside the photo's frame.
 _TURNS = [("look 40° left", "turn", (-40, 0)), ("look 40° right", "turn", (40, 0)),
@@ -69,6 +76,10 @@ def moge_model(ctx) -> str | None:
         if m in ctx.models.entries and ctx.models.is_installed(m):
             return m
     return None
+
+
+def moge_name(mg: str) -> str:
+    return {"moge-3-vitg": "MoGe-3 Giant", "moge-3-vitl": "MoGe-3"}.get(mg, "MoGe-2")
 
 
 def sheet_cameras(cam: Camera, pivot: float, side: int = 480, views=None, photo: bool = True) -> list[tuple[str, dict]]:
@@ -194,7 +205,7 @@ class LockedPhotoBackend(Backend):
         if moge_model(ctx) is None:
             av.ok = False
             av.reasons.append("models not installed: MoGe-3 Large (the photo's measured depth)")
-            av.missing_models.append(MOGE_MODELS[0])
+            av.missing_models.append(MOGE_MODELS[-1])
         return av
 
     def estimate(self, inp: JobInput, hw, options: dict) -> Estimate:
@@ -212,44 +223,54 @@ class LockedPhotoBackend(Backend):
             st = ctx.models.status(mid)
             models_used.append({"id": mid, **{k: st[k] for k in ("revision", "license", "hash_status")}})
 
-        # 1. the photo's lens and metric geometry
-        mg = moge_model(ctx)
-        item = {"path": str(ref), "out": str(work / "photo.npz")}
-        if options.get("hfov_deg"):
-            item["fov_x"] = float(options["hfov_deg"])
-        log(f"the photo's geometry: {'MoGe-3' if mg == MOGE_MODELS[0] else 'MoGe-2'}"
-            + (f" at the EXIF lens ({item['fov_x']:.1f}°)" if "fov_x" in item else " (lens estimated from the image)"))
-        run_worker(py, self.geometry_script,
-                   {"model_path": str(ctx.models.paths(mg)["model.pt"]), "version": "v3" if mg == MOGE_MODELS[0] else "v2",
-                    "refine_steps": 3, "max_side": 1536, "fp16": True, "images": [item],
-                    "allow_cpu": bool(getattr(ctx, "allow_cpu", False))},
-                   inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.0, 0.25),
-                   timeout_s=1800)
-        used(mg)
-
-        # 2-3. scale check and SHARP with the measured depth
         def installed_file(mid):
             if mid in ctx.models.entries and ctx.models.is_installed(mid):
                 used(mid)
                 return str(next(iter(ctx.models.paths(mid).values())))
             return None
 
+        # 1. the photo's lens and metric geometry (rc7 "precision": lens check, several passes, Depth Pro)
+        mg = moge_model(ctx)
+        version = "v3" if mg.startswith("moge-3") else "v2"
+        precise = bool(options.get("precision", True))
+        item = {"path": str(ref), "out": str(work / "photo.npz")}
+        if options.get("hfov_deg"):
+            item["fov_x"] = float(options["hfov_deg"])
+        log(f"the photo's geometry: {moge_name(mg)}"
+            + (f" at the EXIF lens ({item['fov_x']:.1f}°)" if "fov_x" in item else " (lens estimated from the image)"))
+        geo_req = {"model_path": str(ctx.models.paths(mg)["model.pt"]), "version": version,
+                   "refine_steps": 3, "max_side": 1536, "fp16": True, "images": [item],
+                   "allow_cpu": bool(getattr(ctx, "allow_cpu", False))}
+        if precise:
+            dp = installed_file(DEPTH_PRO)
+            if not dp:
+                log("a second measured depth needs Apple Depth Pro (Components); MoGe alone is used")
+            geo_req["precision"] = {"passes": True, "depth_pro": dp, "lens_check": True}
+        geo_out = run_worker(py, self.geometry_script, geo_req, inp.work_dir / "worker", progress, cancel, env=env,
+                             log=log, progress_range=(0.0, 0.25), timeout_s=1800)
+        used(mg)
+        geo_prec = ((geo_out.get("result") or {}).get("precision") or [None])[0]
+
+        # 2-3. scale check and SHARP with the measured depth
+
         face = installed_file(FACE_MODEL)
         human_seg, human_pm = installed_file(HUMAN_SEG), installed_file(HUMAN_POINTMAP)
         if not (human_seg and human_pm):
             human_seg = human_pm = None
             log("people's own 3D shape needs Sapiens2 (Components); the scene's depth is used for them")
+        human_normal = installed_file(HUMAN_NORMAL) if precise and human_seg else None
         ipd = float(options.get("ipd_mm") or 63.0)
         detail = bool(options.get("detail"))
         if detail:
-            log("maximum detail: the photo at up to 3072 px, fine relief from MoGe-3 on parts of it, SHARP on parts")
+            log("maximum detail: the photo at up to 3072 px (4608 px from 24 MP), fine relief from MoGe-3 on parts "
+                "of it, SHARP on parts")
         out = run_worker(py, self.worker_script,
                          {"mode": "photo", "checkpoint": str(ctx.models.paths("sharp")["sharp_2572gikvuh.pt"]),
                           "geometry": item["out"], "output_dir": str(work), "face_model": face, "plain": True,
                           "ipd_target_m": ipd / 1000.0, "human_seg": human_seg, "human_pointmap": human_pm,
                           "detail": detail, "photo": str(ref), "moge_path": str(ctx.models.paths(mg)["model.pt"]),
-                          "moge_version": "v3" if mg == MOGE_MODELS[0] else "v2",
-                          "allow_cpu": bool(getattr(ctx, "allow_cpu", False))},
+                          "moge_version": version, "precision": precise, "refine": precise,
+                          "human_normal": human_normal, "allow_cpu": bool(getattr(ctx, "allow_cpu", False))},
                          inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.25, 0.45),
                          timeout_s=3600)
         used("sharp")
@@ -267,9 +288,16 @@ class LockedPhotoBackend(Backend):
             exp.mkdir(parents=True, exist_ok=True)
             shutil.copy2(res["people"]["sheet"], exp / "people_shape.png")
             extra_people["people_shape"] = str(exp / "people_shape.png")
+        if res["outputs"].get("relief") and Path(res["outputs"]["relief"]).exists():
+            exp.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(res["outputs"]["relief"], exp / "relief.png")
+            extra_people["relief"] = str(exp / "relief.png")
         locked_ply = write_gaussian_ply(scene, work / "locked_scene.ply", include_provenance=True)
         extra_files, fill_report, final = dict(extra_people), [], scene
         warnings = ["OBJ mesh is not available for SHARP output."]
+        lens = (geo_prec or {}).get("lens") or {}
+        if str(lens.get("from", "")).startswith("models (EXIF"):
+            warnings.append("The photo's lens: " + lens.get("note", "the EXIF lens disagreed with the depth models"))
 
         # 5-8. fill the holes of moved views
         fill_status = "off (option turned off)"
@@ -338,7 +366,9 @@ class LockedPhotoBackend(Backend):
         return BackendResult(
             backend=self.id, scene_ply=ply, splat=splat, obj=None, cameras=[cam.to_dict()], metric_scale=True,
             provenance_note=(f"{len(final) - added_n:,} splats INFERRED from the photo: Apple SHARP aligned to the "
-                             f"measured depth ({'MoGe-3' if mg == MOGE_MODELS[0] else 'MoGe-2'}). "
+                             f"measured depth ({moge_name(mg)}"
+                             + (" + Depth Pro" if ((geo_prec or {}).get("depth_pro") or {}).get("used") else "")
+                             + "). "
                              + (f"{added_n:,} GENERATIVE splats fill what the photo hides (AI-painted, their depth "
                                 "tied to the photo's)." if added_n else "Nothing behind the subject is invented.")),
             vram_peak_mib=res.get("vram_peak_mib"), worker_env=out["env"], models_used=models_used,
@@ -350,6 +380,7 @@ class LockedPhotoBackend(Backend):
                    "ipd_target_mm": round(res.get("ipd_target_m", 0.063) * 1000, 1), "people": res.get("people"),
                    "hfov_used_deg": float(np.degrees(2 * np.arctan(res["size"][0] / 2 / res["f_px"]))),
                    "fill": fill_report, "fill_status": fill_status, "detail": res.get("detail"),
+                   "precision": {"geometry": geo_prec, "photo": res.get("precision")} if precise else None,
                    "files": extra_files})
 
     def _fill(self, inp, ctx, options, progress, cancel, log, scene, locked_ply, cam, mg, used):
@@ -421,7 +452,7 @@ class LockedPhotoBackend(Backend):
         out = run_worker(ctx.runtimes.python(self.runtime_id), self.worker_script,
                          {"mode": "fill", "checkpoint": str(ctx.models.paths("sharp")["sharp_2572gikvuh.pt"]),
                           "moge_path": str(ctx.models.paths(mg)["model.pt"]),
-                          "moge_version": "v3" if mg == MOGE_MODELS[0] else "v2",
+                          "moge_version": "v3" if mg.startswith("moge-3") else "v2",
                           "views": [{"image": f"{t['base']}_filled.png", "mask": f"{t['base']}_mask.png",
                                      "known": f"{t['base']}_known.npz", "fx": t["cam"]["fx"], "fy": t["cam"]["fy"],
                                      "cx": t["cam"]["cx"], "cy": t["cam"]["cy"], "out": f"{t['base']}_fill.ply"}

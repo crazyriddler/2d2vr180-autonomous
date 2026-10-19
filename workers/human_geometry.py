@@ -81,7 +81,27 @@ def _heads():
         def forward(self, x):
             return self.conv_seg(self.conv_layers(self.deconv_layers(x)))
 
-    return PointmapHead, SegHead
+    class NormalHead(nn.Module):           # sapiens.dense NormalHead (rc7), 1B config: up 768/512/256/128
+        def __init__(self, c, up=(768, 512, 256, 128), conv=(64, 32, 16), ks=(3, 3, 3)):
+            super().__init__()
+            self.input_conv = nn.Sequential(nn.Conv2d(c, c, 3, padding=1), nn.InstanceNorm2d(c), nn.SiLU(inplace=True))
+            blocks, cur = [], c
+            for out in up:
+                blocks.append(nn.Sequential(nn.Conv2d(cur, out * 4, 3, padding=1), nn.PixelShuffle(2),
+                                            nn.InstanceNorm2d(out), nn.SiLU(inplace=True)))
+                cur = out
+            self.upsample_blocks = nn.Sequential(*blocks)
+            layers = []
+            for out, k in zip(conv, ks):
+                layers += [nn.Conv2d(cur, out, k, padding=(k - 1) // 2), nn.InstanceNorm2d(out), nn.SiLU(inplace=True)]
+                cur = out
+            self.conv_layers = nn.Sequential(*layers)
+            self.conv_normal = nn.Conv2d(cur, 3, kernel_size=1)
+
+        def forward(self, x):
+            return self.conv_normal(self.conv_layers(self.upsample_blocks(self.input_conv(x))))
+
+    return PointmapHead, SegHead, NormalHead
 
 
 def arch_of(path: str) -> str:
@@ -96,21 +116,21 @@ def arch_of(path: str) -> str:
 
 
 def load(path: str, task: str, device, torch):
-    """Backbone + head for 'pointmap' or 'seg' from a released Sapiens2 safetensors checkpoint."""
+    """Backbone + head for 'pointmap', 'seg' or 'normal' from a released Sapiens2 safetensors checkpoint."""
     import torch.nn as nn
     from safetensors.torch import load_file
     from sapiens2_backbone import Sapiens2
 
     arch = arch_of(path)
     c = EMBED[arch]
-    PointmapHead, SegHead = _heads()
+    PointmapHead, SegHead, NormalHead = _heads()
 
     class Net(nn.Module):
         def __init__(self):
             super().__init__()
             self.backbone = Sapiens2(arch=arch, img_size=(NET_H, NET_W), patch_size=16, final_norm=True,
                                      use_tokenizer=False, with_cls_token=True, out_type="featmap")
-            self.decode_head = PointmapHead(c) if task == "pointmap" else SegHead(c)
+            self.decode_head = {"pointmap": PointmapHead, "normal": NormalHead}.get(task, SegHead)(c)
 
         def forward(self, x):
             return self.decode_head(self.backbone(x)[0])
@@ -191,6 +211,30 @@ def pointmap_depth(net, img, box, f_px, torch, device):
     f_net = f_px * s                                         # the real lens at network size
     own_f = CANONICAL_F / max(float(scale.float().item()), 1e-6) / s
     return zc * f_net / CANONICAL_F, own_f
+
+
+def normal_map(net, img, box, torch, device):
+    """Sapiens2's surface normals (ch, cw, 3, unit; the model's own axes) of a crop (rows y0:y1, cols x0:x1
+    of img), letterboxed into the network's 1024 x 768 as for the pointmap."""
+    import torch.nn.functional as F
+    from PIL import Image
+
+    y0, y1, x0, x1 = box
+    crop = img[y0:y1, x0:x1]
+    ch, cw = crop.shape[:2]
+    s = min(NET_W / cw, NET_H / ch)
+    nw, nh = int(cw * s), int(ch * s)
+    rs = np.asarray(Image.fromarray(crop).resize((nw, nh), Image.BILINEAR))
+    pl, pt = (NET_W - nw) // 2, (NET_H - nh) // 2
+    canvas = np.zeros((NET_H, NET_W, 3), np.uint8)
+    canvas[pt:pt + nh, pl:pl + nw] = rs
+    dtype = next(net.parameters()).dtype
+    with torch.no_grad():
+        n = net(_to_input(canvas, torch, device, dtype)).float()
+        n = F.interpolate(n, size=(NET_H, NET_W), mode="bilinear", align_corners=False)[:, :, pt:pt + nh, pl:pl + nw]
+        n = F.interpolate(n, size=(ch, cw), mode="bilinear", align_corners=False)
+        n = F.normalize(n, dim=1)
+    return n[0].permute(1, 2, 0).cpu().numpy().astype(np.float64)
 
 
 def inner_weight(mask, ramp=6):

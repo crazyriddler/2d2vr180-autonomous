@@ -8,7 +8,7 @@ Everything runs on your own computer: nothing you process is uploaded anywhere.
 - Windows 10 (build 19041+) or Windows 11, 64-bit
 - An NVIDIA GPU with a recent driver (target: RTX 4080 16 GB; 8 GB+ works). Driver 570 or newer.
 - 32 GB of RAM recommended (the AI painter of photos needs it)
-- About 60 GB of free disk space for the engines and models, plus space for your results
+- About 75 GB of free disk space for the engines and models, plus space for your results
   (a splat video takes 2-5 GB per minute)
 - Internet access **only** for the one-time download of the engines and models
 
@@ -33,8 +33,11 @@ everything Real 3D uses; you do not need to pick anything.
 | Real 3D engine | runs the models below on your GPU | ~5.5 GB |
 | Apple SHARP | the 3D Gaussians of every photo and video frame (**research licence**) | ~2.5 GB |
 | MoGe-3 Large | measured depth, lens and real-world scale | 1.5 GB |
+| MoGe-3 Giant | photos: the most accurate depth (used instead of Large when installed) | 5 GB |
+| Apple Depth Pro | photos: a second measured depth, sharp edges, lens check (**research licence**) | 1.9 GB |
 | YuNet face finder | the eyes of the people, for the real-world size | 0.2 MB |
 | Sapiens2 body parts + 3D shape of people | real noses and faces instead of flat ones | 1.6 + 6.5 GB |
+| Sapiens2 surface normals of people | photos: folds of clothes, fingers, the relief of a face | 6.2 GB |
 | AI painter engine + Qwen-Image-Edit-2511 | photos: paints what the photo hides when you move your head | ~6 + ~30 GB |
 
 Every model shows its licence before downloading. Downloads resume if interrupted and are verified
@@ -56,8 +59,9 @@ Every model shows its licence before downloading. Downloads resume if interrupte
    each side, and what the photo never saw (behind edges) is painted by Qwen-Image-Edit and added at a depth
    tied to the photo's. These parts are labelled *generative*.
 5. **Photos: maximum detail** (always on in *Quality*): more of the photo's small geometry. The photo is
-   worked at up to 3072 px, the depth model's fine relief is taken from parts of it, and SHARP runs on parts
-   of it. About 2-3x the detail up close, a minute more, and about 3 million splats (heavier in VR).
+   worked at up to 3072 px (4608 px for photos of 24 MP and up), the depth model's fine relief is taken from
+   parts of it, and SHARP runs on parts of it (2 x 2, or 3 x 3 for 24 MP and up). About 2-3x the detail up
+   close, a minute more, and about 3 million splats (6-7 million for 24 MP photos; heavier in VR).
 6. **Videos → splat video**:
    - *Start at* and *Length* choose the part of the video.
    - *Frames per second*: by default the video's own rate, up to 24.
@@ -65,10 +69,16 @@ Every model shows its licence before downloading. Downloads resume if interrupte
 
 ### What Real 3D does with a photo
 
-- Uses your photo's real lens (EXIF) and its measured metric depth (MoGe-3).
+- Uses your photo's real lens (EXIF), checked against what the depth models see: a zoomed or cropped photo
+  whose EXIF still names the full lens is caught.
+- Measures its metric depth with MoGe-3 several times (the photo, its mirror image, a coarser pass) and with
+  a second model, Apple Depth Pro, and joins them (Depth Pro draws the sharpest edges).
 - Gives people their real 3D shape (Sapiens2, a model trained only on humans).
+- Adds the fine relief the depth models smooth away, from surface normals (MoGe-3's; Sapiens2's for people).
+- Sends every pixel next to a depth edge to the near or the far surface, so no splats float in between.
 - Sets the real-world size from the people's eyes (or from the human model when there are no faces).
-- Aligns Apple SHARP's 3D Gaussians of the photo to that depth: SHARP's sharpness with true geometry.
+- Places Apple SHARP's 3D Gaussians of the photo at that depth: SHARP's sharpness with true geometry.
+- Fits the splat to the photo seen from its own camera (colours, opacities, sizes; nothing moves).
 - Paints what the photo hides from moved positions (optional) and adds only those parts.
 
 ### What a splat video is
@@ -101,6 +111,7 @@ in one file with the video's sound:
 | `scene.splat` | the same in the compact web format |
 | `views_sheet.png` | the splat seen from a few moved positions (photos) |
 | `people_shape.png` | the people's relief: the scene's depth, with their own shape, and the splats as made |
+| `relief.png` | the photo's depth at each step, shaded: MoGe-3, + Depth Pro, + people, final (normals, edges) |
 | `added_layer.ply`, `fill_steps.png` | what the AI painted, and how (photos) |
 | `compare_sharp_alone.ply` | SHARP without the measured depth, for comparison (photos) |
 | `../run_report.json` | every detail of the run: models, timings, scale, warnings |

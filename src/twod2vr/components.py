@@ -31,6 +31,13 @@ COMPONENTS: list[Component] = [
     Component("model-moge3", "MoGe-3 Large — the measured depth, lens and real-world scale", "model", "moge-3-vitl",
               "Metric depth and field of view of every photo and video frame (MIT).", True,
               ("engine-photo", "model-sharp", "model-face", "model-sapiens-pointmap")),
+    Component("model-moge3-giant", "MoGe-3 Giant — the most accurate depth for photos", "model", "moge-3-vitg",
+              "MoGe-3 with a 4x bigger network (MIT, 5 GB): photos use it instead of the Large model when it is "
+              "installed (splat videos keep the Large one, for speed).", True, ("engine-photo", "model-moge3")),
+    Component("model-depth-pro", "Apple Depth Pro — a second measured depth for photos (research only)", "model",
+              "depth-pro", "A second, independent metric depth with the sharpest object edges and its own lens "
+              "estimate, joined to MoGe-3 (Apple research licence: non-commercial, 1.9 GB).", True,
+              ("engine-photo",)),
     Component("model-face", "YuNet face finder — real-world scale from the eyes", "model", "yunet-face",
               "Finds the eyes of the people so the scene is scaled to the eye distance you set (MIT, 0.2 MB, runs "
               "on the CPU).", True, ("engine-photo",)),
@@ -41,6 +48,10 @@ COMPONENTS: list[Component] = [
               "sapiens2-pointmap-1b", "People's 3D shape from a model trained only on humans (Meta Sapiens2, ICLR "
               "2026): faces, noses and bodies keep their real relief instead of coming out flat, and their distance "
               "helps set the real-world scale. 6.5 GB.", True, ("engine-photo", "model-sapiens-seg")),
+    Component("model-sapiens-normal", "Sapiens2 surface normals of people — their fine relief", "model",
+              "sapiens2-normal-1b", "The slopes of people's surfaces from a model trained only on humans (Meta "
+              "Sapiens2): folds of clothes, fingers and the relief of a face, added to their 3D shape in photos. "
+              "6.2 GB.", True, ("engine-photo", "model-sapiens-seg")),
     # ---------------------------------------------------------------- AI fill (photos)
     Component("engine-gen", "AI painter engine", "runtime", "gen-cu128",
               "Paints what a photo hides when you move your head (Real 3D fill).", True),

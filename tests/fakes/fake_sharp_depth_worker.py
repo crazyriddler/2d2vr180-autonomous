@@ -74,7 +74,18 @@ def main(req):
         outputs["locked"] = str(write_gaussian_ply(both, os.path.join(out, "locked_detail.ply")))
         detail = {"work_size": [w, h], "tiles": 1, "splats": len(both), "placed_share": 0.9}
         shutil.copy(req["photo"], os.path.join(out, "detail_photo_seen.png"))
+    precision = None
+    if req.get("precision"):      # rc7: the relief sheet and what each precision step did
+        from PIL import Image
+
+        Image.fromarray(img).save(os.path.join(out, "relief.png"))
+        outputs["relief"] = os.path.join(out, "relief.png")
+        precision = {"normals": {"used": True, "rms_change": 0.004, "cutoff_px": 15.4},
+                     "edges": {"band_share": 0.03}, "placed_share": 0.95,
+                     "fit": {"used": True, "psnr_before": 27.0, "psnr_after": 31.5} if req.get("refine") else None,
+                     "people_normals": bool(req.get("human_normal"))}
     emit("result", outputs=outputs, vram_peak_mib=None, f_px=float(K[0, 0]), size=[w, h], faces=[], detail=detail,
+         precision=precision,
          face_scale=1.0, sharp_own_scale=1.2, depth_coverage=1.0, people=people,
          scale=1 / 1.1 if people else 1.0, scale_from="human model" if people else "measured depth",
          ipd_target_m=req.get("ipd_target_m", 0.063))

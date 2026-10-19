@@ -9,7 +9,7 @@ Three limits of the normal path, and what this module does about each:
      -> every splat the photo sees is placed at that depth (sharp_depth_worker.snap_to_depth), with little
         weight near depth edges where a pixel's depth is ambiguous.
   3. SHARP makes 2 x 768 x 768 splats for the whole photo: one per ~5 x 5 pixels of a 4000 px photo.
-     -> SHARP on overlapping crops (2 x 2), each with its real camera geometry (off-centre principal
+     -> SHARP on overlapping crops (2 x 2; 3 x 3 for photos of 24 MP and up, rc7), each with its real camera geometry (off-centre principal
         point), each crop keeping the splats of the part it owns; nearly transparent splats are dropped.
 numpy + torch only (runs in the 'photo-cu128' runtime, inside sharp_depth_worker).
 """
@@ -17,11 +17,20 @@ numpy + torch only (runs in the 'photo-cu128' runtime, inside sharp_depth_worker
 import numpy as np
 
 WORK_SIDE = 3072          # the detail path works on the photo at up to this many pixels (long side)
+ULTRA_SIDE = 4608         # rc7: ... and photos of ULTRA_FROM px and more (24 MP and up) at this many, 3 x 3 parts
+ULTRA_FROM = 5000
+
+
+def work_side(photo_side):
+    """The long side the detail path works at for a photo whose long side is ``photo_side`` pixels."""
+    return ULTRA_SIDE if photo_side >= ULTRA_FROM else WORK_SIDE
 
 
 def tile_count(w, h, work_side=WORK_SIDE):
-    """Crops per side: 2 when the photo has more pixels than SHARP / MoGe take in one go, else 1."""
-    return 2 if max(w, h) > 2048 else 1
+    """Crops per side: 2 when the photo has more pixels than SHARP / MoGe take in one go, 3 beyond 3600 px
+    (rc7: 24 MP photos and up, worked at 4608 px), else 1."""
+    m = max(w, h)
+    return 3 if m > 3600 else 2 if m > 2048 else 1
 
 
 def tile_boxes(w, h, n, overlap=0.2):

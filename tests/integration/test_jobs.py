@@ -161,6 +161,42 @@ def test_maximum_detail_for_photos(ctx, rtx4080, photo):
     assert req["detail"] is False and "compare_normal_detail" not in rep["outputs"]
 
 
+def test_precision_for_photos(ctx, rtx4080, photo, monkeypatch):
+    """rc7: the lens check, several MoGe passes, Depth Pro, people's normals, the fit to the photo and the
+    relief sheet reach the workers and the report; MoGe-3 Giant is used for photos when installed."""
+    from conftest import install_fake_model
+
+    for mid in ("depth-pro", "sapiens2-seg-0.4b", "sapiens2-pointmap-1b", "sapiens2-normal-1b", "moge-3-vitg"):
+        install_fake_model(ctx.models, mid)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", real3d_fill=False)
+    assert rep["status"] == "succeeded", rep.get("error")
+    geo = json.loads((job.dir / "worker" / "fake_moge_worker_request.json").read_text())
+    assert geo["precision"]["passes"] and geo["precision"]["depth_pro"].endswith("depth_pro.pt")
+    assert "moge-3-vitg" in geo["model_path"] and geo["version"] == "v3"
+    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+    assert req["precision"] and req["refine"] and req["human_normal"].endswith("sapiens2_1b_normal.safetensors")
+    assert "moge-3-vitg" in req["moge_path"]
+    ex = rep["backend"]["extra"]
+    assert ex["precision"]["geometry"]["passes"] == 3 and ex["precision"]["photo"]["fit"]["used"]
+    assert Path(rep["outputs"]["relief"]).exists()
+    assert {"depth-pro", "sapiens2-normal-1b", "moge-3-vitg"} <= {m["id"] for m in rep["models"]}
+    assert "Depth Pro" in rep["coverage"]["note"]
+    # an EXIF lens both depth models disagree with is replaced, and said so
+    monkeypatch.setenv("FAKE_LENS_OFF", "1")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", real3d_fill=False)
+    assert any("lens" in w and "disagrees" in w for w in rep["warnings"])
+    # without the optional models the precision path still runs on MoGe alone
+    for mid in ("depth-pro", "sapiens2-normal-1b", "moge-3-vitg"):
+        ctx.models.delete(mid)
+    monkeypatch.delenv("FAKE_LENS_OFF")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", real3d_fill=False)
+    assert rep["status"] == "succeeded"
+    geo = json.loads((job.dir / "worker" / "fake_moge_worker_request.json").read_text())
+    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+    assert geo["precision"]["depth_pro"] is None and "moge-3-vitl" in geo["model_path"]
+    assert req["human_normal"] is None and req["precision"]
+
+
 def test_commercial_profile_blocks_noncommercial_models(ctx, rtx4080, photo):
     job, rep, _ = run_job(ctx, rtx4080, photo, license_profile="commercial")
     assert rep["status"] == "failed" and rep["error"]["code"] == "no_backend"

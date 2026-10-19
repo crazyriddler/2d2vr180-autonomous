@@ -14,7 +14,13 @@
 - ✅ Browser player (`assets/webxr/player.*`): .splat and .splv, range streaming, decode worker pool, sound as the clock,
   WebXR size buttons (A/X, B/Y, stick click), trigger play/pause — headless Chromium tests
 - ✅ App viewer plays .splv with sound (QtMultimedia) and a timeline; decoder thread; GL and CPU paths tested
-- ⬜ Owner test on the RTX 4080 + headset
+- ✅ Owner test on the RTX 4080 + headset (rc2-rc5: photos and splat videos work; video depth, photo relief and the
+  AI fill improved after the owner's reports)
+- 🟡 rc6: maximum detail for photos (patch-fused depth, whole-scene placement, SHARP on parts)
+- 🟡 rc7: precision for photos (`workers/precision.py`, `workers/refine.py`): lens check, MoGe-3 passes, Depth Pro
+  joined, normals → fine relief (MoGe-3, Sapiens2 normals), clean depth edges, every splat placed, fit to the photo,
+  MoGe-3 Giant, 3 x 3 parts for 24 MP photos. Stand-in tests and the real workers end to end with stand-in models;
+  not yet run on the RTX 4080
 
 ## Earlier (1.x)
 

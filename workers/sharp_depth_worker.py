@@ -32,6 +32,8 @@ splats that fall in the holes.
 import os
 import sys
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _protocol import emit, log, progress, run, torch_env, vram_peak_mib  # noqa: E402
 
@@ -226,7 +228,15 @@ def to_grid(a, torch, g=SHARP_GRID):
     return num / den.clamp(min=1e-6), den
 
 
-def snap_to_depth(g, depth, weight, torch, lo=0.6, hi=1.6):
+def to_grid_nearest(a, torch, g=SHARP_GRID):
+    """An (H, W) map sampled at SHARP's grid cell centres (no averaging: a depth edge stays an edge)."""
+    import torch.nn.functional as F
+
+    a = torch.as_tensor(a, dtype=torch.float32)
+    return F.interpolate(a[None, None], size=(g, g), mode="nearest")[0, 0]
+
+
+def snap_to_depth(g, depth, weight, torch, lo=0.6, hi=1.6, band=None, back=None):
     """Put SHARP's splats exactly at ``depth`` (H, W metres, NaN = unknown) where ``weight`` (H, W in [0, 1])
     says so, blending to SHARP's own placement where it falls to 0.
 
@@ -234,18 +244,37 @@ def snap_to_depth(g, depth, weight, torch, lo=0.6, hi=1.6):
     a person (nose, face, folds of clothes) from the human model is mostly lost, more so on soft video frames
     whose own SHARP depth is flat. Each pixel's front splat is moved along its line of sight to the given
     depth, and the splat behind it by the same factor (sizes too, so the picture from the camera does not
-    change). Returns (means, scales) for all 2 x 768 x 768 splats."""
+    change). ``band`` (H, W bool, rc7): pixels next to a depth edge, already sent to one side
+    (precision.resolve_edges): there the depth is taken at the cell centre instead of averaged across the
+    edge, and the splat behind goes to ``back`` (the far side's depth). Returns (means, scales, front factor)
+    for all 2 x 768 x 768 splats."""
     gsz = SHARP_GRID
     means, scales = g.mean_vectors[0], g.singular_values[0]
     dev = means.device
     t, known = to_grid(depth, torch)
     w, _ = to_grid(weight, torch)
     t, known, w = t.to(dev), known.to(dev), w.to(dev).clamp(0, 1)
+    sharp_cells = None
+    if band is not None:
+        sharp_cells = (to_grid_nearest(np.asarray(band, np.float32), torch).to(dev) > 0.5)
+        tn = to_grid_nearest(depth, torch).to(dev)
+        t = torch.where(sharp_cells & torch.isfinite(tn), tn, t)
+        known = torch.where(sharp_cells & torch.isfinite(tn), torch.ones_like(known), known)
+    layers = means.shape[0] // (gsz * gsz)
     zf = means[: gsz * gsz, 2].reshape(gsz, gsz)
     k = torch.where((known > 0.5) & (zf > 1e-4) & torch.isfinite(t), t / zf.clamp(min=1e-4),
                     torch.ones_like(zf)).clamp(lo, hi)
     k = 1 + w * (k - 1)
-    kk = torch.cat([k.reshape(-1)] * (means.shape[0] // (gsz * gsz)))[:, None]
+    ks = [k.reshape(-1)]
+    for layer in range(1, layers):
+        kb = k
+        if back is not None and sharp_cells is not None:
+            tb = to_grid_nearest(back, torch).to(dev)
+            zb = means[layer * gsz * gsz:(layer + 1) * gsz * gsz, 2].reshape(gsz, gsz)
+            use = sharp_cells & torch.isfinite(tb) & (zb > 1e-4)
+            kb = torch.where(use, (tb / zb.clamp(min=1e-4)).clamp(lo, hi), k)
+        ks.append(kb.reshape(-1))
+    kk = torch.cat(ks)[:, None]
     return means * kk, scales * kk, k
 
 
@@ -356,19 +385,104 @@ def fill(req, torch, device):
     emit("result", outputs=[v["out"] for v in views], stats=stats, vram_peak_mib=vram_peak_mib(torch))
 
 
-def detail_photo(req, predictor, img, depth, f_px, parts, device, torch):
-    """Maximum detail (workers/detail_geometry.py): the photo at up to 3072 px, MoGe-3 on crops fused into
-    the whole-photo depth, SHARP on crops with every seen splat placed at that depth. Returns (gaussians,
-    (W, H), focal length in those pixels, report)."""
-    import numpy as np
+def people_normals(req, img, parts, device, torch):
+    """Sapiens2's surface normals of the people (H, W, 3 at img's size, NaN outside their box), or None."""
+    import human_geometry as hg
+
+    if not (req.get("human_normal") and os.path.exists(req["human_normal"]) and parts is not None):
+        return None
+    progress(0.16, "people's fine relief (Sapiens2 normals)")
+    net, _ = hg.load(req["human_normal"], "normal", device, torch)
+    y0, y1, x0, x1 = parts["box"]
+    n = hg.normal_map(net, img, parts["box"], torch, device)
+    del net
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    out = np.full(img.shape[:2] + (3,), np.nan)
+    out[y0:y1, x0:x1] = n
+    return out
+
+
+def relief_normals(depth, f_px, scene_n, people_n, people_w, cx=None, cy=None):
+    """One normal map for the fine relief: the scene's normals (MoGe-3) and, inside the people, Sapiens2's;
+    each first turned into the depth's own axes (precision.align_normals). Returns (normals or None, report)."""
+    import precision as pr
+
+    ref = pr.normals_from_depth(depth, f_px, cx, cy)
+    rep, out = {}, None
+    if scene_n is not None:
+        a, st = pr.align_normals(scene_n, ref)
+        rep["scene"] = {k: v for k, v in st.items() if k != "matrix"}
+        if st["ok"]:
+            out = a
+    if people_n is not None and people_w is not None:
+        inside = (people_w > 0.5) & np.isfinite(people_n).all(-1)
+        a, st = pr.align_normals(people_n, ref, inside)
+        rep["people"] = {k: v for k, v in st.items() if k != "matrix"}
+        if st["ok"]:
+            out = np.where(inside[..., None], a, out if out is not None else np.nan)
+    return out, rep
+
+
+def precise_depth(depth, img, f_px, normals, torch, device, cx=None, cy=None):
+    """precision.integrate_normals then precision.resolve_edges on a depth map. Returns (depth, band, far,
+    report)."""
+    import precision as pr
+
+    rep = {}
+    if normals is not None:
+        try:
+            depth, rep["normals"] = pr.integrate_normals(depth, normals, f_px, torch, device=device, cx=cx, cy=cy)
+        except Exception as e:  # noqa: BLE001 - an improvement, not a requirement
+            rep["normals"] = {"used": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+    else:
+        rep["normals"] = {"used": False, "reason": "no normals that agree with the depth"}
+    band = far = None
+    try:
+        depth, band, far, rep["edges"] = pr.resolve_edges(depth, img, torch, device=device)
+    except Exception as e:  # noqa: BLE001
+        rep["edges"] = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    return depth, band, far, rep
+
+
+def relief_sheet(path, img, depths, f_px, labels, side=640):
+    """relief.png: the photo, then each depth map shaded (light from the upper left) so its relief shows."""
+    from PIL import Image, ImageDraw
+
+    h, w = img.shape[:2]
+    s = min(1.0, side / max(h, w))
+    size = (max(8, round(w * s)), max(8, round(h * s)))
+    panels = [np.asarray(Image.fromarray(img).resize(size, Image.LANCZOS))]
+    for d in depths:
+        dd = np.asarray(Image.fromarray(np.nan_to_num(d, nan=0.0).astype(np.float32)).resize(size, Image.NEAREST),
+                        np.float64)
+        dd = np.where(dd > 0, dd, np.nan)
+        panels.append(np.repeat(shade(dd, f_px * s)[..., None], 3, -1))
+    sheet = Image.fromarray(np.concatenate(panels, 1).astype(np.uint8))
+    dr = ImageDraw.Draw(sheet)
+    for i, t in enumerate(["photo"] + list(labels)):
+        dr.text((i * size[0] + 6, 4), t, fill=(255, 210, 90))
+    sheet.save(path)
+    return path
+
+
+def detail_photo(req, predictor, img, depth, f_px, parts, device, torch, people_n=None):
+    """Maximum detail (workers/detail_geometry.py): the photo at up to 3072 px (4608 for photos of 5000 px
+    and more), MoGe-3 on crops fused into the whole-photo depth, SHARP on crops with every seen splat placed
+    at that depth. With "precision" (rc7) the crops' normals and the people's (``people_n``, at img's size)
+    add the fine relief and the depth edges are sent to one side first. Returns (gaussians, (W, H), focal
+    length in those pixels, report, the photo at (W, H), the depth used)."""
     import torch.nn.functional as F
     from PIL import Image
 
     import detail_geometry as dg
+    import precision as pr
 
     h, w = img.shape[:2]
     full = Image.open(req["photo"]).convert("RGB") if req.get("photo") else Image.fromarray(img)
-    s = min(1.0, dg.WORK_SIDE / max(full.size))
+    s = min(1.0, dg.work_side(max(full.size)) / max(full.size))
     W, H = max(round(full.width * s), w), max(round(full.height * s), h)
     work = np.asarray(full.resize((W, H), Image.LANCZOS)) if (W, H) != full.size else np.asarray(full)
     fw = f_px * W / w
@@ -377,6 +491,8 @@ def detail_photo(req, predictor, img, depth, f_px, parts, device, torch):
     boxes = dg.tile_boxes(W, H, n) if n > 1 else [((0, 0, W, H), (0, 0, W, H))]
     rep = {"work_size": [W, H], "tiles": n * n}
     fused = G
+    precise = bool(req.get("precision"))
+    crop_normals = []
     if n > 1 and req.get("moge_path"):
         progress(0.45, f"fine relief: MoGe-3 on {n * n} parts of the photo at {W}x{H}")
         moge = load_moge(req["moge_path"], req.get("moge_version", "v3"), device, torch)
@@ -398,6 +514,9 @@ def detail_photo(req, predictor, img, depth, f_px, parts, device, torch):
                 ok &= o["mask"].bool()
             d = torch.where(ok, d, torch.nan).cpu().numpy()
             crops.append((crop, dg.resize_nan(d, (y1 - y0, x1 - x0), torch)))
+            if precise and o.get("normal") is not None:
+                nm = o["normal"].float().cpu().numpy().astype(np.float64)
+                crop_normals.append((crop, pr.resize_normals(nm, (y1 - y0, x1 - x0), torch)))
             progress(0.45 + 0.1 * (k + 1) / len(boxes), f"fine relief: part {k + 1}/{len(boxes)}")
         del moge
         if device.type == "cuda":
@@ -408,7 +527,23 @@ def detail_photo(req, predictor, img, depth, f_px, parts, device, torch):
         pw = F.interpolate(torch.as_tensor(parts["weight"], dtype=torch.float32)[None, None], size=(H, W),
                            mode="bilinear", align_corners=False)[0, 0].numpy().astype(np.float64)
         fused = np.where(np.isfinite(G), pw * G + (1 - pw) * fused, fused)
+    band = far = None
+    if precise:
+        progress(0.555, "fine relief from the surface normals; clean depth edges")
+        aligned = []
+        for crop, nm in crop_normals:          # each part's normals into the photo's axes
+            x0, y0, x1, y1 = crop
+            ref = pr.normals_from_depth(fused[y0:y1, x0:x1], fw, cx=W / 2 - x0, cy=H / 2 - y0)
+            a, st = pr.align_normals(nm, ref)
+            if st["ok"]:
+                aligned.append((crop, a))
+        scene_n = pr.blend_normals((H, W), aligned) if aligned else None
+        pn = pr.resize_normals(people_n, (H, W), torch) if people_n is not None else None
+        normals, rep["normals_fit"] = relief_normals(fused, fw, scene_n, pn, pw)
+        fused, band, far, rep["precision"] = precise_depth(fused, work, fw, normals, torch, device)
     weight = dg.edge_weight(fused, torch)
+    if band is not None:
+        weight = np.maximum(weight, band.astype(np.float64))
     if pw is not None:
         weight = np.maximum(weight, pw)
     rep["placed_share"] = round(float((weight > 0.5).mean()), 3)
@@ -420,7 +555,9 @@ def detail_photo(req, predictor, img, depth, f_px, parts, device, torch):
         g, _ = predict(predictor, np.ascontiguousarray(work[y0:y1, x0:x1]), fw, device, torch,
                        fused[y0:y1, x0:x1], valid[y0:y1, x0:x1], cx=W / 2 - x0, cy=H / 2 - y0)
         with torch.no_grad():
-            means, scales, _ = snap_to_depth(g, fused[y0:y1, x0:x1], weight[y0:y1, x0:x1], torch, lo=0.7, hi=1.4)
+            means, scales, _ = snap_to_depth(g, fused[y0:y1, x0:x1], weight[y0:y1, x0:x1], torch, lo=0.7, hi=1.4,
+                                             band=None if band is None else band[y0:y1, x0:x1],
+                                             back=None if far is None else far[y0:y1, x0:x1])
             own = torch.from_numpy(dg.owned(crop, core, SHARP_GRID).reshape(-1)).to(means.device)
             own = torch.cat([own] * (means.shape[0] // own.numel()))
             sel = own & (g.opacities[0] > 0.02)
@@ -434,7 +571,7 @@ def detail_photo(req, predictor, img, depth, f_px, parts, device, torch):
     rep["splats"] = int(cat[0].shape[0])
     log(f"maximum detail: {rep['splats']:,} splats from {len(boxes)} part(s) of the photo at {W}x{H}; "
         f"{rep['placed_share']:.0%} of it placed at the fine depth")
-    return gd, (W, H), fw, rep
+    return gd, (W, H), fw, rep, work, fused
 
 
 def type_of_gaussians():
@@ -507,23 +644,70 @@ def main(req):
     points = points * scale
     depth = np.where(valid, points[..., 2], np.nan)
 
+    # ---- precision (rc7): fine relief from the surface normals, clean depth edges
+    precise = bool(req.get("precision"))
+    prec, band, far, people_n, before_relief = {}, None, None, None, depth.copy()
+    if precise:
+        if parts is not None:
+            try:
+                people_n = people_normals(req, img, parts, device, torch)
+            except Exception as e:  # noqa: BLE001 - an improvement, not a requirement
+                log(f"people's normals unavailable ({type(e).__name__}: {str(e)[:200]})")
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
+        scene_n = None
+        if "normal" in geo.files:
+            scene_n = geo["normal"].astype(np.float64)
+            scene_n = np.where((np.linalg.norm(scene_n, axis=-1) > 0.5)[..., None], scene_n, np.nan)
+        progress(0.18, "fine relief from the surface normals; clean depth edges")
+        normals, prec["normals_fit"] = relief_normals(depth, f_px, scene_n, people_n,
+                                                      parts["weight"] if parts is not None else None)
+        depth, band, far, more = precise_depth(depth, img, f_px, normals, torch, device)
+        prec.update(more)
+        valid = np.isfinite(depth) & (depth > 0)
+        nr = prec.get("normals") or {}
+        if nr.get("used"):
+            log(f"fine relief from the surface normals: {nr['rms_change'] * 100:.2f} % depth change (rms), finer "
+                f"than {nr['cutoff_px']:.0f} px" + (" (people: Sapiens2)" if people_n is not None else ""))
+        else:
+            log(f"no fine relief from normals: {nr.get('reason') or nr.get('error')}")
+        if (prec.get("edges") or {}).get("band_share"):
+            log(f"depth edges sent to one side on {prec['edges']['band_share']:.1%} of the picture")
+
     progress(0.2, "loading SHARP")
     predictor = load_predictor(req["checkpoint"], device, torch)
     progress(0.4, "SHARP with the photo's measured depth")
     g, info = predict(predictor, img, f_px, device, torch, depth, valid)
     if parts is not None:
         sheet_depths = [parts["scene_z"] * scale, depth]
-        if req.get("snap_people", True):
-            # SHARP follows the injected depth only through a smooth learned alignment: put the people's
-            # splats exactly at their measured 3D shape (MoGe-3 + Sapiens2), as for splat videos
-            with torch.no_grad():
-                means, scales, k = snap_to_depth(g, depth, parts["weight"], torch)
-                g = g._replace(mean_vectors=means[None], singular_values=scales[None])
-            inside = k[k != 1]
-            moved = float((inside - 1).abs().quantile(0.9)) if inside.numel() else 0.0
+    if precise:
+        # every splat the photo sees at the measured depth (people, fine relief and edges included)
+        import detail_geometry as dg
+
+        wgt = dg.edge_weight(depth, torch)
+        if band is not None:
+            wgt = np.maximum(wgt, band.astype(np.float64))
+        if parts is not None:
+            wgt = np.maximum(wgt, parts["weight"])
+        with torch.no_grad():
+            means, scales, k = snap_to_depth(g, depth, wgt, torch, lo=0.7, hi=1.4, band=band, back=far)
+            g = g._replace(mean_vectors=means[None], singular_values=scales[None])
+        prec["placed_share"] = round(float((wgt > 0.5).mean()), 3)
+        if people:
             people["snapped"] = True
-            people["snap_change_p90"] = round(moved, 4)
-            log(f"people's splats placed at their measured 3D shape (90 % moved by up to {moved * 100:.1f} %)")
+        log(f"{prec['placed_share']:.0%} of the photo's splats placed at the measured depth")
+    elif parts is not None and req.get("snap_people", True):
+        # SHARP follows the injected depth only through a smooth learned alignment: put the people's
+        # splats exactly at their measured 3D shape (MoGe-3 + Sapiens2), as for splat videos
+        with torch.no_grad():
+            means, scales, k = snap_to_depth(g, depth, parts["weight"], torch)
+            g = g._replace(mean_vectors=means[None], singular_values=scales[None])
+        inside = k[k != 1]
+        moved = float((inside - 1).abs().quantile(0.9)) if inside.numel() else 0.0
+        people["snapped"] = True
+        people["snap_change_p90"] = round(moved, 4)
+        log(f"people's splats placed at their measured 3D shape (90 % moved by up to {moved * 100:.1f} %)")
+    if parts is not None:
         with torch.no_grad():
             sheet_depths.append(front_depth(g.mean_vectors[0], h, w, torch))
         try:
@@ -534,14 +718,15 @@ def main(req):
     locked = os.path.join(out_dir, "locked.ply")
     save_ply(g, f_px, (h, w), locked)
     outputs = {"locked": locked}
-    size_out, f_out, detail = [w, h], f_px, None
+    size_out, f_out, detail, photo_out, final_depth = [w, h], f_px, None, img, depth
     if req.get("detail"):
         try:
-            gd, (W, H), fw, detail = detail_photo(req, predictor, img, depth, f_px, parts, device, torch)
+            gd, (W, H), fw, detail, work, fused = detail_photo(req, predictor, img, depth, f_px, parts, device, torch,
+                                                               people_n)
             outputs["standard"] = locked                       # the normal result, for comparison
             locked = outputs["locked"] = os.path.join(out_dir, "locked_detail.ply")
             save_ply(gd, fw, (H, W), locked)
-            size_out, f_out = [W, H], fw
+            size_out, f_out, photo_out, final_depth = [W, H], fw, work, fused
             del gd
         except Exception as e:  # noqa: BLE001 - fall back to the normal result
             if device.type == "cuda":
@@ -554,10 +739,55 @@ def main(req):
         g2, _ = predict(predictor, img, f_px, device, torch)
         outputs["plain"] = os.path.join(out_dir, "plain.ply")
         save_ply(g2, f_px, (h, w), outputs["plain"])
+        del g2
+    del predictor, g
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    # ---- the splat fitted to the photo itself (rc7, workers/refine.py)
+    if req.get("refine", precise):
+        progress(0.8, "fitting the splat to the photo")
+        try:
+            import refine
+
+            fitted = os.path.join(out_dir, os.path.basename(locked).replace(".ply", "_fitted.ply"))
+            prec["fit"] = refine.refine_ply(locked, fitted, photo_out, f_out, size_out, torch, device,
+                                            iters=int(req.get("refine_iters", 300)), log=log)
+            if prec["fit"].get("used"):
+                locked = outputs["locked"] = fitted
+            else:
+                log(f"fit to the photo not kept: {prec['fit'].get('reason')}")
+        except Exception as e:  # noqa: BLE001 - an improvement, not a requirement
+            prec["fit"] = {"used": False, "error": f"{type(e).__name__}: {str(e)[:300]}"}
+            log(f"fit to the photo skipped ({prec['fit']['error']})")
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+    if precise:
+        try:
+            panels, labels = [], []
+            if "depth_moge" in geo.files:
+                panels.append(np.where(geo["depth_moge"] > 0, geo["depth_moge"], np.nan))
+                labels.append("MoGe-3")
+            if "depth_pro" in geo.files:
+                panels.append(np.where(mask, geo["points"][..., 2].astype(np.float64), np.nan))
+                labels.append("+ Depth Pro")
+            panels.append(before_relief)
+            labels.append("+ people (Sapiens2)" if parts is not None else "depth used before")
+            panels.append(final_depth)
+            labels.append("final: + normals, clean edges" + (" (max detail)" if final_depth is not depth else ""))
+            fd = final_depth
+            if fd.shape != depth.shape:              # the detail depth, shown at the photo's size
+                from detail_geometry import resize_nan
+
+                panels[-1] = resize_nan(fd, depth.shape, torch)
+            outputs["relief"] = relief_sheet(os.path.join(out_dir, "relief.png"), img, panels, f_px, labels)
+            log("relief.png: the photo | each depth step shaded, so its relief shows")
+        except Exception as e:  # noqa: BLE001 - a diagnostic
+            log(f"relief picture skipped: {e}")
     progress(1.0, "done")
     emit("result", outputs=outputs, vram_peak_mib=vram_peak_mib(torch), f_px=f_out, size=size_out, detail=detail,
          faces=faces, face_scale=s_face, scale=scale, scale_from=scale_from, ipd_target_m=target, people=people,
-         **info)
+         precision=prec if precise else None, **info)
 
 
 if __name__ == "__main__":

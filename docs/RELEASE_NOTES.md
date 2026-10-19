@@ -1,3 +1,64 @@
+# 2D2VR 2.0.0-rc7 — precision for photos
+
+The owner said the GPU barely notices photo splats in VR and asked for everything that makes a photo's 3D
+and depth more precise (the scale can stay as it is: the A/B buttons in VR set it). All of it is in this
+release, for every photo; splat videos are unchanged.
+
+## What is new
+
+1. **The lens is checked.** A wrong lens flattens or stretches the whole scene. The EXIF lens is compared
+   with MoGe-3's and Apple Depth Pro's own estimates. When both models agree with each other and both
+   disagree with the EXIF by more than 15 % (a zoomed or cropped photo whose EXIF still names the full
+   lens), theirs is used and the job's warnings say so. Without EXIF, the two models' mean.
+2. **Several passes of MoGe-3.** The photo, its mirror image and a coarser pass, joined by median: less
+   noise, fewer one-off mistakes.
+3. **A second, independent depth: Apple Depth Pro** (new model, 1.9 GB). The overall shape comes from
+   both models; near depth edges Depth Pro's, which draws the sharpest edges. When the two disagree too
+   much, MoGe-3 alone is used.
+4. **Fine relief from surface normals.** Depth models smooth folds, fingers and the relief of a face;
+   normal models keep them. MoGe-3's own normals for the scene, and for people the new **Sapiens2 surface
+   normals** model (6.2 GB) - trained only on humans. They are joined to the depth as its slopes (screened
+   Poisson): relief finer than ~1 % of the picture from the normals, the shape and scale from the depth;
+   capped at 5 % so a normal model's mistake cannot warp the scene. Normals in another axis convention are
+   turned into the photo's first, and ignored when they do not match the depth.
+5. **Clean depth edges.** Monocular depth blurs the edge between a person and the background, so splats
+   landed in between: the trails seen in VR when moving the head. Every pixel next to a depth edge now goes
+   to the near or the far surface, the one whose colour it has; the splat behind it goes to the far one.
+6. **Every splat the photo sees at that depth** - with or without maximum detail (in rc6 only with it).
+7. **The splat fitted to the photo.** Seen from the photo's own camera, the splat is compared with the
+   photo and its colours, opacities and sizes are adjusted for 300 steps (gsplat, as 3D Gaussian Splatting
+   trains). Positions never move, sizes change by at most ~35 %; it is kept only when the fit improves.
+8. **MoGe-3 Giant** (new optional model, 5 GB): 4x the network of MoGe-3 Large, used for photos when
+   installed.
+9. **Maximum detail for big photos.** Photos of 24 MP and up are worked at 4608 px in 3 x 3 parts (about
+   6-7 million splats); smaller ones as in rc6.
+10. **relief.png** in every photo's result: the depth at each step, shaded so its relief shows (MoGe-3,
+    with Depth Pro, with the people's shape, the final one).
+
+## How to get it
+
+Install over rc6. Then **Components → Install recommended**: it adds Depth Pro, Sapiens2 normals and MoGe-3
+Giant (~13 GB) and updates the Real 3D engine (it adds Depth Pro's code; the installed packages are kept, so
+it takes a minute). Without the new models the precision steps run with what is installed.
+
+Time: about a minute more per photo (more with MoGe-3 Giant and maximum detail).
+
+## Checks
+
+Stand-in tests (synthetic scenes with a known truth; no GPU or real weights in the development sandbox):
+- **Normals:** a wall with 5 mm ripples that the depth has lost (0.1 mm left): 3.9 mm recovered,
+  correlation 1.00 with the truth; mean depth error 4.1 -> 0.9 mm.
+- **Edges:** a person 1.5 m in front of a wall 4 m away with the depth blurred across the edge: 180
+  in-between pixels -> 0, each on the side of its colour.
+- **Depth Pro join:** the overall scale stays MoGe's, the edge stays sharp.
+- **Fit to the photo:** +3 dB or more PSNR on a splat with wrong colours, nothing moved.
+- **The real workers end to end** (MoGe and SHARP replaced by small stand-ins): lens check, 3 passes, second
+  depth, normals, edges, whole-scene placement and maximum detail run and report.
+- The Sapiens2 normal head has exactly the checkpoint's parameter names and shapes; Depth Pro's code runs
+  with our calls (random weights, CPU).
+
+Still to see on the RTX 4080: real photos up close, relief.png, and the time.
+
 # 2D2VR 2.0.0-rc6 — maximum detail for photos
 
 The owner asked how much more of a photo's small geometry the 3D could capture, then asked for all of it to

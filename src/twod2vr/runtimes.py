@@ -322,12 +322,15 @@ class RuntimeManager:
     def _copy_package(self, py: str, archive: dict, log, cancel) -> None:
         """Install a pure-Python package straight from a commit archive, for upstream projects
         whose packaging omits subpackages (stable-virtual-camera ships only 'seva', not
-        'seva.modules', when installed non-editable)."""
+        'seva.modules', when installed non-editable) or that need no build at all (Depth Pro: 'subdir'
+        names the folder holding the package in the archive)."""
         import io
         import urllib.request
         import zipfile
 
         pkg = archive["copy_package"]
+        sub = archive.get("subdir", "").strip("/")          # e.g. "src" for a src-layout project
+        prefix = (sub + "/" if sub else "") + pkg + "/"
         r = subprocess.run([py, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
                            capture_output=True, text=True, creationflags=_NO_WINDOW)
         if r.returncode != 0:
@@ -346,9 +349,9 @@ class RuntimeManager:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             for name in z.namelist():
                 parts = name.split("/", 1)
-                if len(parts) < 2 or not parts[1].startswith(pkg + "/") or name.endswith("/"):
+                if len(parts) < 2 or not parts[1].startswith(prefix) or name.endswith("/"):
                     continue
-                rel = parts[1]
+                rel = parts[1][len(sub) + 1:] if sub else parts[1]
                 if ".." in rel.split("/"):
                     continue
                 target = site / rel

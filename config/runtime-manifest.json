@@ -5,7 +5,7 @@
   "runtimes": [
     {
       "id": "photo-cu128",
-      "description": "Real 3D engine: MoGe-3, Apple SHARP, Sapiens2, gsplat (photos and splat videos)",
+      "description": "Real 3D engine: MoGe-3, Apple SHARP, Apple Depth Pro, Sapiens2, gsplat (photos and splat videos)",
       "python": "3.12",
       "torch_index": "https://download.pytorch.org/whl/cu128",
       "min_driver": "570.00",
@@ -32,9 +32,15 @@
           "name": "flex_gemm",
           "url": "https://github.com/JeffreyXiang/FlexGEMM/archive/b2fadb29d41846c7981ade6801ffc689fae119cf.zip",
           "copy_package": "flex_gemm"
+        },
+        {
+          "name": "depth_pro",
+          "url": "https://github.com/apple/ml-depth-pro/archive/9e65e4dbe9568d23c546fcec53302b10445e109e.zip",
+          "copy_package": "depth_pro",
+          "subdir": "src"
         }
       ],
-      "smoke_test": "import torch, transformers, moge.model.v2, moge.model.v3, flex_gemm, triton, sharp; print('cuda', torch.cuda.is_available())",
+      "smoke_test": "import torch, transformers, moge.model.v2, moge.model.v3, flex_gemm, triton, sharp, depth_pro, gsplat; print('cuda', torch.cuda.is_available())",
       "lock": "locks/photo-cu128.txt",
       "local_versions": {
         "torch": "+cu128",

@@ -132,6 +132,10 @@ def write_export_readme(export: Path, report: dict) -> None:
                   "               Postshot, Polycam, Luma, Blender (3DGS add-ons) and most splat viewers.",
                   "  scene.splat  Same splat in the compact web format (antimatter15 / many web viewers).",
                   "  views_sheet.png  The splat seen from a few moved positions (a quick check of the 3D)."]
+    if out.get("relief"):
+        lines += ["  relief.png   The photo's depth at each step, shaded so its relief shows: MoGe-3, with Apple",
+                  "               Depth Pro, with the people's shape, and the final one (fine relief from the",
+                  "               surface normals, clean depth edges)."]
     if out.get("obj"):
         lines += ["  scene.obj    Triangle mesh with scene.mtl + scene_texture.png (Blender, MeshLab, 3D printing…)."]
     lines += ["  _2d2vr\\   Metadata the app uses (cameras, which parts are observed/inferred). Keep it next to",

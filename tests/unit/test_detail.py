@@ -48,3 +48,16 @@ def test_edge_weight_is_low_at_depth_jumps():
     d[:, 50:] = 5.0
     w = dg.edge_weight(d, torch)
     assert w[50, 20] > 0.95 and w[50, 50] < 0.2 and w[50, 49] < 0.2
+
+
+def test_very_large_photos_use_more_parts():
+    """rc7: photos of 24 MP and up are worked at 4608 px in 3 x 3 parts (about twice the splats of 2 x 2)."""
+    import detail_geometry as dg
+
+    assert dg.work_side(4000) == 3072 and dg.work_side(6000) == 4608 and dg.work_side(8064) == 4608
+    assert dg.tile_count(3072, 2304) == 2 and dg.tile_count(4608, 3456) == 3 and dg.tile_count(1536, 1152) == 1
+    boxes = dg.tile_boxes(4608, 3456, 3)
+    count = np.zeros((3456, 4608), np.uint8)
+    for _, (x0, y0, x1, y1) in boxes:
+        count[y0:y1, x0:x1] += 1
+    assert len(boxes) == 9 and (count == 1).all()
