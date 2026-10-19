@@ -13,38 +13,21 @@ import sys
 import urllib.parse
 import urllib.request
 
+# rc7 (precision): only what this round needs; earlier rounds' lists are in the git history
 HF_REPOS = [
-    "Qwen/Qwen-Image-Edit-2511", "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA",
-    "lightx2v/Qwen-Image-Edit-2511-Lightning", "unsloth/Qwen-Image-Edit-2511-GGUF",
-    "QuantStack/Qwen-Image-Edit-2511-GGUF",
-    # rc45 research: complete subject (TRELLIS.2) and the newer Qwen image model
-    "microsoft/TRELLIS.2-4B", "microsoft/TRELLIS-image-large", "Qwen/Qwen-Image-2.1",
-    # rc48: MoGe-3 (finer monocular geometry)
-    "Ruicheng/moge-3-vitl", "Ruicheng/moge-3-vitg",
-    # rc58: Sapiens2 human geometry (pointmaps, normals) for people in Real 3D
-    "facebook/sapiens2-pointmap-1b", "facebook/sapiens2-pointmap-0.8b", "facebook/sapiens2-pointmap-0.4b",
-    "facebook/sapiens2-normal-1b", "facebook/sapiens2-seg-1b", "facebook/sapiens2-seg-0.4b",
+    "apple/DepthPro", "Ruicheng/moge-3-vitg", "Ruicheng/moge-3-vitl", "facebook/sapiens2-normal-1b",
+    "facebook/sapiens2-normal-0.8b",
 ]
 SAFETENSORS_HEADERS = [  # tensor names/shapes/dtypes of safetensors files (header only, not downloaded)
-    "facebook/sapiens2-pointmap-1b", "facebook/sapiens2-seg-0.4b", "facebook/sapiens2-seg-1b",
+    "facebook/sapiens2-normal-1b",
 ]
-HF_SEARCH = ["sapiens2", "Qwen-Image-Edit-2511 gguf", "Qwen-Image-Edit-2511-Multiple-Angles", "Qwen-Image-2.1",
-             "Qwen-Image-2.1 Multiple-Angles", "TRELLIS.2"]
-GGUF_HEADERS = [  # tensor names of GGUF files (read from the first MiBs, not downloaded)
-    "unsloth/Qwen-Image-Edit-2511-GGUF/qwen-image-edit-2511-Q5_K_M.gguf",
-]
+HF_SEARCH = ["sapiens2-normal", "DepthPro"]
+GGUF_HEADERS: list[str] = []  # tensor names of GGUF files (read from the first MiBs, not downloaded)
 HF_TEXT = [  # small files whose content is needed (configs, model cards)
-    "Qwen/Qwen-Image-Edit-2511/transformer/config.json", "Qwen/Qwen-Image-Edit-2511/model_index.json",
-    "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA/README.md",
-    "microsoft/TRELLIS.2-4B/pipeline.json", "microsoft/TRELLIS.2-4B/README.md",
-    "microsoft/TRELLIS-image-large/pipeline.json", "Qwen/Qwen-Image-2.1/README.md",
-    "Qwen/Qwen-Image-2.1/model_index.json", "Ruicheng/moge-3-vitl/README.md",
-    "facebook/sapiens2-pointmap-1b/README.md", "facebook/sapiens2-seg-0.4b/README.md",
+    "apple/DepthPro/README.md", "Ruicheng/moge-3-vitg/README.md", "facebook/sapiens2-normal-1b/README.md",
 ]
 URLS: list[str] = [  # non-HF downloads: hashed by streaming
-    # TRELLIS.2 Windows fork (MIT): DINOv3 image encoder and RMBG-2.0 background removal it ships
-    "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/dinov3.zip",
-    "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/RMBG-2.0.zip",
+    "https://ml-site.cdn-apple.com/models/depth-pro/depth_pro.pt",
 ]
 
 
@@ -154,7 +137,7 @@ def main() -> int:
             req = urllib.request.Request(f"https://huggingface.co/{org}/{name}/resolve/main/{path}",
                                          headers={"User-Agent": "2D2VR-resolver"})
             with urllib.request.urlopen(req, timeout=120) as r:
-                out["text"][spec] = r.read(60000).decode("utf-8", "replace")
+                out["text"][spec] = r.read(6000).decode("utf-8", "replace")
         except Exception as e:  # noqa: BLE001
             out["text"][spec] = f"error: {type(e).__name__}: {e}"
     out["gguf"] = {}
