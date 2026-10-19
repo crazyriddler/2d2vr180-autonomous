@@ -1,7 +1,7 @@
 import numpy as np
 
-from twod2vr180.align import estimate_up, level_c2w, quat_xyzw_to_rotmat, viewer_transform
-from twod2vr180.scene import Camera, GaussianScene
+from twod2vr.align import estimate_up, level_c2w, quat_xyzw_to_rotmat, viewer_transform
+from twod2vr.scene import Camera, GaussianScene
 
 
 def _rx(a):

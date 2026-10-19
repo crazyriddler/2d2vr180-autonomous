@@ -15,13 +15,13 @@ FAKE_WORKER = REPO / "tests" / "fakes" / "fake_moge_worker.py"
 @pytest.fixture(autouse=True)
 def app_home(tmp_path, monkeypatch):
     home = tmp_path / "apphome"
-    monkeypatch.setenv("TWOD2VR180_HOME", str(home))
+    monkeypatch.setenv("TWOD2VR_HOME", str(home))
     return home
 
 
 @pytest.fixture
 def rtx4080():
-    from twod2vr180.hardware import GpuInfo, HardwareReport
+    from twod2vr.hardware import GpuInfo, HardwareReport
 
     return HardwareReport(os="Windows", os_version="10.0.26100", python="3.11", cpu="test", cpu_count=16,
                           ram_total_mib=65536, disk_free_mib=500_000, disk_path="C:/", ffmpeg="ffmpeg",
@@ -58,6 +58,12 @@ class FakeRuntimes:
     def remove(self, rid):
         pass
 
+    def unused(self):
+        return []
+
+    def delete_unused(self):
+        pass
+
 
 def install_fake_model(mm, model_id, content=b"fake-weights"):
     e = mm.entries[model_id]
@@ -74,18 +80,24 @@ def install_fake_model(mm, model_id, content=b"fake-weights"):
                                               "license_accepted": {"license": e.license}}))
 
 
+FAKES = REPO / "tests" / "fakes"
+
+
 @pytest.fixture
 def ctx(app_home, monkeypatch):
-    from twod2vr180.backends.base import BackendContext
-    from twod2vr180.backends.photo import DepthAnythingBackend, MoGeRGBDBackend
-    from twod2vr180.backends.video4d import Video4DBackend
-    from twod2vr180.models import ModelManager
+    """Real 3D's engine (fake workers in the test interpreter) with SHARP and MoGe-3 'installed'."""
+    from twod2vr.backends.base import BackendContext
+    from twod2vr.backends.locked import LockedPhotoBackend
+    from twod2vr.backends.video_splat import SplatVideoBackend
+    from twod2vr.models import ModelManager
 
-    monkeypatch.setattr(MoGeRGBDBackend, "worker_script", str(FAKE_WORKER))
-    monkeypatch.setattr(DepthAnythingBackend, "worker_script", str(FAKE_WORKER))
-    monkeypatch.setattr(Video4DBackend, "worker_script", str(REPO / "tests" / "fakes" / "fake_video4d_worker.py"))
+    monkeypatch.setattr(LockedPhotoBackend, "geometry_script", str(FAKE_WORKER))
+    monkeypatch.setattr(LockedPhotoBackend, "worker_script", str(FAKES / "fake_sharp_depth_worker.py"))
+    monkeypatch.setattr(LockedPhotoBackend, "render_script", str(FAKES / "fake_render_worker.py"))
+    monkeypatch.setattr(LockedPhotoBackend, "painter_script", str(FAKES / "fake_qwen_worker.py"))
+    monkeypatch.setattr(SplatVideoBackend, "worker_script", str(FAKES / "fake_video_splat_worker.py"))
     mm = ModelManager()
-    for mid in ("moge-2-vits-normal", "moge-2-vitl-normal", "depth-anything-v2-small", "vggt-1b"):
+    for mid in ("sharp", "moge-3-vitl"):
         install_fake_model(mm, mid)
     return BackendContext(mm, FakeRuntimes(), "personal_research")
 
@@ -109,7 +121,7 @@ def photo(tmp_path):
 
 
 def write_video(path, frames, fps=15):
-    from twod2vr180.media import find_ffmpeg
+    from twod2vr.media import find_ffmpeg
 
     ff = find_ffmpeg()
     h, w = frames[0].shape[:2]
@@ -145,3 +157,46 @@ def videos(tmp_path):
     for name, frames in (("static", static), ("dynamic", dynamic), ("pan", pan)):
         out[name] = write_video(tmp_path / f"{name}.mp4", frames)
     return out
+
+
+# ---------------------------------------------------------------- splat videos (.splv) for player/viewer tests
+FRAMES, FPS = 12, 6.0
+
+
+def _plane(z, color, n, half, offset=(0.0, 0.0)):
+    from twod2vr.scene import Camera, GaussianScene
+
+    xs, ys = np.meshgrid(np.linspace(-half, half, n), np.linspace(-half, half, n))
+    m = np.stack([xs.ravel() + offset[0], ys.ravel() + offset[1], np.full(n * n, z)], 1).astype(np.float32)
+    k = len(m)
+    return GaussianScene(m, np.full((k, 3), 2 * half / n, np.float32), np.tile(np.float32([1, 0, 0, 0]), (k, 1)),
+                         np.ones(k, np.float32), np.tile(np.float32(color), (k, 1)),
+                         cameras=[Camera(160, 120, 150, 150, 80, 60)])
+
+
+def make_video(path, audio=None):
+    """A splat video: a blue wall 3 m away and a red square 1.5 m away moving 2 m to the right."""
+    from twod2vr.splv import codec
+
+    c = codec()
+    quant = c.default_quant(90, 75)
+    bg = _plane(3.0, [0.2, 0.4, 0.9], 60, 2.0)
+
+    def chunks():
+        prev = None
+        for k in range(FRAMES):
+            sq = _plane(1.5, [1, 0.1, 0.1], 20, 0.3, (-1 + 2.0 * k / (FRAMES - 1), 0))
+            arr = c.quantize(np.concatenate([bg.means, sq.means]), np.concatenate([bg.scales, sq.scales]),
+                             np.concatenate([bg.quats, sq.quats]), np.concatenate([bg.colors, sq.colors]),
+                             np.concatenate([bg.opacity, sq.opacity]), quant)
+            key = k % 4 == 0
+            yield c.encode_frame(arr, None if key else prev), key
+            prev = arr
+
+    header = {"fps": FPS, "count": 60 * 60 + 20 * 20, "keyframe_interval": 4, "quant": quant,
+              "camera": {"width": 160, "height": 120, "fx": 150, "fy": 150, "cx": 80, "cy": 60}}
+    c.write_file(path, header, chunks(), audio=audio[0] if audio else None,
+                 audio_mime=audio[1] if audio else "audio/mp4")
+    return path
+
+

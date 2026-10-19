@@ -17,10 +17,10 @@ def qapp():
 
 @pytest.fixture
 def window(qapp, app_home):
-    from twod2vr180.settings import Settings
+    from twod2vr.settings import Settings
 
     Settings(setup_completed=True).save(app_home / "settings.json")
-    from twod2vr180.gui.app import MainWindow, apply_theme
+    from twod2vr.gui.app import MainWindow, apply_theme
 
     apply_theme(qapp)
     w = MainWindow()
@@ -33,8 +33,8 @@ def window(qapp, app_home):
 
 
 def _scene_ply(tmp_path):
-    from twod2vr180.rgbd import pointmap_to_gaussians
-    from twod2vr180.scene import Camera, write_gaussian_ply
+    from twod2vr.rgbd import pointmap_to_gaussians
+    from twod2vr.scene import Camera, write_gaussian_ply
 
     h, wd, f = 60, 80, 70.0
     ys, xs = np.mgrid[0:h, 0:wd]
@@ -55,8 +55,8 @@ def test_pages_build(window, qapp):
     assert "Backends" in w.diagnostics.text.toHtml()
     # a fresh install shows the "install components" banner on the Create page
     w.refresh_hardware()
-    assert "photo engine is not installed" in w.create.banner.text()
-    assert w.create.backend.count() >= 4
+    assert "Real 3D needs its engine" in w.create.banner.text()
+    assert not w.create.banner.isHidden()
 
 
 def test_viewer_and_open_scene(window, qapp, tmp_path):
@@ -71,11 +71,16 @@ def test_viewer_and_open_scene(window, qapp, tmp_path):
 
 def test_settings_persist(window, app_home):
     w = window
-    w.settings_page.ipd.setValue(70)
+    w.create.ipd.setValue(58)
+    w.create.photo_detail.setChecked(True)
+    w.create.video_fps.setCurrentIndex(w.create.video_fps.findData(15.0))
     w.settings_page.cpu.setChecked(True)
     saved = json.loads((app_home / "settings.json").read_text())
-    assert saved["eye_separation_mm"] == 70 and saved["allow_cpu"] is True
+    assert saved["ipd_mm"] == 58 and saved["video_fps"] == 15.0 and saved["allow_cpu"] is True
+    assert saved["photo_detail"] is True
     assert w.ctx.allow_cpu is True
+    o = w.settings.job_options()
+    assert o.ipd_mm == 58 and o.video_fps == 15.0
 
 
 def test_queue_and_results_with_fake_backend(window, qapp, ctx, rtx4080, photo):
@@ -86,8 +91,6 @@ def test_queue_and_results_with_fake_backend(window, qapp, ctx, rtx4080, photo):
     w.ctx = ctx
     w.queue.ctx = ctx
     w.hw = rtx4080
-    w.settings.eye_resolution = 256
-    w.settings.still_video_seconds = 0.5
     w.create.add_files([str(photo)])
     w.create.generate()
     t0 = time.time()
@@ -101,7 +104,7 @@ def test_queue_and_results_with_fake_backend(window, qapp, ctx, rtx4080, photo):
     w.results.refresh()
     assert w.results.list.count() >= 1
     w.results.list.setCurrentRow(0)
-    assert w.results.btn["explore"].isEnabled() and w.results.btn["vrvid"].isEnabled()
+    assert w.results.btn["explore"].isEnabled() and w.results.btn["vr"].isEnabled()
     assert "photo.jpg" in w.results.details.toPlainText()
 
 
@@ -126,8 +129,8 @@ def test_gpu_view_falls_back_to_cpu_when_opengl_is_unavailable(window, qapp, tmp
 def test_gpu_view_renders_with_real_opengl(qapp, tmp_path):
     import time
 
-    from twod2vr180.gui.viewer import SceneViewer
-    from twod2vr180.scene import load_scene
+    from twod2vr.gui.viewer import SceneViewer
+    from twod2vr.scene import load_scene
 
     v = SceneViewer()
     v.resize(400, 300)
@@ -146,49 +149,54 @@ def test_gpu_view_renders_with_real_opengl(qapp, tmp_path):
     v.close()
 
 
-def _scene4d_dir(tmp_path, frames=5):
-    from twod2vr180.scene import Camera, GaussianScene, load_scene
-    from twod2vr180.scene4d import DynamicSplats, Scene4D, per_frame_splats
-
-    bg = load_scene(_scene_ply(tmp_path))
-    parts = []
-    for k in range(frames):      # a small red square moving to the right in front of the background
-        xs, ys = np.meshgrid(np.linspace(-0.1, 0.1, 12), np.linspace(-0.1, 0.1, 12))
-        m = np.stack([xs.ravel() - 0.4 + 0.2 * k, ys.ravel(), np.full(xs.size, 1.0)], 1).astype(np.float32)
-        n = len(m)
-        sq = GaussianScene(m, np.full((n, 3), 0.01, np.float32), np.tile(np.float32([1, 0, 0, 0]), (n, 1)),
-                           np.ones(n, np.float32), np.tile(np.float32([1, 0, 0]), (n, 1)))
-        parts.append(per_frame_splats(sq, k, frames))
-    cam = bg.cameras[0] if bg.cameras else Camera(80, 60, 70, 70, 40, 30)
-    s4 = Scene4D(bg, DynamicSplats.concat(parts), 10.0, frames, [cam] * frames, {"playback": "frames"})
-    out = tmp_path / "export4d"
-    s4.save(out)
-    return out
-
-
-def test_viewer_plays_a_4d_scene(window, qapp, tmp_path):
-    w = window
-    exp = _scene4d_dir(tmp_path)
+def _wait(qapp, seconds):
     import time
 
-    w.open_scene(exp / "scene.ply")               # a 4D result's scene.ply opens as the 4D scene
-    v = w.viewer_page.viewer
     t0 = time.time()
-    while time.time() - t0 < 0.6:                 # offscreen: the GPU view gives way to the CPU preview
+    while time.time() - t0 < seconds:
         qapp.processEvents()
         time.sleep(0.02)
-    assert v.scene4d is not None and v.scene4d.frames == 5 and v.timeline.isVisibleTo(w)
-    assert all(len(i) == 144 for i in v._frame_idx)
+
+
+def test_viewer_plays_a_splat_video(window, qapp, tmp_path):
+    from conftest import FPS, FRAMES, make_video
+
+    w = window
+    video = make_video(tmp_path / "export" / "scene.splv")
+    w.open_scene(video)
+    v = w.viewer_page.viewer
+    _wait(qapp, 0.6)                               # offscreen: the GPU view gives way to the CPU preview
+    assert v.video is not None and v.video.reader.frames == FRAMES and v.timeline.isVisibleTo(w)
+    assert "12 frames" in v.info.text() and w.viewer_page.xr_btn.isEnabled()
     v.set_playing(False)
-    v.show_frame(0)
-    x0 = v.moving_splats(0).means[:, 0].mean()
-    v.show_frame(4)
-    assert abs(v.moving_splats(4).means[:, 0].mean() - x0 - 0.8) < 1e-5
-    assert "frame 5/5" in v.frame_label.text()
-    v._tick()
-    assert v.frame == 0                            # loops
+    v.seek(0.5 / FPS)
+    _wait(qapp, 0.5)
+    assert v.frame == 0
+    def red_x():                                   # the red square in the frame shown
+        d = v.frame_data
+        return d[d[:, 4] < 0.3, 0].mean()
+
+    x0 = red_x()
     f0 = v.render_frame(160, 120)
-    v.show_frame(2)
-    assert not np.array_equal(v.render_frame(160, 120), f0)
-    w.open_scene(_scene_ply(tmp_path))             # a still scene hides the timeline
-    assert v.scene4d is None and not v.timeline.isVisibleTo(w)
+    v.seek((FRAMES - 0.5) / FPS)
+    _wait(qapp, 0.8)
+    assert v.frame == FRAMES - 1
+    assert red_x() - x0 > 1.5                      # moved 2 m right
+    if not v.using_gl:                             # the CPU preview follows the video too
+        assert not np.array_equal(v.render_frame(160, 120), f0)
+    # plays at the video's speed (12 frames at 6 fps = 2 s) and loops
+    v.seek(0.0)
+    v.set_playing(True)
+    _wait(qapp, 1.0)
+    assert 3 <= v.frame <= 9
+    # it reaches the end and loops (a slow machine waits for frames instead of skipping: allow time)
+    import time
+
+    seen_end, looped, t0 = False, False, time.time()
+    while time.time() - t0 < 10 and not looped:
+        _wait(qapp, 0.05)
+        seen_end |= v.frame >= FRAMES - 2
+        looped = seen_end and v.frame < 6
+    assert seen_end and looped
+    w.open_scene(_scene_ply(tmp_path))             # a still scene stops the video and hides the timeline
+    assert v.video is None and not v.timeline.isVisibleTo(w)

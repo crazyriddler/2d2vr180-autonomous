@@ -1,8 +1,8 @@
-"""Worker side of the 2D2VR180 worker protocol (stdlib only).
+"""Worker side of the 2D2VR worker protocol (stdlib only).
 
 Workers run inside an isolated backend runtime. They receive one argument, the
 path of a JSON request file, and report through JSON lines on stdout prefixed
-with ``@@2D2VR180 `` so that library chatter on stdout is ignored safely:
+with ``@@2D2VR `` so that library chatter on stdout is ignored safely:
 
     {"event": "progress", "value": 0.4, "message": "..."}
     {"event": "log", "message": "..."}
@@ -17,7 +17,7 @@ import json
 import sys
 import traceback
 
-PREFIX = "@@2D2VR180 "
+PREFIX = "@@2D2VR "
 
 
 def emit(event, **kw):

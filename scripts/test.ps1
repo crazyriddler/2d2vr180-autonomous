@@ -4,11 +4,11 @@ Set-Location (Join-Path $PSScriptRoot "..")
 $env:QT_QPA_PLATFORM = "offscreen"
 & .venv\Scripts\python.exe -m pytest -q
 if ($LASTEXITCODE -ne 0) { throw "tests failed" }
-if (Test-Path dist\2D2VR180\2d2vr180-cli.exe) {
-  $env:TWOD2VR180_HOME = Join-Path $env:RUNNER_TEMP "2d2vr180-home"
-  & dist\2D2VR180\2d2vr180-cli.exe doctor
+if (Test-Path dist\2D2VR\2d2vr-cli.exe) {
+  $env:TWOD2VR_HOME = Join-Path $env:RUNNER_TEMP "2d2vr-home"
+  & dist\2D2VR\2d2vr-cli.exe doctor
   Write-Host "doctor exit code: $LASTEXITCODE (3 = no NVIDIA GPU, expected on hosted runners)"
-  & .venv\Scripts\python.exe scripts\acceptance.py --app dist\2D2VR180\2d2vr180-cli.exe
+  & .venv\Scripts\python.exe scripts\acceptance.py --app dist\2D2VR\2d2vr-cli.exe
   if ($LASTEXITCODE -ne 0) { throw "acceptance checks failed" }
 }
 Write-Host "== tests done"

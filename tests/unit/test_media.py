@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from twod2vr180.media import (MediaError, analyze_frames, analyze_video, classify_path, load_image,
+from twod2vr.media import (MediaError, analyze_frames, analyze_video, classify_path, load_image,
                               parse_ffmpeg_probe, phase_correlation, probe_video)
 
 

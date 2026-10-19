@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from twod2vr180.models import LicenseNotAccepted, ModelEntry, ModelError, ModelFile, ModelManager
+from twod2vr.models import LicenseNotAccepted, ModelEntry, ModelError, ModelFile, ModelManager
 
 PAYLOAD = bytes(range(256)) * 4096  # 1 MiB
 
@@ -114,7 +114,7 @@ def test_insufficient_disk(tmp_path, server):
 
 
 def test_shipped_manifest_is_consistent():
-    from twod2vr180.models import load_manifest
+    from twod2vr.models import load_manifest
 
     ms = load_manifest()
     ids = [m.id for m in ms]

@@ -66,7 +66,7 @@ Original model host
   └── model C
 
 User PC
-  └── %LOCALAPPDATA%/2D2VR180/models/
+  └── %LOCALAPPDATA%/2D2VR/models/
 ```
 
 The downloader must display:

@@ -1,3 +1,522 @@
+# 2D2VR 2.0.0-rc7 — precision for photos
+
+The owner said the GPU barely notices photo splats in VR and asked for everything that makes a photo's 3D
+and depth more precise (the scale can stay as it is: the A/B buttons in VR set it). All of it is in this
+release, for every photo; splat videos are unchanged.
+
+## What is new
+
+1. **The lens is checked.** A wrong lens flattens or stretches the whole scene. The EXIF lens is compared
+   with MoGe-3's and Apple Depth Pro's own estimates. When both models agree with each other and both
+   disagree with the EXIF by more than 15 % (a zoomed or cropped photo whose EXIF still names the full
+   lens), theirs is used and the job's warnings say so. Without EXIF, the two models' mean.
+2. **Several passes of MoGe-3.** The photo, its mirror image and a coarser pass, joined by median: less
+   noise, fewer one-off mistakes.
+3. **A second, independent depth: Apple Depth Pro** (new model, 1.9 GB). The overall shape comes from
+   both models; near depth edges Depth Pro's, which draws the sharpest edges. When the two disagree too
+   much, MoGe-3 alone is used.
+4. **Fine relief from surface normals.** Depth models smooth folds, fingers and the relief of a face;
+   normal models keep them. MoGe-3's own normals for the scene, and for people the new **Sapiens2 surface
+   normals** model (6.2 GB) - trained only on humans. They are joined to the depth as its slopes (screened
+   Poisson): relief finer than ~1 % of the picture from the normals, the shape and scale from the depth;
+   capped at 5 % so a normal model's mistake cannot warp the scene. Normals in another axis convention are
+   turned into the photo's first, and ignored when they do not match the depth.
+5. **Clean depth edges.** Monocular depth blurs the edge between a person and the background, so splats
+   landed in between: the trails seen in VR when moving the head. Every pixel next to a depth edge now goes
+   to the near or the far surface, the one whose colour it has; the splat behind it goes to the far one.
+6. **Every splat the photo sees at that depth** - with or without maximum detail (in rc6 only with it).
+7. **The splat fitted to the photo.** Seen from the photo's own camera, the splat is compared with the
+   photo and its colours, opacities and sizes are adjusted for 300 steps (gsplat, as 3D Gaussian Splatting
+   trains). Positions never move, sizes change by at most ~35 %; it is kept only when the fit improves.
+8. **MoGe-3 Giant** (new optional model, 5 GB): 4x the network of MoGe-3 Large, used for photos when
+   installed.
+9. **Maximum detail for big photos.** Photos of 24 MP and up are worked at 4608 px in 3 x 3 parts (about
+   6-7 million splats); smaller ones as in rc6.
+10. **relief.png** in every photo's result: the depth at each step, shaded so its relief shows (MoGe-3,
+    with Depth Pro, with the people's shape, the final one).
+
+## How to get it
+
+Install over rc6. Then **Components → Install recommended**: it adds Depth Pro, Sapiens2 normals and MoGe-3
+Giant (~13 GB) and updates the Real 3D engine (it adds Depth Pro's code; the installed packages are kept, so
+it takes a minute). Without the new models the precision steps run with what is installed.
+
+Time: about a minute more per photo (more with MoGe-3 Giant and maximum detail).
+
+## Checks
+
+Stand-in tests (synthetic scenes with a known truth; no GPU or real weights in the development sandbox):
+- **Normals:** a wall with 5 mm ripples that the depth has lost (0.1 mm left): 3.9 mm recovered,
+  correlation 1.00 with the truth; mean depth error 4.1 -> 0.9 mm.
+- **Edges:** a person 1.5 m in front of a wall 4 m away with the depth blurred across the edge: 180
+  in-between pixels -> 0, each on the side of its colour.
+- **Depth Pro join:** the overall scale stays MoGe's, the edge stays sharp.
+- **Fit to the photo:** +3 dB or more PSNR on a splat with wrong colours, nothing moved.
+- **The real workers end to end** (MoGe and SHARP replaced by small stand-ins): lens check, 3 passes, second
+  depth, normals, edges, whole-scene placement and maximum detail run and report.
+- The Sapiens2 normal head has exactly the checkpoint's parameter names and shapes; Depth Pro's code runs
+  with our calls (random weights, CPU).
+
+Still to see on the RTX 4080: real photos up close, relief.png, and the time.
+
+# 2D2VR 2.0.0-rc6 — maximum detail for photos
+
+The owner asked how much more of a photo's small geometry the 3D could capture, then asked for all of it to
+be done.
+
+## Where the limits were
+
+- **SHARP's splat grid.** SHARP sees the photo shrunk to 1536 x 1536 and makes 2 x 768 x 768 splats. On a
+  4000 px photo that is one splat per ~5 x 5 pixels.
+- **MoGe-3's resolution.** MoGe-3 saw the photo at 1536 px at most and works internally at less, so small
+  relief came out smooth.
+- **Smooth alignment.** Outside the people, SHARP followed that depth only through its smooth learned
+  alignment.
+
+## Maximum detail
+
+There is a new checkbox under Create → Real 3D: **"Photos: maximum detail"**. It is always on in the
+**Quality** mode. It does three things:
+
+1. **Fine relief from parts of the photo.** MoGe-3 runs on 2 x 2 overlapping parts of the photo at up to
+   3072 px. Each part is aligned to the whole-photo depth, and the result is fused:
+   - the whole photo gives the overall shape and real-world scale;
+   - the parts give the fine relief.
+   - People keep the shape measured by Sapiens2.
+   - This is the Boosting Monocular Depth / PatchFusion idea.
+2. **Everything the photo sees, placed at that depth.** In rc4 only the people were placed at their
+   measured depth; now the whole scene is. Near depth edges, where a pixel's depth is ambiguous, little or
+   nothing moves, so nothing is torn.
+3. **SHARP on 2 x 2 parts of the photo.**
+   - Each part uses its real camera geometry (its off-centre principal point) and keeps the splats of the
+     area it owns.
+   - Nearly transparent splats are dropped.
+   - The result has about 3 million splats instead of 1.2 million.
+
+What to expect:
+- **More detail:** about 2-3x more geometric detail up close.
+- **Time:** about a minute more per photo.
+- **Size:** a heavier scene (scene.splat ~100 MB, VR a little heavier).
+- **Fallback:** if anything in the detail path fails, the normal result is used and the log says why.
+
+## Checks
+
+- **Stand-in test:** a wall with 2 cm grooves that the whole-photo depth misses; the parts' depth has a
+  wrong scale and shift.
+  - The maximum-detail splats have the grooves at 1.89 cm (correlation 1.00 with the truth).
+  - The normal path had none.
+- **Comparison files:** `views_sheet.png` gets a "normal detail (for comparison)" row, and
+  `compare_normal_detail.ply` is exported.
+- **Report:** `backend.extra.detail` gives the working size, the parts and the number of splats.
+
+Everything else is as in rc5 below.
+
+---
+
+# 2D2VR 2.0.0-rc5 — the AI fill paints what lies around the photo
+
+Owner report on rc4: everything works, but "AI paints what the photo hides" seemed to do nothing; only what
+the photo shows could be seen.
+
+## Why it seemed to do nothing
+
+- **What it covered.** The fill only painted the gaps seen when the head moves a little (±15-30 cm, 15-30°
+  around the subject, always looking at it): thin slivers behind the edges of objects.
+- **What you notice in VR.** As soon as you turn your head, everything outside the photo's frame is empty,
+  and no fill view ever looked there.
+- **It never said what it did.** When the fill was skipped (painter not installed, renderer not running)
+  or failed, the reason was only in the job log.
+
+## What changes
+
+- **Looking around from the camera's place.** The fill also looks 40° left, 40° right, 25° up and 25°
+  down. In each of these views:
+  - the part showing the photo stays exactly as rendered;
+  - Qwen-Image-Edit paints the rest, continuing the scene;
+  - SHARP gives it volume, with its depth tied to the photo's at the border.
+  - Only what was missing is added, labelled *generative* and exported separately as `added_layer.ply`.
+  - So in VR there is scene beyond the photo's frame when you look around.
+- **Views per quality mode:**
+  - Fast adds left and right (6 views in total);
+  - Auto and Quality add all four.
+  - Expect about 20 s more per view.
+- **The result is shown.** The Results page and the report (`backend.extra.fill_status`) say what the fill
+  did, for example "48,210 AI-painted splats added from 9 of 11 views", or why it did not run. If it did not
+  run, the reason is also a warning.
+- **`views_sheet.png`** includes the 40° left and right views, so the painted surroundings are visible at a
+  glance.
+
+Everything else is as in rc4 below.
+
+---
+
+# 2D2VR 2.0.0-rc4 — photos get the people's real relief too
+
+The owner asked for the rc3 improvement of splat videos to apply to photos as well.
+
+- **People at their measured 3D shape in photos.** Real 3D now does to photos what rc3 does to videos.
+  After SHARP, the people's splats are placed along their lines of sight at the depth measured by MoGe-3 +
+  Sapiens2:
+  - their sizes are adjusted so the photo seen from the camera does not change;
+  - the splat behind each one keeps its distance ratio;
+  - a few pixels of ramp at the outline keep the edges from tearing.
+  - Before, SHARP followed that depth only through its smooth learned alignment, so part of the fine relief
+    of faces and bodies was lost.
+  - The rest of the scene is placed as before.
+  - In tests where SHARP flattened an 11 cm relief to 7.5 cm, the photo's splats came out at 10.8 cm.
+- **Painting follows the people's shape.** The AI fill of what the photo hides now starts from these placed
+  splats.
+- **`people_shape.png` has a fourth panel:** the splats as made, next to the picture, the scene's depth and
+  the depth with the people's own shape. The report adds `people.snapped` and `people.snap_change_p90`.
+
+Everything else is as in rc3 below.
+
+---
+
+# 2D2VR 2.0.0-rc3 — people in splat videos with their real relief
+
+Owner report on rc2: photos and videos work. In a video of a person sitting, full body, from the front, the
+person looked rather flat; up close the depth and the detail of the shape were missing.
+
+## Why video came out flatter than photos
+
+- **SHARP smooths the relief.** SHARP follows the depth it is given only through its learned alignment,
+  which is smooth: it keeps the overall distance but much of the fine relief comes from SHARP's own depth.
+  - On a sharp photo that own depth is good.
+  - On a soft, compressed video frame it is flat, so the person stayed flat even though Sapiens2 had
+    measured their shape.
+- **Reduced frame.** The video worker ran the people model and the depth fusion on a reduced copy of each
+  frame.
+- **Fewer splats.** Videos kept fewer splats per frame than photos, so up close the people looked coarse.
+
+## What changes
+
+- **People at their measured 3D shape.**
+  - After SHARP, each splat of the people is moved along its line of sight to the depth measured by
+    MoGe-3 + Sapiens2, with its size adjusted so the picture from the camera does not change.
+  - The splat behind it keeps its distance ratio.
+  - It is blended over a few pixels at the outline, so the edges do not tear.
+  - The rest of the scene is placed as before.
+  - In tests where SHARP flattened a 11 cm relief to 7.5 cm, the splats came out at 10.7 cm.
+- **Full-size frames.** The people model and the depth fusion now work on the full-size frame.
+- **Denser splat videos** (splats per frame):
+
+  | Mode | Before | Now |
+  |---|---|---|
+  | Fast | 184k | 328k |
+  | Auto | 328k | 473k |
+  | Quality | 526k | 737k (as dense as SHARP's front layer) |
+
+  Files are about 45 % bigger.
+- **Player buffering.** The VR player keeps up to two seconds decoded, so dense videos play without
+  waiting.
+- **`people_shape.png`** in the result folder shows, on the first frame with people, four panels: the
+  picture, the scene's depth, the depth with the people's own shape, and the splats as made.
+  - The report gives `people_frames`: in how many frames people were found.
+
+Everything else is as in rc2 and rc1 below.
+
+---
+
+# 2D2VR 2.0.0-rc2 — the engines work again after the folder rename
+
+Owner report on rc1: a video job failed at once with "uv trampoline failed to spawn Python child process".
+
+- **Cause**: 2.0 renames the data folder from `%LOCALAPPDATA%\2D2VR180` to `%LOCALAPPDATA%\2D2VR`. Each
+  engine's `python.exe` is a small uv launcher holding the absolute path of its base Python, which was still
+  under the old folder.
+- **Fix**: when the app starts (and before every job) it checks that each installed engine starts. One that
+  does not is repaired in place in a few seconds, with nothing downloaded and its packages kept:
+  - uv's Python version links are pointed at the new folder;
+  - the engine's launcher is rewritten for the new path.
+  - If an engine still cannot start, Components shows it as not installed, and installing it again also
+    repairs it.
+- Results made by 1.x open again from the Results page: their files are found in the renamed folder.
+
+Everything else is as in rc1 below.
+
+---
+
+# 2D2VR 2.0.0-rc1 — the reform: Real 3D photos and splat videos
+
+2D2VR180 becomes **2D2VR**. The app now does two things, both with the Real 3D method of rc58 (the one the
+owner liked):
+
+- **a photo → a Real 3D Gaussian splat**, as in rc58;
+- **a video → a splat video**: every frame made like a Real 3D photo, in one file with the sound, played
+  smoothly in the app's 3D viewer and in the browser VR player.
+
+VR180, the 4D video method and every model they needed are gone.
+
+## Splat videos
+
+- **How a video is made**, frame by frame, with the Real 3D technique (without the AI painting, which
+  takes minutes per frame):
+  - MoGe-3's measured depth at the video's lens;
+  - the people's real shape from Sapiens2;
+  - the real-world size from their eyes;
+  - Apple SHARP aligned to that depth.
+- **Steadier than one photo after another:**
+  - the lens and the real-world size are measured once on frames spread over the clip, so the scene
+    does not "breathe";
+  - each frame's depth is matched to the previous frame's where the picture did not change.
+    Monocular depth jumps a few percent from frame to frame; in tests a 3 % wobble became 0.1 %.
+- **Slow but steady and safe for memory:**
+  - every model is loaded once;
+  - each frame is written to disk as soon as it is made, so RAM and VRAM stay flat however long the
+    video is;
+  - if the GPU runs out of memory, the job continues from the last finished frame with lighter settings
+    instead of failing.
+  - Expect about 3-5 s per frame on an RTX 4080 (a minute at 24 fps takes 1.5-2 hours) and 2-5 GB of disk
+    per minute.
+- **Options** (Create page): start, length (whole video by default) and frames per second (the video's own,
+  up to 24). Quality decides the splats per frame: Fast 184k, Auto 328k, Quality 526k.
+- **A new file format, `.splv`, invented for this** (details in docs/ARCHITECTURE.md):
+  - every frame keeps the same splats in the same order;
+  - each frame is quantized to 17 bytes per splat, filtered against the previous frame or neighbour and
+    compressed;
+  - a keyframe every second allows seeking;
+  - the sound is stored in the same file (Opus).
+  - The first frame is also exported as `scene.ply` / `scene.splat`.
+
+## Players
+
+- **Browser VR player** (View in VR), new for 2.0: one player for splats and splat videos.
+  - It streams the video from the app with range requests (videos can be gigabytes) and decodes it a
+    second or so ahead on several CPU cores.
+  - The sound is the clock: the speed never drifts. When a frame is not ready, it waits instead of
+    skipping.
+  - **Size buttons**, for when the IPD scale did not come out right:
+    - hold **A/X** to make everything smaller, **B/Y** to make it bigger;
+    - click a stick to go back to the start at the original size;
+    - the trigger plays/pauses;
+    - the size is remembered per scene.
+  - On the desktop: + / − change the size, Space plays/pauses, , and . step frames.
+- **App 3D viewer**:
+  - plays `.splv` with its sound and a timeline;
+  - a background thread decodes frames ahead, and when a frame is late playback waits instead of skipping;
+  - **Size in VR** sets the starting size for View in VR.
+
+## Cleaner app
+
+- **Create page**, one workflow:
+  - drop photos or videos (each one becomes its own result);
+  - Quality;
+  - **Eye distance (IPD)** selector;
+  - "AI paints what the photo hides" for photos;
+  - start / length / frames per second for videos.
+  - No presets, no VR180 options, no engine choices.
+- **Components**: only what Real 3D uses, all recommended:
+  - Real 3D engine, SHARP, MoGe-3, YuNet, Sapiens2 ×2;
+  - AI painter engine, Qwen-Image-Edit-2511 + text encoder + Lightning.
+  - "Install recommended" installs everything.
+- **Old downloads**: Components lists the models and engines of 1.x that 2.0 no longer uses (VGGT,
+  MoGe-2, Depth Anything, Wan 2.2, LaMa, angles LoRA, the multi-view engine) with a **Delete them** button.
+- **Removed:**
+  - VR180 images and videos;
+  - the 4D video method;
+  - multi-photo reconstruction;
+  - Quick 3D and the older Real 3D methods;
+  - the three.js viewer.
+- **Your data is kept**, nothing to download again:
+  - the installer replaces 2D2VR180 1.x;
+  - the data folder `%LOCALAPPDATA%\2D2VR180` is renamed to `%LOCALAPPDATA%\2D2VR` on first start;
+  - the installed engines stay valid (their contents did not change).
+
+## Checks
+
+- **Test suite**: 98 tests on Linux CI.
+  - The browser player runs in headless Chromium: it loads, plays at the video's speed with the sound,
+    seeks and resizes.
+  - The app viewer plays a splat video with the CPU preview and with real OpenGL.
+  - Video jobs: frames, sound, keyframes, options, OOM resume, cancel and low disk, with test-only fake
+    workers.
+- **Video worker**: exercised with stand-in models for calibration, stabilisation, keyframes and resume.
+- **Acceptance**: 8/8 checks on the packaged CLI.
+- **Not run here**: the real models on the RTX 4080 (owner test).
+
+---
+
+# 2D2VR180 1.0.0-rc58 — Real 3D: people at their real size and with their real shape
+
+Owner verdict on rc57: the best so far in speed and quality by far, but:
+- people come out bigger than they are;
+- noses are flattened and fine geometry is missed.
+
+## Real-world scale is always calibrated
+
+- **What was wrong.** rc56/rc57 only corrected the scale when the eyes measured outside 56-70 mm. So a
+  person measured at, say, 68 mm stayed about 8 % too big.
+- **Now the scale is always set.** The median eye distance of the faces found is brought to a target
+  distance, 63 mm by default (the adult average).
+- **The target is a setting.** Advanced → *Eye distance for real scale*, or `--ipd-mm` on the CLI.
+  - Lower it if people still look too big in VR. The whole scene shrinks in proportion: 56 mm makes
+    everything 11 % smaller than 63 mm.
+  - Raise it if they look too small.
+- **No face?** Then the people's distance from the human model below sets the scale.
+- The report says which cue was used: `backend.extra.scale_from`, `scale`, `ipd_target_mm`.
+
+## People's real 3D shape: Sapiens2
+
+- **Why noses came out flat.** General depth models (MoGe) flatten people: noses, chins, the sides of the
+  face.
+- **The model.** Meta's Sapiens2 (ICLR 2026) is trained only on people: a billion human images, plus
+  synthetic scans for 3D. Its pointmap model predicts the 3D position of every pixel of a person,
+  including the fine relief of faces.
+- **How it is used.** Real 3D now:
+  1. finds the people (Sapiens2 body-part segmentation);
+  2. predicts their 3D on a crop around them at the network's full 1024×768;
+  3. converts that 3D with the photo's real lens;
+  4. puts that shape into the scene's depth inside each person's outline, blended over a few pixels at
+     the edge. The person keeps the scene's distance; only the shape changes.
+- **Its distance is also a scale cue.** How far the scene puts the people, compared with the human model,
+  is logged as `scene_vs_human_distance`.
+- **New picture `people_shape.png`.** Next to the result: the photo crop, the shaded relief before (MoGe)
+  and after (Sapiens2). You can see whether the nose and face gained depth.
+- **Footprint.** Two models, both recommended, so *Install recommended* installs them:
+  - Sapiens2-1B Pointmap, 6.5 GB;
+  - Sapiens2-0.4B segmentation, 1.6 GB.
+
+  Both are under Meta's Sapiens2 licence, and both run locally.
+- **How it was built.** Only Sapiens2's dependency-free backbone file is included in the app. The two
+  small output heads are inference-only copies with the original weight names. Their outputs were checked
+  to be identical to Meta's code on the same weights.
+
+## On using extra AI views for geometry
+
+AI-drawn views at slightly different angles are not geometrically true. Every earlier attempt to measure
+geometry from them (rc19-rc55) made the 3D worse. A model trained on real 3D people is the reliable way to
+get their shape, so that is what rc58 uses.
+
+# 2D2VR180 1.0.0-rc57 — Real 3D v3, step 2: what the photo hides, filled consistently
+
+rc56 locked the photo: Apple SHARP aligned to the measured depth at the real lens. rc57 adds what the photo
+cannot show (behind edges, the sides of the subject), built so it agrees with the photo by construction
+instead of being drawn freely. Every earlier attempt drew freely, and that was what made it fail.
+
+## How the fill works (Real 3D, on by default)
+
+1. **Moved cameras.** The locked splat is rendered from moved cameras:
+   - Fast: the head 15 cm to each side and 15° around the subject.
+   - Auto adds: 10 cm up and 30° to each side.
+   - Quality adds: 10 cm down, 15° from above and 30 cm to each side.
+2. **Holes are what the photo never saw.** A pixel is a hole if it is empty, or if it shows something behind
+   the photo's surfaces, such as SHARP's own guessed second layer or splats stretched across depth edges.
+3. **Only the holes are painted.** Qwen-Image-Edit-2511 gets the view with the holes painted black and the
+   instruction to continue the background (Lightning, 4 steps; LaMa when Qwen is not installed). Every
+   visible pixel stays exactly the render.
+4. **The new content's depth is tied to the scene.**
+   - MoGe's depth of the painted view is aligned, with a robust scale and shift, to the rendered depth in a
+     ring around each hole. Only the far side of the ring is used: the background the hole belongs to.
+   - SHARP then runs with the rendered depth where the scene exists and that aligned depth inside the
+     holes.
+5. **Only the holes' splats are added**, labelled GENERATIVE.
+   - Never on top of, or in front of, what the photo shows.
+   - An earlier view wins where views overlap.
+   - The photo's own guesses are replaced where the new content lands.
+
+## See what was added
+
+- `added_layer.ply`: only the new splats.
+- `fill_steps.png`: per moved view, the holes (magenta), the painted picture and the result.
+- `views_sheet.png`: three rows to compare.
+  - Real 3D with the fill;
+  - the locked photo without it;
+  - SHARP alone.
+- `run_report.json`, under `backend.extra.fill`, records per view:
+  - how much was a hole;
+  - how many splats were added or were already there;
+  - how the depth was tied.
+
+To turn the fill off: Advanced → "Fill what the photo hides", or `--no-fill` on the CLI.
+
+# 2D2VR180 1.0.0-rc56 — Real 3D v3, step 1: the photo locked
+
+Owner verdict on rc55: the 3D and the scale are mediocre, and it was not clear the AI views added
+anything. After researching how others make the best splat from one photo
+(docs/research/single-image-splat.md, "Real 3D v3"), Real 3D changes approach.
+
+The photo now rules everything it shows. New content will only fill holes, with its geometry tied to the
+known one; that is the next step, rc57. This release builds the foundation and makes it measurable.
+
+## Real 3D (the default): the photo locked
+
+1. **The photo's real lens.** It comes from the original file's EXIF, otherwise from MoGe's estimate. A
+   wrong lens flattens or stretches the whole scene. rc55's SHARP never saw the lens, because the working
+   copy is a PNG without EXIF.
+2. **Measured metric depth of the photo.** MoGe-3, or MoGe-2 Large when MoGe-3 is not installed.
+3. **Real-world scale check on people's eyes.**
+   - A tiny face finder (YuNet, MIT, 0.2 MB, CPU) locates the eyes, and their 3D distance is measured.
+   - Adults' eyes are 56-70 mm apart. When the median face falls outside that range, the depth is
+     rescaled to the nearest edge.
+   - With no faces, nothing changes.
+4. **Apple SHARP aligned to that depth.** SHARP's network has a learned alignment module, released with
+   its weights, that bends its own depth to a given one. The command line never uses it; Real 3D now does.
+   You keep SHARP's sharpness and its second layer behind edges, with measured geometry and scale instead
+   of SHARP's monocular guess.
+5. **Diagnostics, so you can see the difference:**
+   - `compare_sharp_alone.ply`: SHARP without the measured depth, for comparison.
+   - `views_sheet.png`: both versions seen from the photo, from the head 15 cm left, 15 cm right and
+     10 cm up, and from 15° to each side.
+   - `run_report.json` has, under `backend.extra`:
+     - how far SHARP's own depth was from the measured one (`sharp_own_scale`);
+     - the faces found and the correction (`face_scale`);
+     - the lens used (`hfov_used_deg`).
+
+No AI views are drawn, so it takes about a minute. The earlier methods stay under Advanced → *Real 3D
+method*: *AI views joined* (rc55) and *AI views trained* (rc54). The CLI flag is `--real3d locked|views|train`.
+Without SHARP or MoGe installed, Real 3D falls back to the AI-views method, with a log line saying so.
+
+Components: installing MoGe-3 now also installs Apple SHARP and the face finder.
+
+# 2D2VR180 1.0.0-rc55 — Real 3D by Apple SHARP: the photo and 3 views given volume and joined
+
+Owner verdict on rc54: still worse than rc19. Owner design for rc55:
+- generate 3 and only 3 images, one attempt each, from the agreed angles (45° left, 45° right, from above);
+- give the photo and each of those images volume with Apple SHARP;
+- make the splat from those four;
+- make it the default.
+
+## How Real 3D works now
+
+1. **3 views.** Qwen-Image-Edit draws 45° left, 45° right and from above, straight from the photo. There is
+   one attempt per view in every mode: no candidates, no view from below.
+2. **SHARP on four images.** Apple SHARP runs once over the photo and the 3 views. SHARP reads the lens from
+   EXIF, so each image it gets carries the photo's real focal length. The app's working copy of the photo
+   is a PNG without EXIF; without a lens, SHARP assumes 30 mm.
+3. **Where each view was taken.** The camera engine (VGGT) poses the four images; only the poses are used,
+   with no training. Each view's SHARP splat is scaled so its depth matches the camera engine's, in the
+   photo's SHARP metres. Without the engine, the views start from the requested orbit around the subject,
+   trying both turning directions.
+4. **Laid onto the photo.** A coloured ICP fits a robust similarity, coarse to fine. Each view point is
+   matched to the nearby photo surface point that is closest in space and colour. Colour stops a view
+   sliding along flat surfaces. A fit that has to turn the camera more than 20° or resize the view more
+   than 1.5× is rejected. A view that still does not line up with the photo is left out, with a warning.
+5. **Only what the photo cannot show is added.**
+   - The photo's splats are kept exactly as SHARP made them.
+   - A view splat is dropped if the photo, or an earlier view, already has a surface there.
+   - It is also dropped if it would sit in front of what the photo sees, or if it is one of SHARP's
+     "rubber sheet" splats stretched across a depth edge of its own image.
+   - What remains is the sides of the subject and what it hides, labelled GENERATIVE.
+   - Each view's colours are matched to the photo, per-channel gain on the shared surfaces.
+6. **The default.** Real 3D is the default preset, and the SHARP path is the default inside it. Installing
+   Qwen-Image-Edit (the Real 3D component) now installs Apple SHARP too. Without SHARP, Real 3D falls back
+   to the rc54 training path, with a log line saying so.
+
+`run_report.json` records, per view:
+- where its pose came from;
+- the scale;
+- how far the refinement turned it;
+- how much of it lies on the photo's surfaces;
+- how many splats it adds or drops, and why;
+- its colour gain.
+
+New code:
+- `src/twod2vr180/fusion.py` (pure numpy, runs in the app);
+- a `poses_npz` mode in `workers/multiview_worker.py`;
+- `tests/unit/test_fusion.py`, with a synthetic box in front of a wall, views at the wrong scale, and both
+  pose sources.
+
 # 2D2VR180 1.0.0-rc54 — Real 3D: back to the front, faster and better than rc19
 
 Owner verdict on rc53's Real 3D: worse and much slower than before. It did make a back, but:

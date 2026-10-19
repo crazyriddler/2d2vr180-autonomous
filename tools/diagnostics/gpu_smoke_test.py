@@ -1,7 +1,7 @@
 """Minimal GPU smoke test, run INSIDE a backend runtime:
 
-    2d2vr180-cli runtimes install photo-cu128
-    %LOCALAPPDATA%\\2D2VR180\\runtimes\\photo-cu128\\venv\\Scripts\\python.exe tools\\diagnostics\\gpu_smoke_test.py
+    2d2vr-cli runtimes install photo-cu128
+    %LOCALAPPDATA%\\2D2VR\\runtimes\\photo-cu128\\venv\\Scripts\\python.exe tools\\diagnostics\\gpu_smoke_test.py
 
 Prints one JSON object: torch/CUDA versions, device, VRAM, a timed fp16 matmul,
 peak allocation after a 12 GB-class allocation probe (skipped below 14 GB).

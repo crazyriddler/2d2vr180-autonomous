@@ -144,3 +144,89 @@ personal/research profile).
   the gen runtime has diffusers 0.37.1, so it needs porting or its own runtime. Its 576×1024 working
   resolution is below our 1280–1600 px training views. Planned as an opt-in Advanced step once it can be
   smoke-tested on the target GPU: render ±20° pseudo-views → Difix-ref with the photo → fine-tune.
+
+
+## Real 3D v3: the photo locked, then holes filled consistently (research, October 2026, after rc55)
+
+Owner verdict on rc55: the 3D and the scale are mediocre, and it is not even clear the AI views added
+anything. The owner asked for research into how others make the best splat from one photo, and for a
+system not tried before.
+
+**The common thread of every failure (rc19-rc55).** The AI views are drawn independently, so they are not
+3D-consistent, and each view got its own monocular depth (VGGT, DA3 or SHARP per view). No reconstruction
+turns inconsistent views into one rigid 3D.
+
+**What works elsewhere: warp-and-inpaint.** This is how 3D Photo Inpainting (CVPR 2020), WonderWorld
+(CVPR 2025, "guided depth diffusion"), GaussVideoDreamer (ACM MM 2025, "depth verification") and NVIDIA
+GEN3C/Lyra work:
+- the photo's geometry is projected into the new camera;
+- only the holes are generated;
+- the new depth is tied to the known depth.
+
+WonderWorld, GEN3C, Lyra and HunyuanWorld-Voyager need 43-48 GB or more, but the method itself fits 16 GB.
+
+**SHARP accepts a measured depth.** In `sharp/models/predictor.py`, `RGBGaussianPredictor.forward(image,
+disparity_factor, depth=None)` aligns SHARP's two-layer monocular depth to a given depth with a learned
+UNet. That UNet is `LearnedAlignment` and its weights are in the released checkpoint. The CLI never passes
+a depth. A third-party "Sharp Depth Injection" add-on does this because SHARP's own scale is arbitrary.
+SHARP also takes the lens from EXIF (30 mm without it), and our working PNG copy of the photo had none.
+
+**Real-world scale.** No monocular model guarantees absolute scale. The adult interpupillary distance
+(about 63 mm, with 56-70 mm covering most adults) is a reliable anchor where there are faces.
+OpenCV's YuNet detector (MIT, 0.2 MB) gives the eye positions.
+
+**Also available in our runtimes.** diffusers 0.37.1 (gen-cu128) ships:
+- `QwenImageEditInpaintPipeline`, inpainting with the Qwen weights we have;
+- `QwenImageLayeredPipeline`, Qwen-Image-Layered (Apache-2.0, Dec 2025), RGBA layers with the occluded
+  background completed.
+
+**Plan.**
+- **rc56: the photo locked** (`backends/locked.py`, `workers/sharp_depth_worker.py`):
+  - lens from EXIF, otherwise MoGe's estimate;
+  - MoGe-3 (or MoGe-2) metric depth;
+  - eye-distance scale check;
+  - SHARP with that depth injected;
+  - SHARP alone exported for A/B, plus a sheet of views at 15 cm and 15°.
+- **rc57: progressive fill.** Over head moves of ±10/20 cm and turns of 15°/30°:
+  - render the current splat;
+  - inpaint only the holes (Qwen inpaint, otherwise LaMa);
+  - give the new pixels MoGe depth aligned to the rendered depth around the hole;
+  - run SHARP with that composite depth;
+  - keep only the hole's splats (GENERATIVE).
+- **Later, only if needed:** Qwen-Image-Layered for the occluded background.
+
+Sources:
+- Apple ml-sharp code (`predictor.py`, `alignment.py`, `cli/predict.py`, `utils/io.py`) at commit `aed6527`.
+- WonderWorld (arXiv 2406.09394; README: 48 GB).
+- GaussVideoDreamer (arXiv 2504.10001).
+- GEN3C (github.com/nv-tlabs/GEN3C: ~43 GB peak).
+- Lyra (research.nvidia.com/labs/toronto-ai/lyra).
+- HY-World 2.0 (github.com/Tencent-Hunyuan/HY-World-2.0).
+- Qwen-Image-Layered (github.com/QwenLM/Qwen-Image-Layered).
+- SAM 3D (CVPR 2026).
+- Difix3D+ (CVPR 2025).
+- "Sharp Depth Injection" (LinkedIn post by its author).
+
+
+## rc58: people's size and shape (October 2026)
+
+Owner feedback on rc57: the best so far in speed and quality, but people come out bigger than they are,
+and noses are flat and fine geometry is missed.
+
+**Size.** The eye check only corrected the scale outside 56-70 mm. It now always calibrates, to a target
+that the user can change (63 mm by default).
+
+**Shape.** MoGe-2/3 are general scene models and flatten people. Sapiens2 (Meta, ICLR 2026, arXiv
+2604.21681) is a human-only model family, pretrained on 1B human images, with pointmap and normal heads
+trained on synthetic scans. Its paper reports pointmap errors below MoGe, VGGT, UniDepth and DUSt3R on
+humans, and clearly finer facial detail.
+- Checkpoints on Hugging Face: `facebook/sapiens2-pointmap-1b` (6.5 GB) and `facebook/sapiens2-seg-0.4b`
+  (1.6 GB). They are not gated; the licence is the Sapiens2 License.
+- The pointmap is in a canonical focal space (768 px at 1024×768). It is converted with the photo's own
+  lens.
+
+DAViD (Microsoft, ICCV 2025, MIT) is an alternative with lower resolution (384 px), kept in reserve.
+
+The owner also suggested using slightly different AI views to improve the geometry. This is not pursued:
+generated views are not geometrically true, and every attempt to triangulate from them (rc19-rc55) degraded
+the 3D.

@@ -39,15 +39,14 @@ Render at:
 
 Record failures.
 
-## Gate E — VR180
+## Gate E — splat video playback
 
 Verify:
-- left/right eye orientation;
-- no accidental vertical flip;
-- correct SBS/TB metadata;
-- equirectangular seam behavior;
-- FOV metadata;
-- playback in a Quest-compatible test workflow if available.
+- the browser player and the app viewer play a .splv in order, at the video's speed, with its sound;
+- seeking and looping;
+- frames are waited for, never skipped, when decoding is late;
+- the VR size control (A/X, B/Y, stick click) and play/pause (trigger) on a PC-connected headset;
+- memory stays bounded while playing a long splat video.
 
 ## Gate F — generated content honesty
 

@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-02",
+ "updated": "2026-10-14",
  "evidence_environment": "Linux x86_64 container, 4 CPU, no GPU; network limited to GitHub git + PyPI (Hugging Face, Apple CDN, download.pytorch.org blocked)",
  "gates": [
   {
@@ -42,37 +42,37 @@
    "id": "C-pipeline-plumbing",
    "mandatory": true,
    "status": "pass",
-   "evidence": "tests/integration/test_jobs.py: photo, static video, fixed-camera dynamic video, fallback, cancel, OOM, missing model, corrupted input (test-only fake geometry worker)."
+   "evidence": "tests/integration/test_jobs.py: Real 3D photo (lens, MoGe-3, SHARP with depth, fill, people model, IPD), splat video (frames, fps/length/start, sound, keyframes, OOM resume with lighter settings, cancel, low disk), missing model, no GPU, corrupted input (test-only fake workers)."
   },
   {
    "id": "C-video-inference-gpu",
    "mandatory": false,
    "status": "not_run",
-   "evidence": "recon3d worker unverified; Windows gsplat wheel availability unknown."
+   "evidence": "workers/video_splat_worker.py exercised with stand-in MoGe/SHARP (calibration, depth stabilisation within 0.1 % under 3 % per-frame wobble, keyframes, resume); real models need the RTX 4080."
   },
   {
    "id": "D-novel-views",
    "mandatory": false,
    "status": "not_run",
-   "evidence": "Orbit renders tested on synthetic scenes only."
+   "evidence": "Real 3D fill of what the photo hides from moved views: tested with fake painter/SHARP workers."
   },
   {
-   "id": "E-vr180-geometry",
+   "id": "E-splat-video-playback",
    "mandatory": true,
    "status": "pass",
-   "evidence": "tests/unit/test_render_vr180.py: eye order, no flips, equirect angle mapping, SBS/TB layout, dimensions, FOV metadata, honesty note."
+   "evidence": "tests/integration/test_player.py (Chromium, SwiftShader WebGL2): .splat still and .splv splat video load without errors, play in order at the video's speed with Opus sound as the clock, seek, size buttons/keys, HTTP range streaming. tests/integration/test_gui.py: the app's viewer plays a .splv (offscreen CPU preview and Mesa OpenGL under Xvfb)."
   },
   {
-   "id": "E-quest-playback",
+   "id": "E-headset-playback",
    "mandatory": false,
    "status": "not_run",
-   "evidence": "H.264 yuv420p MP4 with _180_LR/_180_TB naming and Spherical Video V2 st3d/sv3d boxes (FFmpeg reports stereo3d + tiled equirectangular). Headset playback not tested."
+   "evidence": "WebXR player on a PC-connected headset (Quest Link / SteamVR): controller buttons (A/X smaller, B/Y bigger, stick click reset, trigger play/pause) need the owner's headset."
   },
   {
    "id": "F-generated-content-honesty",
    "mandatory": true,
    "status": "pass",
-   "evidence": "Per-splat provenance, per-eye coverage stats, is_full_vr180 flag and warnings in run_report.json; no generative backend enabled."
+   "evidence": "Per-splat provenance (INFERRED photo/frames, GENERATIVE AI fill exported separately as added_layer.ply), coverage in run_report.json; splat videos invent nothing."
   },
   {
    "id": "G-licensing",

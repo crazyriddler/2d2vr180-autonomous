@@ -1,4 +1,4 @@
-from twod2vr180.hardware import format_report, parse_nvidia_smi_csv, probe
+from twod2vr.hardware import format_report, parse_nvidia_smi_csv, probe
 
 
 def test_parse_nvidia_smi():

@@ -1,14 +1,10 @@
 # VR Agent
 
-Own stereoscopic rendering and VR180 encoding.
+Own the VR player (assets/webxr/player.*), the local player server (vr_server.py) and the splat video
+format (workers/splv_codec.py).
 
 Deliver:
-- SBS;
-- Top/Bottom;
-- correct eye order;
-- configurable eye separation;
-- configurable FOV;
-- FFmpeg encoding;
-- output validation.
-
-Do not silently call a normal SBS output "full VR180" if coverage is not hemispherical.
+- smooth playback at the video's speed, with its sound;
+- WebXR controls: locomotion, size (A/X, B/Y), reset, play/pause;
+- start at the camera's place with the horizon levelled;
+- browser tests for every change (tests/integration/test_player.py).

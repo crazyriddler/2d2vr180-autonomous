@@ -1,6 +1,6 @@
 # Initial Claude Code Prompt
 
-You are taking ownership of the repository **2D2VR180**.
+You are taking ownership of the repository **2D2VR**.
 
 Your job is to turn this repository into a working, distributable Windows application for an NVIDIA RTX 4080 16 GB.
 

@@ -30,7 +30,7 @@ def git(*args) -> str | None:
 
 
 def main() -> int:
-    from twod2vr180 import __version__
+    from twod2vr import __version__
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--release-dir", default=str(REPO / "release"))
@@ -44,7 +44,7 @@ def main() -> int:
     too_big = [p.name for p in assets if p.stat().st_size >= 2 * 2**30]
     gates = json.loads(Path(a.gates).read_text()) if Path(a.gates).exists() else {}
     manifest = {
-        "app": "2D2VR180", "version": __version__,
+        "app": "2D2VR", "version": __version__,
         "source_commit": git("rev-parse", "HEAD"), "source_dirty": bool(git("status", "--porcelain")),
         "built": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "build_env": {"python": platform.python_version(), "platform": platform.platform()},

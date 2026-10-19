@@ -39,7 +39,19 @@ def main(req):
         else:
             np.savez_compressed(item["out"], points=pts, mask=np.ones((h, w), bool), intrinsics=K, image=arr)
         progress((i + 1) / len(req["images"]), f"fake geometry {i + 1}")
-    emit("result", outputs=[it["out"] for it in req["images"]], vram_peak_mib=None, model="fake", metric=True)
+    prec = None
+    if req.get("precision"):      # rc7: what the real worker reports (lens check, passes, second depth)
+        exif = req["images"][0].get("fov_x")
+        lens = ({"exif_deg": exif, "estimates_deg": {"MoGe": 40.0, "Depth Pro": 40.5}, "used_deg": 40.25,
+                 "from": "models (EXIF disagreed)", "note": "the EXIF lens disagrees with both depth models"}
+                if os.environ.get("FAKE_LENS_OFF") else
+                {"exif_deg": exif, "estimates_deg": {"MoGe": 60.0}, "used_deg": exif or 60.0,
+                 "from": "EXIF" if exif else "model", "note": "EXIF lens"})
+        prec = [{"lens": lens, "passes": 3 if req["precision"].get("passes") else 1,
+                 "depth_pro": {"used": True, "disagreement_median": 0.02, "edge_share": 0.05}
+                 if req["precision"].get("depth_pro") else None}]
+    emit("result", outputs=[it["out"] for it in req["images"]], vram_peak_mib=None, model="fake", metric=True,
+         precision=prec)
 
 
 if __name__ == "__main__":

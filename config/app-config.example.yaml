@@ -1,6 +1,6 @@
 app:
-  name: 2D2VR180
-  version: 0.1.0
+  name: 2D2VR
+  version: 2.0.0
   language: en
 
 hardware:
@@ -9,23 +9,19 @@ hardware:
   minimum_vram_gb: 8
 
 storage:
-  models_dir: "%LOCALAPPDATA%/2D2VR180/models"
-  jobs_dir: "%LOCALAPPDATA%/2D2VR180/jobs"
-  cache_dir: "%LOCALAPPDATA%/2D2VR180/cache"
-  logs_dir: "%LOCALAPPDATA%/2D2VR180/logs"
+  models_dir: "%LOCALAPPDATA%/2D2VR/models"
+  jobs_dir: "%LOCALAPPDATA%/2D2VR/jobs"
+  cache_dir: "%LOCALAPPDATA%/2D2VR/cache"
+  logs_dir: "%LOCALAPPDATA%/2D2VR/logs"
 
 pipeline:
-  photo_default: auto
-  video_default: auto
-  prefer_quality_over_speed: true
+  photo: photo_locked        # Real 3D: SHARP aligned to MoGe-3's measured depth, AI fill of what it hides
+  video: splat_video         # every frame made like a Real 3D photo, one .splv file with the sound
+  ipd_mm: 63                 # people's eyes are scaled to this distance (real-world size)
 
-vr180:
-  formats:
-    - sbs
-    - top_bottom
-  default_eye_separation_m: 0.064
-  default_horizontal_fov_deg: 100
-  allow_hemisphere_completion: false
+player:
+  formats: [splat, splv]
+  size_control: [A/X smaller, B/Y bigger, stick click reset]
 
 privacy:
   upload_media: false

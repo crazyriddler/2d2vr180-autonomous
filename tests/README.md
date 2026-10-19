@@ -10,4 +10,4 @@ Test categories:
 - GPU;
 - integration;
 - packaging;
-- VR180 validation.
+- splat video format and playback (browser player in headless Chromium, app viewer).

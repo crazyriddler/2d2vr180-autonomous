@@ -1,5 +1,30 @@
 # Execution plan and status
 
+## 2.0 — the reform (2026-10-14): Real 3D photos and splat videos, VR180 removed
+
+- ✅ Rename 2D2VR180 → 2D2VR (package `twod2vr`, data folder migrated on first start, installer replaces 1.x)
+- ✅ Removed: VR180 renderer and outputs, 4D video (video4d, scene4d, .splatv), multi-view, Quick 3D, rc54/rc55 Real 3D
+  methods, three.js viewer; models VGGT, MoGe-2, Depth Anything, Wan 2.2, LaMa, angles LoRA; runtime recon3d-cu124
+- ✅ Components: only what Real 3D uses, all recommended; old downloads listed with a delete button
+- 🟡 `splat_video` backend + `workers/video_splat_worker.py`: Real 3D per frame (MoGe-3, Sapiens2, eye scale, SHARP with
+  depth), one lens and scale per clip, depth stabilisation, frames written as they are made, OOM → resume with lighter settings. Exercised with
+  stand-in models; real models not yet run on the RTX 4080
+- ✅ `.splv` format (`workers/splv_codec.py`): fixed splat subset, 17 B/splat quantized, per-field temporal/spatial
+  filters, byte planes, deflate, keyframes, Opus sound
+- ✅ Browser player (`assets/webxr/player.*`): .splat and .splv, range streaming, decode worker pool, sound as the clock,
+  WebXR size buttons (A/X, B/Y, stick click), trigger play/pause — headless Chromium tests
+- ✅ App viewer plays .splv with sound (QtMultimedia) and a timeline; decoder thread; GL and CPU paths tested
+- ✅ Owner test on the RTX 4080 + headset (rc2-rc5: photos and splat videos work; video depth, photo relief and the
+  AI fill improved after the owner's reports)
+- 🟡 rc6: maximum detail for photos (patch-fused depth, whole-scene placement, SHARP on parts)
+- 🟡 rc7: precision for photos (`workers/precision.py`, `workers/refine.py`): lens check, MoGe-3 passes, Depth Pro
+  joined, normals → fine relief (MoGe-3, Sapiens2 normals), clean depth edges, every splat placed, fit to the photo,
+  MoGe-3 Giant, 3 x 3 parts for 24 MP photos. Stand-in tests and the real workers end to end with stand-in models;
+  not yet run on the RTX 4080
+
+## Earlier (1.x)
+
+
 Legend: ✅ done and tested here · 🟡 implemented, not verified on target hardware · ⛔ blocked · ⬜ not started
 
 ## Milestone 1 — diagnostics, skeleton, job system
@@ -12,6 +37,15 @@ Legend: ✅ done and tested here · 🟡 implemented, not verified on target har
 ## Milestone 2 — photo backend
 - 🟡 `moge_rgbd`: MoGe-2 point map → surface-aligned Gaussians + textured OBJ (conversion tested; model never run)
 - 🟡 `sharp`: Apple SHARP adapter (research profile only)
+- 🟡 Real 3D v3 (rc56, default): the photo locked — SHARP aligned to MoGe-3 metric depth at the real lens,
+  eye-distance scale check, A/B export + views sheet (`backends/locked.py`, `workers/sharp_depth_worker.py`).
+  rc57: holes of moved views (what the photo never saw) painted by Qwen/LaMa, depth tied to the scene,
+  SHARP with composite depth, only hole splats added (`fusion.unseen_by_photo`, `fusion.add_fills`).
+- 🟡 rc58: scale always calibrated to the eye distance (setting, default 63 mm; human-model fallback); people's
+  3D shape from Sapiens2 pointmap + seg fused into MoGe depth (`workers/human_geometry.py`, vendored backbone)
+- 🟡 Real 3D AI views joined (rc55, now an option): 3 Qwen views (one attempt each) + SHARP on the photo and each view, joined by
+  `fusion.py` (VGGT poses or requested orbit, coloured ICP, photo-first dedup, rubber-sheet filter, colour gain).
+  Fusion unit-tested on synthetic scenes; job path tested with fake workers; not yet run on the RTX 4080
 
 ## Milestone 3 — video (rebuilt on 4D in rc49)
 - ✅ Video analysis: fixed vs moving camera (phase correlation), moving subjects, scene cuts, best frame
