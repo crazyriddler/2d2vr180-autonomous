@@ -37,7 +37,8 @@
 ## Design rules
 
 - The GUI never imports research code. Each upstream project is used by a worker script that runs inside an
-  isolated runtime (`photo-cu128`: MoGe, SHARP, Depth Pro, Sapiens2, gsplat; `gen-cu128`: Qwen-Image-Edit) and talks
+  isolated runtime (`photo-cu128`: MoGe, SHARP, Depth Pro, Sapiens2; `render-cu124`: gsplat with its prebuilt CUDA
+  kernels - the renders of moved views and the fit to the photo; `gen-cu128`: Qwen-Image-Edit) and talks
   JSON lines on stdout (`workers/_protocol.py`). The app kills the worker's process tree on cancel.
 - Every splat carries its provenance: INFERRED (seen in the photo/frame, depth predicted) or GENERATIVE
   (painted by AI). Painted parts are exported separately (`added_layer.ply`).
@@ -76,7 +77,7 @@ decodes the same layout):
 | normals → relief | `align_normals`, `integrate_normals` | MoGe-3's and Sapiens2's normals turned into the photo's axes (orthogonal Procrustes) and joined as slopes of log depth (screened Poisson, CG), capped |
 | clean edges | `resolve_edges` | pixels next to a depth step go to the near or far side by colour |
 | placement | `sharp_depth_worker.snap_to_depth` | every seen splat at that depth; at edges cell-centre sampling and the back layer on the far side |
-| fit | `workers/refine.py` | colours, opacities, sizes fitted to the photo from its camera (gsplat), positions fixed |
+| fit | `workers/refine.py`, `refine_worker.py` | colours, opacities, sizes fitted to the photo from its camera (gsplat, `render-cu124`), positions fixed |
 
 Maximum detail (`workers/detail_geometry.py`) does the same at up to 3072 px (4608 px, 3 x 3 parts, for
 photos of 24 MP and up), with each part's normals turned into the photo's axes first.

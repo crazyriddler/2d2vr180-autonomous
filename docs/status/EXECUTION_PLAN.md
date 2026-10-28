@@ -20,7 +20,9 @@
 - 🟡 rc7: precision for photos (`workers/precision.py`, `workers/refine.py`): lens check, MoGe-3 passes, Depth Pro
   joined, normals → fine relief (MoGe-3, Sapiens2 normals), clean depth edges, every splat placed, fit to the photo,
   MoGe-3 Giant, 3 x 3 parts for 24 MP photos. Stand-in tests and the real workers end to end with stand-in models;
-  not yet run on the RTX 4080
+  run on the RTX 4080 (owner, rc7): works, but the renderer, one face's scale and the detail fusion needed rc8
+- 🟡 rc8: renderer runtime `render-cu124` (prebuilt gsplat; in photo-cu128 gsplat needed a CUDA toolkit and never ran,
+  so the AI fill was always skipped); eye-distance outliers left out; patch fusion without the affine shift
 
 ## Earlier (1.x)
 

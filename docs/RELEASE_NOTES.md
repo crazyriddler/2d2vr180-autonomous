@@ -1,3 +1,64 @@
+# 2D2VR 2.0.0-rc8 — the AI fill really runs; scale and maximum detail fixed
+
+The owner's rc7 tests (the same 24 MP photo in Fast, and in Quality with maximum detail and the AI fill):
+the fill still added nothing, and the slower Quality run had more noise and distortion, not more detail.
+The two job logs showed three causes, all fixed here.
+
+## 1. The GPU renderer never ran (so the AI fill never did either)
+
+The log said `gsplat: No CUDA toolkit found. gsplat will be disabled.`
+- gsplat draws the splat from moved positions: the AI fill needs those pictures to find what the photo
+  hides, and the fit to the photo needs them too.
+- In the Real 3D engine (PyTorch 2.8) gsplat has no ready-built CUDA code and tries to build it on the
+  user's PC, which needs NVIDIA's CUDA toolkit. So it never ran: the fill was skipped ("the GPU renderer
+  did not run"), the fit to the photo too, and the views sheet fell back to the slow CPU renderer.
+- **New component: the Real 3D renderer** (~3 GB). It is PyTorch 2.4 with gsplat's ready-built Windows
+  CUDA code: the same pair the 1.x video engine ran on your RTX 4080. The moved views, the fit to the photo
+  and the views sheet run there.
+- If the renderer is missing, the fill now draws the moved views with the CPU renderer instead of being
+  skipped (slower, and the job log says so).
+
+## 2. One face set a wrong scale
+
+- The log said the eyes of two faces were 51.8 mm and **361.8 mm** apart. The second face's eyes were
+  measured across a depth edge (one on the face, one on what is behind it).
+- The median of the two halved the whole scene (×0.5).
+- Now each eye is measured on the face, not on what is behind it.
+- A face is left out when its two eyes are at very different depths, or when its eye distance is
+  impossible.
+- When the faces that are left disagree, the ones that agree with the human model (Sapiens2) are used.
+- On your photo the scale is now set from the 51.8 mm face.
+
+## 3. Maximum detail added noise instead of detail
+
+- Each part of the photo was aligned to the whole-photo depth with a scale *and a shift*. On your photo the
+  shifts reached −0.9 m at 2–3 m.
+- That multiplied each part's relief (and its noise) by up to 2, and let spikes of up to 8 % through.
+- Now a part only gives its fine relief: its log depth minus its own blur, which its scale does not change.
+  So no shift is needed, and the added relief is capped at 3 %.
+
+## How to get it
+
+1. Install over rc7.
+2. Go to **Components → Install recommended**. This adds the Real 3D renderer (~3 GB).
+3. Run the photo again with the AI fill on.
+
+Then check:
+- `fill_steps.png` should show the holes in magenta, the painted pictures and the result;
+- the Results line should say how many AI-painted splats were added.
+
+## Checks
+
+- Every test passes (the job pipeline with stand-in workers, and the photo workers end to end with
+  stand-in models).
+- New tests:
+  - the moved views are drawn in the renderer runtime;
+  - without the renderer, the fill still adds content using the CPU renderer;
+  - the faces from your photo are handled correctly (51.8 / 361.8 mm);
+  - a part with an offset and noise is no longer amplified.
+- CI installed the renderer runtime with the packaged app on Windows and loaded gsplat's compiled CUDA
+  code. Hosted CI machines have no GPU, so nothing was drawn there.
+
 # 2D2VR 2.0.0-rc7 — precision for photos
 
 The owner said the GPU barely notices photo splats in VR and asked for everything that makes a photo's 3D

@@ -8,7 +8,7 @@ Everything runs on your own computer: nothing you process is uploaded anywhere.
 - Windows 10 (build 19041+) or Windows 11, 64-bit
 - An NVIDIA GPU with a recent driver (target: RTX 4080 16 GB; 8 GB+ works). Driver 570 or newer.
 - 32 GB of RAM recommended (the AI painter of photos needs it)
-- About 75 GB of free disk space for the engines and models, plus space for your results
+- About 80 GB of free disk space for the engines and models, plus space for your results
   (a splat video takes 2-5 GB per minute)
 - Internet access **only** for the one-time download of the engines and models
 
@@ -31,6 +31,7 @@ everything Real 3D uses; you do not need to pick anything.
 | Component | What it does | Size |
 |---|---|---|
 | Real 3D engine | runs the models below on your GPU | ~5.5 GB |
+| Real 3D renderer | draws the splat from moved positions on the GPU (gsplat): the AI fill, the fit to the photo, the views sheet | ~3 GB |
 | Apple SHARP | the 3D Gaussians of every photo and video frame (**research licence**) | ~2.5 GB |
 | MoGe-3 Large | measured depth, lens and real-world scale | 1.5 GB |
 | MoGe-3 Giant | photos: the most accurate depth (used instead of Large when installed) | 5 GB |
