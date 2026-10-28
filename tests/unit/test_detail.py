@@ -34,11 +34,30 @@ def test_patch_fusion_keeps_the_whole_photo_shape_and_adds_the_crops_relief():
     crops = []
     for crop, _ in dg.tile_boxes(w, h, 2):
         x0, y0, x1, y1 = crop
-        crops.append((crop, 1.3 * truth[y0:y1, x0:x1] - 0.2))        # crops: right relief, wrong scale
+        crops.append((crop, 0.6 * truth[y0:y1, x0:x1]))              # crops: right relief, wrong scale
     fused, stats = dg.patch_fusion(whole, crops, sigma=20, torch=torch)   # relief finer than sigma: from the crops
     inner = (slice(20, -20), slice(20, -20))
     assert np.abs(fused - truth)[inner].max() < 0.004                # grooves recovered, scale from the whole
-    assert all(abs(s["scale"] - 1 / 1.3) < 0.02 for s in stats)
+    assert all(abs(s["scale"] - 1 / 0.6) < 0.02 for s in stats)
+
+
+def test_patch_fusion_does_not_amplify_a_crops_offset_or_noise():
+    """rc8: rc6 aligned each crop with a scale and a shift; a big shift multiplied the crop's relative relief
+    (the owner's photo: shifts of -0.9 m at 2-3 m -> more noise, not more detail)."""
+    import detail_geometry as dg
+
+    h, w = 300, 400
+    rng = np.random.default_rng(0)
+    whole = np.full((h, w), 2.5)
+    crops = []
+    for crop, _ in dg.tile_boxes(w, h, 2):
+        x0, y0, x1, y1 = crop
+        noise = 0.01 * rng.normal(size=(y1 - y0, x1 - x0))
+        crops.append((crop, 2.5 + noise + 1.5))                      # an offset crop with 1 cm noise
+    fused, _ = dg.patch_fusion(whole, crops, sigma=10, torch=torch)
+    rel = np.abs(np.log(fused) - np.log(whole))
+    assert np.percentile(rel, 99) < 0.01                             # relative noise kept (0.01 / 4 m), not x1.6
+    assert rel.max() <= 0.03 + 1e-9                                   # and capped
 
 
 def test_edge_weight_is_low_at_depth_jumps():

@@ -42,9 +42,12 @@ IPD_TARGET_M = 0.063          # adult interpupillary distance, population median
 
 
 def eye_distances(img, points, model_path, min_face_px=40):
-    """3D distance between the eyes of every face found (YuNet, OpenCV), in the units of ``points``."""
+    """3D distance between the eyes of every face found (YuNet, OpenCV), in the units of ``points``.
+
+    rc8: each eye's point is the median of the nearer half of a 5 x 5 window (the face, not the background
+    behind its edge), and a face whose two eyes differ in depth more than they are apart sideways (eyes
+    sampled across a depth edge, or a face seen from the side) is marked not usable."""
     import cv2
-    import numpy as np
 
     h, w = img.shape[:2]
     det = cv2.FaceDetectorYN.create(model_path, "", (w, h), 0.8, 0.3, 50)
@@ -60,23 +63,47 @@ def eye_distances(img, points, model_path, min_face_px=40):
             win = win[np.isfinite(win).all(1) & (win[:, 2] > 0)]
             if not len(win):
                 break
+            win = win[win[:, 2] <= np.median(win[:, 2])]
             eyes.append(np.median(win, 0))
         if len(eyes) == 2:
+            d = eyes[0] - eyes[1]
+            lateral, dz = float(np.hypot(d[0], d[1])), float(abs(d[2]))
             out.append({"box": [float(v) for v in f[:4]], "score": float(f[14]),
-                        "ipd": float(np.linalg.norm(eyes[0] - eyes[1]))})
+                        "ipd": float(np.linalg.norm(d)), "depth_gap": round(dz, 4),
+                        "usable": bool(dz <= 1.2 * lateral)})
     return out
 
 
-def face_scale(faces, target=IPD_TARGET_M):
-    """Factor that brings the median eye distance of the faces to ``target`` metres (rc58: always, not only
-    outside a range - owner: people always came out too big). 1.0 without faces; never more than 2x."""
-    import numpy as np
+def face_scale(faces, target=IPD_TARGET_M, prior=None):
+    """Factor that brings the eye distance of the faces to ``target`` metres (rc58: always, not only
+    outside a range - owner: people always came out too big). 1.0 without usable faces; never more than 2x.
 
+    rc8 (owner's photo: one face measured 362 mm, which halved the whole scene): faces whose eyes were not
+    measured on the face (eye_distances "usable") or whose distance is impossible even for a depth off by 4x
+    (under 2 cm or over 25 cm) are left out; when the rest disagree, the faces that agree with ``prior`` (the
+    human model's scale) - else with the biggest face - are used. Marks each face "used" or "rejected"."""
     if not faces:
         return 1.0
-    ipd = float(np.median([f["ipd"] for f in faces]))
-    if ipd <= 0:
+    good = []
+    for f in faces:
+        if not f.get("usable", True):
+            f["rejected"] = "eyes not both on the face (depth gap)"
+        elif not 0.02 <= f["ipd"] <= 0.25:
+            f["rejected"] = f"impossible eye distance ({f['ipd'] * 1000:.0f} mm)"
+        else:
+            good.append(f)
+    if not good:
         return 1.0
+    if len(good) > 1 and max(f["ipd"] for f in good) > 1.5 * min(f["ipd"] for f in good):
+        ref = target / prior if prior else max(good, key=lambda f: f["box"][2] * f["box"][3])["ipd"]
+        agree = [f for f in good if 1 / 1.5 <= f["ipd"] / ref <= 1.5]
+        for f in good:
+            if f not in agree:
+                f["rejected"] = "disagrees with the other cues"
+        good = agree or [max(good, key=lambda f: f["box"][2] * f["box"][3])]
+    for f in good:
+        f["used"] = True
+    ipd = float(np.median([f["ipd"] for f in good]))
     return float(min(max(target / ipd, 0.5), 2.0))
 
 
@@ -624,16 +651,19 @@ def main(req):
     if req.get("face_model") and os.path.exists(req["face_model"]):
         try:
             faces = eye_distances(img, points, req["face_model"])
-            s_face = face_scale(faces, target)
+            prior = 1.0 / people["scene_vs_human_distance"] if people else None
+            s_face = face_scale(faces, target, prior)
             if faces:
-                log("eye distance of the faces found: " + ", ".join(f"{f['ipd'] * 1000:.1f} mm" for f in faces) +
-                    f"; scale x{s_face:.3f} to bring them to {target * 1000:.1f} mm")
+                log("eye distance of the faces found: " + ", ".join(
+                    f"{f['ipd'] * 1000:.1f} mm" + (f" (left out: {f['rejected']})" if f.get("rejected") else "")
+                    for f in faces) + (f"; scale x{s_face:.3f} to bring them to {target * 1000:.1f} mm"
+                                       if any(f.get("used") for f in faces) else "; no usable face"))
             else:
                 log("no face found for the scale check")
         except Exception as e:  # noqa: BLE001 - a check, not a requirement
             log(f"face scale check unavailable: {e}")
     scale, scale_from = 1.0, "measured depth"
-    if faces:
+    if any(f.get("used") for f in faces):
         scale, scale_from = s_face, "eye distance"
         if people:
             hs = 1.0 / people["scene_vs_human_distance"]
@@ -718,15 +748,15 @@ def main(req):
     locked = os.path.join(out_dir, "locked.ply")
     save_ply(g, f_px, (h, w), locked)
     outputs = {"locked": locked}
-    size_out, f_out, detail, photo_out, final_depth = [w, h], f_px, None, img, depth
+    size_out, f_out, detail, final_depth = [w, h], f_px, None, depth
     if req.get("detail"):
         try:
-            gd, (W, H), fw, detail, work, fused = detail_photo(req, predictor, img, depth, f_px, parts, device, torch,
+            gd, (W, H), fw, detail, _work, fused = detail_photo(req, predictor, img, depth, f_px, parts, device, torch,
                                                                people_n)
             outputs["standard"] = locked                       # the normal result, for comparison
             locked = outputs["locked"] = os.path.join(out_dir, "locked_detail.ply")
             save_ply(gd, fw, (H, W), locked)
-            size_out, f_out, photo_out, final_depth = [W, H], fw, work, fused
+            size_out, f_out, final_depth = [W, H], fw, fused
             del gd
         except Exception as e:  # noqa: BLE001 - fall back to the normal result
             if device.type == "cuda":
@@ -744,24 +774,8 @@ def main(req):
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
-    # ---- the splat fitted to the photo itself (rc7, workers/refine.py)
-    if req.get("refine", precise):
-        progress(0.8, "fitting the splat to the photo")
-        try:
-            import refine
-
-            fitted = os.path.join(out_dir, os.path.basename(locked).replace(".ply", "_fitted.ply"))
-            prec["fit"] = refine.refine_ply(locked, fitted, photo_out, f_out, size_out, torch, device,
-                                            iters=int(req.get("refine_iters", 300)), log=log)
-            if prec["fit"].get("used"):
-                locked = outputs["locked"] = fitted
-            else:
-                log(f"fit to the photo not kept: {prec['fit'].get('reason')}")
-        except Exception as e:  # noqa: BLE001 - an improvement, not a requirement
-            prec["fit"] = {"used": False, "error": f"{type(e).__name__}: {str(e)[:300]}"}
-            log(f"fit to the photo skipped ({prec['fit']['error']})")
-            if device.type == "cuda":
-                torch.cuda.empty_cache()
+    # the fit to the photo (workers/refine.py) runs afterwards in the renderer runtime (rc8: gsplat needs its
+    # prebuilt CUDA kernels, which this runtime's torch has none of)
     if precise:
         try:
             panels, labels = [], []

@@ -27,10 +27,12 @@ def test_runtime_manager_state(tmp_path):
     from twod2vr.runtimes import RuntimeManager, load_runtime_manifest
 
     specs = load_runtime_manifest()
-    assert set(specs) == {"photo-cu128", "gen-cu128"}
+    assert set(specs) == {"photo-cu128", "render-cu124", "gen-cu128"}
+    gs = next(p for p in RuntimeManager(tmp_path, specs).lock_lines("render-cu124") if p.startswith("gsplat=="))
+    assert gs == "gsplat==1.5.3+pt24cu124" and specs["render-cu124"].python == "3.10"     # the prebuilt wheel
     for s in specs.values():
         lines = RuntimeManager(tmp_path, specs).lock_lines(s.id)
-        assert len(lines) > 20 and all("==" in p for p in lines), "runtimes must install an exact lock"
+        assert len(lines) >= 20 and all("==" in p for p in lines), "runtimes must install an exact lock"
         torch_line = next(p for p in lines if p.startswith("torch=="))
         assert "+cu" in torch_line
         for a in s.archives_no_deps:   # commit archives, or prebuilt wheels pinned to a commit

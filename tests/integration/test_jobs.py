@@ -98,6 +98,30 @@ def test_real3d_fills_what_the_photo_hides_from_moved_views(ctx, rtx4080, photo)
     assert set(QWEN_IDS) <= {m["id"] for m in rep["models"]}
 
 
+def test_real3d_fill_runs_in_the_renderer_runtime_and_without_it(ctx, rtx4080, photo, monkeypatch):
+    """rc8: the moved views are drawn in the renderer runtime (prebuilt gsplat) - in the photo engine gsplat
+    needed a CUDA toolkit and never ran, so the fill was always skipped on the owner's PC. Without the
+    renderer the fill still runs on the CPU renderer instead of being skipped."""
+    from conftest import install_fake_model
+
+    for mid in QWEN_IDS:
+        install_fake_model(ctx.models, mid)
+    asked = []
+    real_python = ctx.runtimes.python
+    monkeypatch.setattr(ctx.runtimes, "python", lambda rid: asked.append(rid) or real_python(rid))
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast")
+    assert rep["status"] == "succeeded", rep.get("error")
+    assert "render-cu124" in asked and rep["backend"]["extra"]["added_splats"] > 0
+    monkeypatch.setattr(ctx.runtimes, "is_installed", lambda rid: rid != "render-cu124")
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast")
+    assert rep["status"] == "succeeded", rep.get("error")
+    ex = rep["backend"]["extra"]
+    assert ex["added_splats"] > 0, ex["fill_status"]                    # CPU renderer: still filled
+    assert ex["precision"]["photo"]["fit"]["used"] is False
+    text = (job.dir / "job.log").read_text(encoding="utf-8")
+    assert "Real 3D renderer is not installed" in text and "CPU renderer used" in text
+
+
 def test_real3d_fill_can_be_turned_off(ctx, rtx4080, photo):
     from conftest import install_fake_model
 
@@ -174,7 +198,10 @@ def test_precision_for_photos(ctx, rtx4080, photo, monkeypatch):
     assert geo["precision"]["passes"] and geo["precision"]["depth_pro"].endswith("depth_pro.pt")
     assert "moge-3-vitg" in geo["model_path"] and geo["version"] == "v3"
     req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
-    assert req["precision"] and req["refine"] and req["human_normal"].endswith("sapiens2_1b_normal.safetensors")
+    assert req["precision"] and req["human_normal"].endswith("sapiens2_1b_normal.safetensors")
+    assert req["refine"] is False                                    # the fit runs in the renderer runtime
+    fit = json.loads((job.dir / "locked" / "fake_refine_request.json").read_text())
+    assert fit["ply"].endswith("locked.ply") and fit["photo"].endswith("frame_00000.png") and len(fit["size"]) == 2
     assert "moge-3-vitg" in req["moge_path"]
     ex = rep["backend"]["extra"]
     assert ex["precision"]["geometry"]["passes"] == 3 and ex["precision"]["photo"]["fit"]["used"]

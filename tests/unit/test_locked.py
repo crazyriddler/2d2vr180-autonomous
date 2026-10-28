@@ -18,9 +18,28 @@ def test_face_scale_always_brings_the_eyes_to_the_target_distance():
     assert face_scale([{"ipd": 0.063}]) == pytest.approx(1.0)
     assert face_scale([{"ipd": 0.068}]) == pytest.approx(0.063 / 0.068)       # 8 % too big → smaller
     assert face_scale([{"ipd": 0.068}], 0.056) == pytest.approx(0.056 / 0.068)  # a smaller target: smaller still
-    assert face_scale([{"ipd": 0.5}]) == 0.5                                    # never more than 2x either way
+    assert face_scale([{"ipd": 0.2}]) == 0.5                                    # never more than 2x either way
     # several faces: the median decides
     assert face_scale([{"ipd": 0.050}, {"ipd": 0.070}, {"ipd": 0.072}]) == pytest.approx(0.063 / 0.070)
+
+
+def test_impossible_eye_distances_are_left_out():
+    """rc8, the owner's photo: two faces measured 51.8 mm and 361.8 mm apart (the second's eyes sampled across
+    a depth edge); their median halved the whole scene. The impossible one is left out."""
+    from sharp_depth_worker import face_scale
+
+    box = [0, 0, 80, 100]
+    faces = [{"ipd": 0.0518, "box": box}, {"ipd": 0.3618, "box": box}]
+    assert face_scale(faces, 0.058) == pytest.approx(0.058 / 0.0518)
+    assert faces[0]["used"] and "impossible" in faces[1]["rejected"]
+    # eyes at very different depths: not measured on the face
+    faces = [{"ipd": 0.06, "box": box, "usable": False}]
+    assert face_scale(faces, 0.063) == 1.0 and "depth gap" in faces[0]["rejected"]
+    # two plausible faces that disagree: the one that agrees with the human model wins
+    faces = [{"ipd": 0.06, "box": [0, 0, 40, 50]}, {"ipd": 0.15, "box": [0, 0, 90, 110]}]
+    assert face_scale(faces, 0.063, prior=1.0) == pytest.approx(0.063 / 0.06)
+    faces = [{"ipd": 0.06, "box": [0, 0, 40, 50]}, {"ipd": 0.15, "box": [0, 0, 90, 110]}]
+    assert face_scale(faces, 0.063) == pytest.approx(0.5)                      # no prior: the biggest face
 
 
 def test_people_shape_is_fused_inside_their_outline_at_the_scene_distance():

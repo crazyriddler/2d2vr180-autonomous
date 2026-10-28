@@ -175,8 +175,9 @@ def main(req):
             if req.get("face_model") and os.path.exists(req["face_model"]):
                 try:
                     faces = sd.eye_distances(img, unproject(depth, f_px), req["face_model"])
-                    if faces:
-                        eyes.append(sd.face_scale(faces, target))
+                    s_eyes = sd.face_scale(faces, target, 1.0 / ratio if ratio else None)
+                    if any(f.get("used") for f in faces):
+                        eyes.append(s_eyes)
                 except Exception as e:  # noqa: BLE001
                     log(f"face check unavailable: {e}")
         if eyes:

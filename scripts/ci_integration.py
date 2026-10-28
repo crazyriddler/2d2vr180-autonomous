@@ -81,7 +81,7 @@ def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--app", required=True)
-    ap.add_argument("--runtime", required=True, choices=["photo-cu128", "gen-cu128"])
+    ap.add_argument("--runtime", required=True, choices=["photo-cu128", "render-cu124", "gen-cu128"])
     ap.add_argument("--out", default="ci-out")
     a = ap.parse_args()
     out = Path(a.out).resolve()
@@ -98,7 +98,7 @@ def main() -> int:
     rt_state = Path(env["TWOD2VR_HOME"]) / "runtimes" / a.runtime / "installed.json"
     if rt_state.exists():
         results["runtime_smoke"] = json.loads(rt_state.read_text()).get("smoke_test")
-    ok = rc == 0
+    ok = rc == 0 and bool((results.get("runtime_smoke") or {}).get("ok", True))
     if ok and a.runtime == "photo-cu128":
         for mid in ("moge-3-vitl", "sharp", "yunet-face"):
             got = sh([a.app, "models", "download", mid, "--accept-license"], env, log) == 0

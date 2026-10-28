@@ -207,7 +207,7 @@ def test_precision_geometry_and_photo_end_to_end(stubs, tmp_path, capsys, monkey
     assert p["normals"]["used"] and p["normals"]["rms_change"] > 0
     assert p["normals_fit"]["scene"]["ok"]
     assert p["edges"]["band_share"] > 0 and p["placed_share"] > 0.9
-    assert "fit" in p                                       # gsplat is not here: the fit is skipped, not fatal
+    assert "fit" not in p                                   # rc8: the fit runs in the renderer runtime
     assert Path(res["outputs"]["relief"]).exists()
     ply = plyfile.PlyData.read(res["outputs"]["locked"])["vertex"].data
     zs = np.asarray(ply["z"][: 768 * 768]).reshape(768, 768)

@@ -25,6 +25,9 @@ COMPONENTS: list[Component] = [
     # ---------------------------------------------------------------- Real 3D (photos and splat videos)
     Component("engine-photo", "Real 3D engine", "runtime", "photo-cu128",
               "Makes the 3D of photos and splat videos (PyTorch + CUDA, installed privately for 2D2VR).", True),
+    Component("engine-render", "Real 3D renderer", "runtime", "render-cu124",
+              "Draws the splat from moved positions on the GPU (gsplat, ready-built for CUDA): needed by the AI fill "
+              "of what a photo hides and by the fit of the splat to the photo. About 3 GB.", True),
     Component("model-sharp", "Apple SHARP — the 3D Gaussians of every photo and frame (research only)", "model",
               "sharp", "Feed-forward 3D Gaussians from one picture, aligned to the measured depth. Apple research "
               "licence: non-commercial.", True, ("engine-photo",)),
@@ -58,7 +61,7 @@ COMPONENTS: list[Component] = [
     Component("model-qwen", "Qwen-Image-Edit-2511 — paints what the photo hides (Apache-2.0)", "model",
               "qwen-image-edit-2511-q5", "Image model that fills the holes seen from moved positions, about 1 "
               "megapixel. ~30 GB with its text encoder; needs ~32 GB of RAM. Photos only.", True,
-              ("engine-gen", "model-qwen-base", "model-qwen-lightning", "engine-photo", "model-sharp",
+              ("engine-gen", "model-qwen-base", "model-qwen-lightning", "engine-photo", "engine-render", "model-sharp",
                "model-moge3")),
     Component("model-qwen-base", "Qwen-Image-Edit-2511 text encoder and VAE", "model",
               "qwen-image-edit-2511-base", "Qwen2.5-VL-7B text/image encoder, VAE and configuration.", True,

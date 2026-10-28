@@ -5,7 +5,7 @@
   "runtimes": [
     {
       "id": "photo-cu128",
-      "description": "Real 3D engine: MoGe-3, Apple SHARP, Apple Depth Pro, Sapiens2, gsplat (photos and splat videos)",
+      "description": "Real 3D engine: MoGe-3, Apple SHARP, Apple Depth Pro, Sapiens2 (photos and splat videos)",
       "python": "3.12",
       "torch_index": "https://download.pytorch.org/whl/cu128",
       "min_driver": "570.00",
@@ -45,6 +45,24 @@
       "local_versions": {
         "torch": "+cu128",
         "torchvision": "+cu128"
+      }
+    },
+    {
+      "id": "render-cu124",
+      "description": "Real 3D renderer: gsplat with prebuilt CUDA kernels (the AI fill's moved views, the fit to the photo, the views sheet)",
+      "python": "3.10",
+      "torch_index": "https://download.pytorch.org/whl/cu124",
+      "extra_index": "https://docs.gsplat.studio/whl/pt24cu124",
+      "min_driver": "551.61",
+      "approx_size_gb": 3.0,
+      "status": "unverified on the RTX 4080 in 2.0; the same torch 2.4.1+cu124 / gsplat 1.5.3+pt24cu124 pair ran there in 1.x (video engine)",
+      "archives_no_deps": [],
+      "smoke_test": "import torch, plyfile, PIL; from gsplat import csrc; from gsplat import rasterization; print('cuda', torch.cuda.is_available())",
+      "network_at_inference": false,
+      "lock": "locks/render-cu124.txt",
+      "local_versions": {
+        "torch": "+cu124",
+        "gsplat": "+pt24cu124"
       }
     },
     {

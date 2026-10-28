@@ -1,0 +1,8 @@
+# Real 3D renderer (2.0.0-rc8): gsplat with its prebuilt CUDA kernels. gsplat publishes Windows builds only
+# for torch 2.4 / CUDA 12.4 / Python 3.10; under torch 2.8 (photo-cu128) it must compile itself and needs a
+# CUDA toolkit, which end users do not have. Same pins as the 1.x video engine, which ran on the RTX 4080.
+torch==2.4.1
+numpy<2
+gsplat==1.5.3
+plyfile
+pillow

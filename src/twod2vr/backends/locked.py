@@ -49,6 +49,7 @@ HUMAN_SEG = "sapiens2-seg-0.4b"            # rc58: people's outline and 3D shape
 HUMAN_POINTMAP = "sapiens2-pointmap-1b"
 HUMAN_NORMAL = "sapiens2-normal-1b"        # rc7: people's fine relief
 DEPTH_PRO = "depth-pro"                    # rc7: a second measured depth (sharp edges, lens check)
+RENDER_RUNTIME = "render-cu124"            # rc8: gsplat with prebuilt CUDA kernels (the photo engine has none)
 # "move": head translation (m); "orbit": (azimuth, elevation) degrees around the subject; "turn": (yaw, pitch)
 # degrees looking around from the camera's place (positive: right, up) - what is outside the photo's frame.
 _TURNS = [("look 40° left", "turn", (-40, 0)), ("look 40° right", "turn", (40, 0)),
@@ -133,14 +134,18 @@ def grid(rows: list[tuple[str, list]], col_labels: list[str], out_png: Path) -> 
 
 def render_views(ctx, ply: Path, scene: GaussianScene, cams: list[dict], out_dir: Path, work: Path,
                  script: str = "render_worker.py", log=None, cpu_fallback: bool = True) -> list[dict] | None:
-    """RGB, alpha and depth of a splat seen from cameras: gsplat in the photo runtime, else (diagnostics
-    only) the CPU splat renderer. None when neither can run."""
+    """RGB, alpha and depth of a splat seen from cameras: gsplat in the renderer runtime (rc8: its prebuilt
+    CUDA kernels; in the photo engine gsplat needs a CUDA toolkit to build them and never ran), else the CPU
+    splat renderer. None when neither can run (``cpu_fallback`` False)."""
     from ..render import render_pinhole
 
     try:
-        run_worker(ctx.runtimes.python("photo-cu128"), script,
+        if not ctx.runtimes.is_installed(RENDER_RUNTIME):
+            raise BackendError("the Real 3D renderer is not installed (Components → Install recommended)",
+                               code="runtime_missing")
+        run_worker(ctx.runtimes.python(RENDER_RUNTIME), script,
                    {"ply": str(ply), "views": cams, "out_dir": str(out_dir), "batch": 6}, work / "worker",
-                   lambda v, m: None, lambda: False, env=ctx.runtimes.worker_env("photo-cu128"), timeout_s=900)
+                   lambda v, m: None, lambda: False, env=ctx.runtimes.worker_env(RENDER_RUNTIME), timeout_s=900)
         out = []
         for i in range(len(cams)):
             with np.load(out_dir / f"view_{i:06d}.npz") as z:
@@ -190,6 +195,7 @@ class LockedPhotoBackend(Backend):
     geometry_script = "moge_worker.py"
     worker_script = "sharp_depth_worker.py"
     render_script = "render_worker.py"
+    refine_script = "refine_worker.py"
     painter_script = None             # default: backends/painter.SCRIPT (tests swap in a fake)
     description = ("One photo → Apple SHARP's Gaussians aligned to the photo's measured metric depth (MoGe-3) at "
                    "its real lens, with a scale check from the people's eyes.")
@@ -269,12 +275,18 @@ class LockedPhotoBackend(Backend):
                           "geometry": item["out"], "output_dir": str(work), "face_model": face, "plain": True,
                           "ipd_target_m": ipd / 1000.0, "human_seg": human_seg, "human_pointmap": human_pm,
                           "detail": detail, "photo": str(ref), "moge_path": str(ctx.models.paths(mg)["model.pt"]),
-                          "moge_version": version, "precision": precise, "refine": precise,
+                          "moge_version": version, "precision": precise, "refine": False,
                           "human_normal": human_normal, "allow_cpu": bool(getattr(ctx, "allow_cpu", False))},
                          inp.work_dir / "worker", progress, cancel, env=env, log=log, progress_range=(0.25, 0.45),
                          timeout_s=3600)
         used("sharp")
         res = out["result"]
+        if precise:                     # the splat fitted to the photo, in the renderer runtime (rc8)
+            fit = self._fit(ctx, inp, ref, res, work, progress, cancel, log)
+            if fit.get("used") and fit.get("ply"):
+                res["outputs"]["locked"] = fit.pop("ply")
+            if isinstance(res.get("precision"), dict):
+                res["precision"]["fit"] = fit
         scene = read_gaussian_ply(Path(res["outputs"]["locked"]))
         scene.provenance[:] = INFERRED
         scene.metric_scale = True
@@ -353,7 +365,8 @@ class LockedPhotoBackend(Backend):
         progress(1.0, "done")
         (work / "summary.json").write_text(json.dumps({k: v for k, v in res.items() if k != "outputs"}, indent=2))
         if res.get("scale_from") == "eye distance":
-            warnings.append(f"Real-world scale set from the eyes of {len(res['faces'])} face(s) "
+            n_eyes = sum(1 for f in res["faces"] if f.get("used", True))
+            warnings.append(f"Real-world scale set from the eyes of {n_eyes} face(s) "
                             f"({res.get('ipd_target_m', 0.063) * 1000:.1f} mm apart): ×{res.get('scale', 1.0):.3f}.")
         elif res.get("scale_from") == "human model":
             warnings.append(f"Real-world scale set from the human model's distance of the people: "
@@ -383,6 +396,32 @@ class LockedPhotoBackend(Backend):
                    "precision": {"geometry": geo_prec, "photo": res.get("precision")} if precise else None,
                    "files": extra_files})
 
+    def _fit(self, ctx, inp, ref, res, work, progress, cancel, log) -> dict:
+        """refine_worker in the renderer runtime: the splat's colours, opacities and sizes fitted to the photo.
+        Returns its stats (+ "ply" when kept); never fails the job."""
+        if not ctx.runtimes.is_installed(RENDER_RUNTIME):
+            log("fit to the photo skipped: it needs the Real 3D renderer (Components → Install recommended)")
+            return {"used": False, "reason": "the Real 3D renderer is not installed"}
+        src = Path(res["outputs"]["locked"])
+        out = src.with_name(src.stem + "_fitted.ply")
+        try:
+            r = run_worker(ctx.runtimes.python(RENDER_RUNTIME), self.refine_script,
+                           {"ply": str(src), "out": str(out), "photo": str(ref), "fx": float(res["f_px"]),
+                            "size": list(res["size"]), "iters": 300},
+                           inp.work_dir / "worker", progress, cancel, env=ctx.runtimes.worker_env(RENDER_RUNTIME),
+                           log=log, progress_range=(0.45, 0.47), timeout_s=1800)
+        except BackendError as e:
+            if e.code == "cancelled":
+                raise
+            log(f"fit to the photo skipped ({str(e).splitlines()[0][:200]})")
+            return {"used": False, "error": str(e).splitlines()[0][:300]}
+        st = dict(r["result"].get("stats") or {})
+        if st.get("used") and (r["result"].get("outputs") or {}).get("fitted"):
+            st["ply"] = r["result"]["outputs"]["fitted"]
+        else:
+            log(f"fit to the photo not kept: {st.get('reason') or st.get('error')}")
+        return st
+
     def _fill(self, inp, ctx, options, progress, cancel, log, scene, locked_ply, cam, mg, used):
         """Holes of moved views → painted → SHARP with tied depth → added. None when it cannot run."""
         from PIL import Image
@@ -400,9 +439,9 @@ class LockedPhotoBackend(Backend):
         cams = sheet_cameras(cam, pivot, side=1024, views=FILL_VIEWS.get(mode, FILL_VIEWS["auto"]), photo=False)
         progress(0.46, f"looking from {len(cams)} moved positions")
         renders = render_views(ctx, locked_ply, scene, [c for _, c in cams], work / "render", work,
-                               self.render_script, log, cpu_fallback=False)
+                               self.render_script, log, cpu_fallback=True)
         if renders is None:
-            self.fill_note = "skipped: the GPU renderer of the Real 3D engine did not run (see job.log)"
+            self.fill_note = "skipped: no renderer could draw the moved views (see job.log)"
             return None
         photo_buf = DepthBuffer(cam).fill(scene.means, scene.opacity > 0.1)
         todo = []

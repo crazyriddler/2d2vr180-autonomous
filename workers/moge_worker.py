@@ -75,7 +75,7 @@ def depth_pro_run(model, arr, device, torch):
 
     h, w = arr.shape[:2]
     dtype = next(model.parameters()).dtype
-    x = torch.from_numpy(np.ascontiguousarray(arr)).to(device).float().div(255).permute(2, 0, 1)[None]
+    x = torch.from_numpy(np.array(arr, copy=True)).to(device).float().div(255).permute(2, 0, 1)[None]
     x = ((x - 0.5) / 0.5).to(dtype)
     x = F.interpolate(x, size=(model.img_size, model.img_size), mode="bilinear", align_corners=False)
     with torch.no_grad():

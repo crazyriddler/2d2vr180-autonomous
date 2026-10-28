@@ -2,9 +2,9 @@
 
 Three limits of the normal path, and what this module does about each:
   1. MoGe-3 sees the photo at most 1536 px (and works internally at less): small relief comes out smooth.
-     -> patch fusion: MoGe-3 on overlapping crops of the photo at up to 3072 px, each aligned to the
-        whole-photo depth; the whole photo gives the overall shape and scale (low frequencies), the crops
-        the fine relief (high frequencies). Same idea as Boosting Monocular Depth / PatchFusion.
+     -> patch fusion: MoGe-3 on overlapping crops of the photo at up to 3072 px; the whole photo gives the
+        overall shape and scale (low frequencies), the crops the fine relief (high frequencies of log
+        depth, which do not depend on a crop's scale). Same idea as Boosting Monocular Depth / PatchFusion.
   2. SHARP follows the injected depth only through a smooth learned alignment.
      -> every splat the photo sees is placed at that depth (sharp_depth_worker.snap_to_depth), with little
         weight near depth edges where a pixel's depth is ambiguous.
@@ -85,14 +85,16 @@ def feather(cw, ch):
     return np.clip(np.outer(wy, wx), 1e-3, 1.0)
 
 
-def patch_fusion(global_depth, crops, sigma, torch, limit=0.08):
+def patch_fusion(global_depth, crops, sigma, torch, limit=0.03):
     """Whole-photo depth (H, W, metres, NaN = unknown) + crop depths [((x0, y0, x1, y1), depth (ch, cw))] ->
     one depth with the whole photo's low frequencies (overall shape, scale) and the crops' high frequencies
-    (fine relief), in log depth. Each crop is first aligned (robust affine) to the whole-photo depth.
-    ``limit`` caps the added relief (log units) so a crop's mistake cannot make spikes.
-    Returns (fused depth, stats)."""
-    from sharp_depth_worker import align_affine
+    (fine relief), in log depth. ``limit`` caps the added relief (log units) so a crop's mistake cannot make
+    spikes. Returns (fused depth, stats).
 
+    rc8: the crops' relief is their log depth minus its blur, which a crop's own scale does not change, so no
+    alignment is needed. rc6 first aligned each crop with a robust scale *and shift*; on the owner's photo the
+    shifts reached -0.9 m at 2-3 m, which multiplied the crops' relative relief (and noise) by up to 2 and
+    let spikes of 8 % through: more noise and distortion, not more detail."""
     g = np.asarray(global_depth, np.float64)
     ok = np.isfinite(g) & (g > 0)
     lg = np.where(ok, np.log(np.where(ok, g, 1.0)), np.nan)
@@ -103,18 +105,18 @@ def patch_fusion(global_depth, crops, sigma, torch, limit=0.08):
     for (x0, y0, x1, y1), d in crops:
         d = np.asarray(d, np.float64)
         ref = g[y0:y1, x0:x1]
-        both = np.isfinite(d) & (d > 0) & np.isfinite(ref) & (ref > 0)
+        dok = np.isfinite(d) & (d > 0)
+        both = dok & np.isfinite(ref) & (ref > 0)
         if both.sum() < 100:
             continue
-        a, b = align_affine(d[both], ref[both])
-        da = a * d + b
-        dok = np.isfinite(da) & (da > 0)
-        ld = np.where(dok, np.log(np.where(dok, da, 1.0)), np.nan)
+        ld = np.where(dok, np.log(np.where(dok, d, 1.0)), np.nan)
         h = ld - blur_nan(ld, sigma, torch)
         f = feather(x1 - x0, y1 - y0) * np.isfinite(h)
         hp[y0:y1, x0:x1] += np.nan_to_num(h) * f
         wsum[y0:y1, x0:x1] += f
-        stats.append({"box": [int(x0), int(y0), int(x1), int(y1)], "scale": round(a, 4), "shift": round(b, 4)})
+        stats.append({"box": [int(x0), int(y0), int(x1), int(y1)],
+                      "scale": round(float(np.exp(np.median(np.log(ref[both]) - ld[both]))), 4),
+                      "relief_rms": round(float(np.sqrt(np.nanmean(h ** 2))), 5)})
     detail = np.clip(hp / np.maximum(wsum, 1e-6), -limit, limit)
     fused = np.where(ok, np.exp(low + np.where(wsum > 1e-3, detail, lg - low)), np.nan)
     return fused, stats

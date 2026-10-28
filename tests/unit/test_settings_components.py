@@ -27,7 +27,7 @@ def test_component_catalogue(ctx):
         st = component_status(ctx, c)
         assert "installed" in st and "license" in st
     ids = {c.target for c in COMPONENTS}
-    assert ids == {"photo-cu128", "gen-cu128", "sharp", "moge-3-vitl", "yunet-face", "sapiens2-seg-0.4b",
+    assert ids == {"photo-cu128", "render-cu124", "gen-cu128", "sharp", "moge-3-vitl", "yunet-face", "sapiens2-seg-0.4b",
                    "sapiens2-pointmap-1b", "moge-3-vitg", "depth-pro", "sapiens2-normal-1b",
                    "qwen-image-edit-2511-q5", "qwen-image-edit-2511-base",
                    "qwen-edit-2511-lightning"}
