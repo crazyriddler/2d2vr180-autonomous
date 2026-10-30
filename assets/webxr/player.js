@@ -50,7 +50,10 @@ function fromQuatPos(qx, qy, qz, qw, p) {        // three.js / GL convention, qu
 const sq = nums('q', 4) || [1, 0, 0, 0];
 const model0 = fromQuatPos(sq[0], sq[1], sq[2], sq[3], nums('p', 3) || [0, 0, 0]);
 const depth0 = Math.max(parseFloat(q.get('depth') || '2'), 0.05);
-const target0 = nums('t', 3) || [0, 0, -depth0];
+// rc10: how far the main subject is (the app measures the nearer part of what the camera saw in the middle
+// of its picture); the desktop orbit turns around it and the ideal VR view keeps it at a comfortable distance
+const subj0 = Math.max(parseFloat(q.get('subj') || '') || depth0, 0.05);
+const target0 = nums('t', 3) || [0, 0, -subj0];
 
 // ---------------------------------------------------------------- size (scale about the camera's place)
 const SIZE_KEY = 'size:' + sceneName;
@@ -73,6 +76,17 @@ function model() {
 $('smaller').onclick = () => setSize(size.value / 1.05);
 $('bigger').onclick = () => setSize(size.value * 1.05);
 $('sizereset').onclick = () => setSize(1);
+
+// ---------------------------------------------------------------- the ideal view (rc10)
+// Where a photo's or video's splat looks best: from the camera's own place - the only place it is complete,
+// with nothing missing behind people and objects - level, facing where the camera faced, at your eye height.
+// When the subject is nearer than is comfortable in a headset, the view steps straight back (along the
+// camera's axis nothing hidden comes into view). Both the start of VR and a click of either thumbstick use it.
+const COMFORT_M = 0.9;              // nearer than this the eyes strain (headset guidance: 0.75-3.5 m)
+function idealEye() {               // world (GL) coordinates at the current size: the camera at the origin
+  return [0, 0, Math.max(0, COMFORT_M - subj0 * size.value)];
+}
+const rotY = (v, a) => [Math.cos(a) * v[0] + Math.sin(a) * v[2], v[1], -Math.sin(a) * v[0] + Math.cos(a) * v[2]];
 
 // ---------------------------------------------------------------- sort worker
 // Input: the splat texture data (8 words per splat, words 0-2 = position) and a view row; output: the
@@ -456,9 +470,9 @@ $('loop').onchange = (e) => { vid.loop = e.target.checked; };
 
 // ---------------------------------------------------------------- desktop camera
 const orbit = {};
-function resetView() {
-  const off = sub([0, 0, 0], target0);
-  orbit.target = target0.slice();
+function resetView() {                       // the ideal view, turning around the subject
+  orbit.target = target0.map((v) => v * size.value);
+  const off = sub(idealEye(), orbit.target);
   orbit.r = Math.hypot(...off) || depth0;
   orbit.base = orbit.r;
   orbit.yaw = Math.atan2(off[0], off[2]);
@@ -527,9 +541,17 @@ function desktopFrame(now) {
 }
 
 // ---------------------------------------------------------------- WebXR
-// Moves the user by offsetting the XR reference space ('local': the origin is where the headset was
-// when ENTER VR was pressed, i.e. you start where the camera stood, at eye height).
-const xr = { session: null, base: null, space: null, pos: [0, 0, 0], yaw: 0, lastT: 0, snap: true, reset: false };
+// Moves the user by offsetting the XR reference space ('local'): a point of the scene's world is
+// rotY(base point, yaw) + pos. recenter() puts the ideal eye where the head is now and the camera's heading
+// where it looks now (level), so it works wherever you have walked or turned to.
+const xr = { session: null, base: null, space: null, pos: [0, 0, 0], yaw: 0, lastT: 0, snap: true, reset: false,
+  center: false, bothSize: false };
+function recenter(head, fwd) {      // head position and forward in the base space
+  xr.yaw = Math.hypot(fwd[0], fwd[2]) > 1e-3 ? Math.atan2(fwd[0], -fwd[2]) : 0;
+  const e = idealEye(), r = rotY(head, xr.yaw);
+  xr.pos = [e[0] - r[0], e[1] - r[1], e[2] - r[2]];
+  applyRig();
+}
 const SPEED = Math.min(Math.max(depth0 * 0.6, 0.5), 5);
 function applyRig() {
   const h = -xr.yaw / 2, qi = { x: 0, y: Math.sin(h), z: 0, w: Math.cos(h) };
@@ -545,21 +567,34 @@ function xrFrame(t, frame) {
   session.requestAnimationFrame(xrFrame);
   const dt = xr.lastT ? Math.min((t - xr.lastT) / 1000, 0.25) : 0;
   xr.lastT = t;
-  let mx = 0, mz = 0, my = 0, turn = 0, reset = false, grow = 0;
+  let mx = 0, mz = 0, my = 0, turn = 0, reset = false, grow = 0, both = false;
   for (const src of session.inputSources) {
     const gp = src.gamepad;
     if (!gp) continue;
     const ax = dz(gp.axes.length >= 4 ? gp.axes[2] : (gp.axes[0] || 0));
     const ay = dz(gp.axes.length >= 4 ? gp.axes[3] : (gp.axes[1] || 0));
     if (src.handedness === 'left') { mx += ax; mz += ay; } else { turn = ax; my -= ay; }
-    if (pressed(gp, 4)) grow -= 1;      // A / X: smaller
-    if (pressed(gp, 5)) grow += 1;      // B / Y: bigger
-    if (pressed(gp, 3)) reset = true;   // stick click: back to the start, original size
+    const a = pressed(gp, 4), b = pressed(gp, 5);
+    if (a && b) both = true;            // A + B (or X + Y) together: size back to 100 %
+    else if (a) grow -= 1;              // A / X: smaller
+    else if (b) grow += 1;              // B / Y: bigger
+    // either thumbstick's click (the touchpad's on controllers without a stick): the ideal view
+    if (pressed(gp, 3) || (gp.buttons.length < 4 && pressed(gp, 2))) reset = true;
   }
   let changed = false;
+  if (both && !xr.bothSize) setSize(1);
+  xr.bothSize = both;
   if (grow) setSize(size.value * Math.exp(0.5 * grow * dt));
-  if (reset && !xr.reset) { xr.pos = [0, 0, 0]; xr.yaw = 0; setSize(1); changed = true; }
+  if (reset && !xr.reset) xr.center = true;
   xr.reset = reset;
+  if (xr.center) {                      // at the start of VR and on a stick click: the ideal view
+    const pb = frame.getViewerPose(xr.base);
+    if (pb) {
+      const m = pb.transform.matrix, hp = pb.transform.position;
+      recenter([hp.x, hp.y, hp.z], [-m[8], -m[9], -m[10]]);
+      xr.center = false;
+    }
+  }
   const pose0 = frame.getViewerPose(xr.space);
   if ((mx || mz || my) && pose0) {
     const m = pose0.transform.matrix;                   // head forward (-z) in the rig frame
@@ -576,11 +611,10 @@ function xrFrame(t, frame) {
   if (Math.abs(turn) > 0.7 && xr.snap) {
     const pb = frame.getViewerPose(xr.base);
     const hp = pb ? pb.transform.position : { x: 0, y: 0, z: 0 };
-    const rot = (v, a) => [Math.cos(a) * v[0] + Math.sin(a) * v[2], v[1], -Math.sin(a) * v[0] + Math.cos(a) * v[2]];
     const head = [hp.x, hp.y, hp.z];
-    const before = rot(head, xr.yaw).map((v, i) => v + xr.pos[i]);
+    const before = rotY(head, xr.yaw).map((v, i) => v + xr.pos[i]);
     xr.yaw += (turn > 0 ? -1 : 1) * Math.PI / 6;
-    const after = rot(head, xr.yaw);
+    const after = rotY(head, xr.yaw);
     xr.pos = before.map((v, i) => v - after[i]);
     xr.snap = false;
     changed = true;
@@ -602,16 +636,19 @@ function xrFrame(t, frame) {
     draw(view.projectionMatrix, view.transform.inverse.matrix, vp.width, vp.height);
   }
 }
+function startXR(session, base) {      // the rig at the ideal view as soon as the headset's pose is known
+  xr.session = session;
+  xr.base = base;
+  xr.pos = [0, 0, 0]; xr.yaw = 0; xr.lastT = 0; xr.center = true;
+  applyRig();
+}
 async function enterVR() {
   if (vid.on && !vid.playing) setPlaying(true);      // a click: the sound may start now
   try {
     const session = await navigator.xr.requestSession('immersive-vr');
     await gl.makeXRCompatible();
     session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { antialias: false }), depthNear: 0.02, depthFar: 1000 });
-    xr.base = await session.requestReferenceSpace('local');
-    xr.session = session;
-    xr.pos = [0, 0, 0]; xr.yaw = 0; xr.lastT = 0;
-    applyRig();
+    startXR(session, await session.requestReferenceSpace('local'));
     $('vr').textContent = 'EXIT VR';
     session.addEventListener('select', () => setPlaying(!vid.playing));     // trigger (a user gesture: sound allowed)
     session.addEventListener('end', () => {
@@ -722,4 +759,5 @@ async function load() {
 }
 document.querySelectorAll('.vid').forEach((el) => { el.style.display = 'none'; });
 load().then(() => requestAnimationFrame(desktopFrame)).catch((e) => fail('Could not load the scene: ' + e));
-window.player = { vid, orbit, xr, size, setSize, setPlaying, seek, audio, stats: () => ({ drawCount, texRows }) };
+window.player = { vid, orbit, xr, size, setSize, setPlaying, seek, audio, stats: () => ({ drawCount, texRows }),
+  idealEye, recenter, xrFrame, startXR, resetView, subject: subj0 };

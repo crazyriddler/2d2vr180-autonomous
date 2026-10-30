@@ -56,8 +56,10 @@ class StubMoGe:
         n = pr.normals_from_depth(d, f)
         smooth = np.exp(pr.blur(np.log(d), 3.0, torch))
         K = torch.tensor([[f / w, 0, 0.5], [0, f / h, 0.5], [0, 0, 1]], dtype=torch.float32)
+        pts = pr.rays(h, w, f) * smooth[..., None]
         return {"depth": torch.tensor(smooth, dtype=torch.float32), "mask": torch.ones((h, w), dtype=torch.bool),
-                "intrinsics": K, "normal": torch.tensor(np.nan_to_num(n), dtype=torch.float32)}
+                "intrinsics": K, "normal": torch.tensor(np.nan_to_num(n), dtype=torch.float32),
+                "points": torch.tensor(pts, dtype=torch.float32)}
 
 
 class StubSharp:
@@ -135,8 +137,12 @@ def stubs(monkeypatch):
     su = types.ModuleType("sharp.utils")
     sg = types.ModuleType("sharp.utils.gaussians")
     sg.Gaussians3D, sg.unproject_gaussians, sg.save_ply = Gaussians3D, unproject_gaussians, save_ply
+    cs = types.ModuleType("sharp.utils.color_space")
+    cs.linearRGB2sRGB = lambda c: c
+    su.color_space = cs
     for name, mod in {"moge": moge, "moge.model": moge_model, "moge.model.v3": v3, "flex_gemm": flex, "sharp": sharp,
-                      "sharp.models": sm, "sharp.utils": su, "sharp.utils.gaussians": sg}.items():
+                      "sharp.models": sm, "sharp.utils": su, "sharp.utils.gaussians": sg,
+                      "sharp.utils.color_space": cs}.items():
         monkeypatch.setitem(sys.modules, name, mod)
     StubMoGe.calls = []
     return StubMoGe
@@ -270,3 +276,32 @@ def test_the_fast_plan_skips_the_relief_from_normals(stubs, tmp_path, capsys):
     p = res["precision"]
     assert p["normals"] == {"used": False, "reason": "off in the Fast mode"} and "normals_fit" not in p
     assert p["edges"]["band_share"] > 0 and p["placed_share"] > 0.9 and "plain" not in res["outputs"]
+
+
+def test_video_worker_cleans_edges_places_every_splat_and_adds_relief_in_quality(stubs, tmp_path, capsys):
+    """rc10: the per-frame video steps of the balanced modes run in the real worker (stand-in models)."""
+    import json as js
+
+    import video_splat_worker as vw
+
+    frames = [str(photo(tmp_path / f"f{i}.png", 320, 240)) for i in range(3)]
+    torch.save({}, tmp_path / "sharp.pt")
+    out = tmp_path / "out"
+    vw.main({"frames": frames, "output_dir": str(out), "checkpoint": str(tmp_path / "sharp.pt"), "moge_path": "m.pt",
+             "face_model": None, "human_seg": None, "human_pointmap": None, "fov_x": 60.0, "grid": [2, 4],
+             "keyframe_interval": 2, "moge_max_side": 320, "refine_steps": 3, "people": True, "edges": True,
+             "place_all": True, "normals": True, "allow_cpu": True})
+    res = [e for e in events(capsys.readouterr().out) if e["event"] == "result"][0]
+    assert res["frames"] == 3
+    notes = [js.loads((out / "frames" / f"{i:06d}.bin.json").read_text()) for i in range(3)]
+    assert all(n["relief"] for n in notes) and all(n["edges"] and n["edges"] > 0 for n in notes)
+    assert {c["level"] for c in stubs.calls} == {9}
+    # the box's edge: no splat left between the box (1.5 m) and the wall (3 m) in the front layer
+    import splv_codec as codec
+
+    meta = js.loads((out / "video_meta.json").read_text())
+    arr = codec.decode_frame((out / "frames" / "000000.bin").read_bytes(), meta["count"], None)
+    z = codec.dequantize(arr, meta["quant"])["means"][:, 2]
+    front = z[: len(z) * 4 // 5]                          # the front layer comes first in the kept subset
+    assert ((front > 1.8) & (front < 2.6)).mean() < 0.01
+

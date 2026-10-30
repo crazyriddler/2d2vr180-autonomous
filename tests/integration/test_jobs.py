@@ -306,6 +306,25 @@ def test_video_options_choose_the_part_of_the_video(ctx, rtx4080, videos):
     assert any("no sound" in w for w in rep["warnings"])
 
 
+def test_video_modes_do_different_things(ctx, rtx4080, videos):
+    """rc10: Fast, Auto and Quality differ for videos as for photos (backends/video_splat.PLANS): every mode
+    cleans depth edges and places every splat; each step up adds splats, depth resolution and refinement, and
+    Quality the fine relief from normals."""
+    seen = {}
+    for mode in ("fast", "auto", "quality"):
+        job, rep, _ = run_job(ctx, rtx4080, videos["static"], mode=mode, video_fps=5, video_seconds=1.0)
+        assert rep["status"] == "succeeded", rep.get("error")
+        req = json.loads((job.dir / "splat_video" / "fake_requests.json").read_text())[0]
+        seen[mode] = req
+        assert req["edges"] and req["place_all"] and req["people"]
+        assert rep["backend"]["extra"]["mode"] == mode
+    f, a, q = seen["fast"], seen["auto"], seen["quality"]
+    assert f["moge_max_side"] < a["moge_max_side"] < q["moge_max_side"]
+    assert f["refine_steps"] < a["refine_steps"] < q["refine_steps"]
+    assert f["grid"][0] > a["grid"][0] > q["grid"][0]                        # more splats per frame
+    assert not f["normals"] and not a["normals"] and q["normals"]
+
+
 def test_video_rate_is_capped_by_the_videos_own(ctx, rtx4080, videos):
     job, rep, _ = run_job(ctx, rtx4080, videos["static"], mode="fast", video_fps=30)
     assert rep["status"] == "succeeded", rep.get("error")

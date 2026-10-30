@@ -27,6 +27,10 @@
 - 🟡 rc9: AI fill removed (owner: not good enough for its ~36 GB), Qwen models and painter engine dropped; photo quality
   modes as plans (`backends/locked.PHOTO_PLANS`): Fast / Auto / Quality differ in depth models, normals, fit and detail
 
+- 🟡 rc10: video modes balanced (clean edges + every splat placed in all, MoGe-3 size and steps by mode, normals relief
+  in Quality); VR ideal view (camera place, level, comfortable distance) at the start and on either stick click,
+  from the current head pose; size kept, A+B resets it
+
 ## Earlier (1.x)
 
 

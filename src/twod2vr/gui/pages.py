@@ -25,13 +25,15 @@ MODE_HELP = {
 # what each mode does (backends/locked.PHOTO_PLANS, backends/video_splat.PLANS), shown under the choice
 MODE_DETAIL = {
     "fast": "<b>Photos</b> (~45 s): MoGe-3 depth once, people's own 3D shape, clean depth edges. "
-            "<b>Videos</b>: ~330 000 splats per frame.",
+            "<b>Videos</b> (~2 s a frame): ~330 000 splats per frame, the depth at 768 px; people's shape and clean "
+            "edges as in every mode.",
     "auto": "<b>Photos</b> (~2 min): + MoGe-3 Giant three times joined to Apple Depth Pro (truer shape), fine relief "
             "from surface normals (faces, folds of clothes), and the splat fitted to the photo (sharper texture). "
-            "<b>Videos</b>: ~470 000 splats per frame.",
+            "<b>Videos</b> (~3 s a frame): ~470 000 splats per frame, the depth at 1024 px: sharper.",
     "quality": "<b>Photos</b> (~5 min): + maximum detail - the photo worked at 3072-4608 px, the depth and SHARP "
                "on parts of it: 2.5-6x the splats, the most small geometry up close (heavier in VR) - and a longer, "
-               "finer fit. <b>Videos</b>: ~740 000 splats per frame, slower.",
+               "finer fit. <b>Videos</b> (~5 s a frame): ~740 000 splats per frame, the depth at 1536 px, and fine relief "
+               "from surface normals.",
 }
 PROVENANCE_HELP = ("<b>Observed</b>: reconstructed from several views. <b>Inferred</b>: seen in the input but its "
                    "depth is predicted by a network. <b>Generative</b>: invented by AI where the input shows nothing "

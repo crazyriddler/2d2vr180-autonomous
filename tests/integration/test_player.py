@@ -17,7 +17,9 @@ from conftest import FRAMES, FPS, _plane, make_video  # noqa: E402,F401
 
 
 def _chrome() -> str | None:
-    for c in (os.environ.get("CHROME_PATH"), "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+    import glob
+
+    for c in (os.environ.get("CHROME_PATH"), *sorted(glob.glob("/opt/pw-browsers/chromium-*/chrome-linux*/chrome")),
               shutil.which("google-chrome"), shutil.which("chromium")):
         if c and Path(c).exists():
             return c
@@ -155,6 +157,82 @@ def test_size_buttons_and_keys(browser, server, tmp_path):
         pg.keyboard.press("-")
         assert pg.evaluate("player.size.value") < 1
         assert pg.evaluate("document.getElementById('size').textContent") == "95 %"
+    finally:
+        pg.close()
+
+
+FAKE_XR = """
+window.XRRigidTransform = class { constructor(p, o) { this.position = p; this.orientation = o; } };
+window.fakeXR = (() => {
+  const pad = () => ({ axes: [0, 0, 0, 0], buttons: Array.from({ length: 6 }, () => ({ pressed: false })) });
+  const left = { handedness: 'left', gamepad: pad() }, right = { handedness: 'right', gamepad: pad() };
+  const base = { getOffsetReferenceSpace: (t) => ({ offset: t }) };
+  const session = { inputSources: [left, right], requestAnimationFrame: () => 0,
+    renderState: { baseLayer: { framebuffer: null, getViewport: () => ({ x: 0, y: 0, width: 1, height: 1 }) } } };
+  const head = { pos: [0, 0, 0], fwd: [0, 0, -1] };
+  const frame = { session, getViewerPose: (space) => space !== base ? null : { views: [], transform: {
+    position: { x: head.pos[0], y: head.pos[1], z: head.pos[2] },
+    matrix: [1, 0, 0, 0, 0, 1, 0, 0, -head.fwd[0], -head.fwd[1], -head.fwd[2], 0, 0, 0, 0, 1] } } };
+  let t = 0;
+  const step = () => { t += 16; player.xrFrame(t, frame); };
+  // where the head is in the scene's world, and where it looks (level)
+  const world = () => {
+    const r = (v, a) => [Math.cos(a) * v[0] + Math.sin(a) * v[2], v[1], -Math.sin(a) * v[0] + Math.cos(a) * v[2]];
+    const p = r(head.pos, player.xr.yaw).map((v, i) => v + player.xr.pos[i]);
+    const f = r(head.fwd, player.xr.yaw);
+    return { p, f };
+  };
+  return { left, right, base, session, head, step, world };
+})();
+"""
+
+
+def test_ideal_view_at_the_start_of_vr_and_on_either_stick_click(browser, server, tmp_path):
+    """rc10: entering VR and clicking either thumbstick put the ideal view (the camera's place, a step back when
+    the subject is too close, level, facing what the camera faced) where the head is and looks NOW - also after
+    walking and turning. The size chosen with A/B stays; A + B together set it back to 100 %."""
+    from twod2vr.scene import write_gaussian_ply
+    from twod2vr.vr_server import view_params
+
+    sc = _plane(0.5, [1, 0.1, 0.1], 40, 0.3)                    # the subject only 0.5 m away
+    ply = write_gaussian_ply(sc, tmp_path / "export" / "scene.ply")
+    depth, xf = view_params(sc)
+    assert abs(xf["subject"] - 0.5) < 0.02
+    pg = _open(browser, server.share(ply, depth, "ideal", xf))
+    try:
+        pg.wait_for_function("window.player && window.player.stats().drawCount === 1600", timeout=60000)
+        eye = pg.evaluate("player.idealEye()")
+        assert eye[0] == 0 and eye[1] == 0 and abs(eye[2] - 0.4) < 0.02          # 0.9 m from the subject
+        o = pg.evaluate("player.orbit")
+        assert abs(o["r"] - 0.9) < 0.03                                          # desktop starts there too
+        pg.evaluate(FAKE_XR)
+        # enter VR standing 1.6 m up, looking to the right (+x): the ideal view is put there
+        pg.evaluate("fakeXR.head.pos = [0.3, 1.6, -0.2]; fakeXR.head.fwd = [1, 0, 0];"
+                    "player.startXR(fakeXR.session, fakeXR.base); fakeXR.step()")
+        w = pg.evaluate("fakeXR.world()")
+        assert np.allclose(w["p"], eye, atol=1e-6) and np.allclose(w["f"], [0, 0, -1], atol=1e-6)
+        # walk away and turn; a click of the LEFT stick brings the ideal view back to the head as it is now
+        pg.evaluate("fakeXR.head.pos = [2, 1.2, 1]; fakeXR.head.fwd = [-0.6, -0.2, 0.8]; fakeXR.step()")
+        assert not np.allclose(pg.evaluate("fakeXR.world()")["p"], eye, atol=1e-3)
+        pg.evaluate("player.setSize(2); fakeXR.left.gamepad.buttons[3].pressed = true; fakeXR.step();"
+                    "fakeXR.left.gamepad.buttons[3].pressed = false; fakeXR.step()")
+        w = pg.evaluate("fakeXR.world()")
+        eye2 = pg.evaluate("player.idealEye()")
+        assert eye2 == [0, 0, 0]                                     # 1 m away at 200 %: the camera's own place
+        assert np.allclose(w["p"], eye2, atol=1e-6)
+        assert abs(w["f"][0]) < 1e-6 and w["f"][2] < 0 and abs(w["f"][1] + 0.2) < 1e-6    # faces -z, pitch kept
+        assert pg.evaluate("player.size.value") == 2                              # the size stays
+        # the RIGHT stick does the same
+        pg.evaluate("fakeXR.head.pos = [-1, 1.7, 0]; fakeXR.head.fwd = [0, 0, 1]; fakeXR.step();"
+                    "fakeXR.right.gamepad.buttons[3].pressed = true; fakeXR.step();"
+                    "fakeXR.right.gamepad.buttons[3].pressed = false; fakeXR.step()")
+        w = pg.evaluate("fakeXR.world()")
+        assert np.allclose(w["p"], eye2, atol=1e-6) and abs(w["f"][0]) < 1e-6 and w["f"][2] < 0
+        # A + B together: original size
+        pg.evaluate("const b = fakeXR.right.gamepad.buttons; b[4].pressed = b[5].pressed = true; fakeXR.step();"
+                    "b[4].pressed = b[5].pressed = false; fakeXR.step()")
+        assert pg.evaluate("player.size.value") == 1
+        assert pg.errors == []
     finally:
         pg.close()
 

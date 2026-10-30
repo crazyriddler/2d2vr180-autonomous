@@ -65,3 +65,30 @@ def test_browser_choice_prefers_installed_chromium(tmp_path):
     chrome.write_text("")
     assert find_webxr_browser([edge, chrome]) == chrome  # Edge missing -> Chrome
     assert find_webxr_browser([edge]) is None             # nothing -> caller falls back to default browser
+
+
+def test_subject_distance_is_the_person_not_the_wall_behind():
+    """rc10: the ideal VR view and the desktop orbit centre on the subject: a person 1.2 m away in the middle
+    of the picture in front of a wall 5 m away gives ~1.2 m (the median depth would say ~5 m)."""
+    import numpy as np
+
+    from twod2vr.scene import Camera, GaussianScene
+    from twod2vr.vr_server import share_url_params, subject_distance, view_params
+
+    W, H, f = 400, 300, 350.0
+    v, u = np.mgrid[0:H, 0:W] + 0.5                                 # one splat per pixel, as SHARP makes them
+    z = np.full((H, W), 5.0)
+    person = (np.abs(u - W / 2) < 60) & (v > 60)                   # 0.4 m wide, 1.2 m away, seated in the middle
+    z[person] = 1.2 + 0.05 * np.sin(u[person] / 9)
+    pts = np.stack([(u - W / 2) / f * z, (v - H / 2) / f * z, z], -1).reshape(-1, 3).astype(np.float32)
+    n = len(pts)
+    sc = GaussianScene(pts, np.full((n, 3), 0.01, np.float32), np.tile(np.float32([1, 0, 0, 0]), (n, 1)),
+                       np.full(n, 0.9, np.float32), np.full((n, 3), 0.5, np.float32),
+                       cameras=[Camera(W, H, f, f, W / 2, H / 2)])
+    d = subject_distance(sc)
+    assert 1.1 < d < 1.35
+    depth, xf = view_params(sc)
+    assert depth > 4.0 and abs(xf["subject"] - d) < 1e-9
+    assert abs(np.linalg.norm(xf["target"]) - d) < 0.05            # the orbit turns around the person
+    q = share_url_params(xf)
+    assert abs(float(q["subj"]) - d) < 1e-3

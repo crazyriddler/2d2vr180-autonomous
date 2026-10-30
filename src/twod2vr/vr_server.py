@@ -115,7 +115,8 @@ class VRViewerServer:
         return the player URL.
 
         ``transform`` (from :func:`align.viewer_transform`) levels the scene and puts the
-        capture camera at the viewer's eyes; ``size`` is the starting size (1 = as made)."""
+        capture camera at the viewer's eyes; its "subject" (subject_distance) sets the ideal view and the
+        desktop orbit's centre; ``size`` is the starting size (1 = as made)."""
         scene = playable(Path(scene)).resolve()
         token = secrets.token_hex(8) + scene.suffix.lower()
         self.httpd.shared[token] = scene  # type: ignore[attr-defined]
@@ -123,10 +124,7 @@ class VRViewerServer:
         if depth:
             q["depth"] = f"{depth:.3f}"
         if transform:
-            q["q"] = ",".join(f"{v:.6f}" for v in transform["quaternion"])
-            q["p"] = ",".join(f"{v:.5f}" for v in transform["position"])
-            if transform.get("target"):
-                q["t"] = ",".join(f"{v:.5f}" for v in transform["target"])
+            q.update(share_url_params(transform))
         if size and abs(size - 1.0) > 1e-3:
             q["s"] = f"{size:.4f}"
         return f"http://127.0.0.1:{self.port}/{PAGE}?" + urllib.parse.urlencode(q)
@@ -134,6 +132,17 @@ class VRViewerServer:
     def stop(self) -> None:
         self.httpd.shutdown()
         self.httpd.server_close()
+
+
+def share_url_params(transform: dict) -> dict:
+    """The player's URL parameters for a view (view_params): levelling q/p, orbit target t, subject distance."""
+    q = {"q": ",".join(f"{v:.6f}" for v in transform["quaternion"]),
+         "p": ",".join(f"{v:.5f}" for v in transform["position"])}
+    if transform.get("target"):
+        q["t"] = ",".join(f"{v:.5f}" for v in transform["target"])
+    if transform.get("subject"):
+        q["subj"] = f"{transform['subject']:.3f}"
+    return q
 
 
 _server: VRViewerServer | None = None
@@ -183,6 +192,34 @@ def scene_depth(scene) -> float | None:
     return float(np.median(z)) if len(z) else None
 
 
+def subject_distance(scene) -> float | None:
+    """How far the main subject is from the camera (rc10, the ideal VR view): the nearer part (30th
+    percentile of depth) of what the camera sees in the middle of its picture (the central half of each side),
+    so a person in front of a far wall counts, not the wall. The median depth when the middle is empty."""
+    import numpy as np
+
+    if scene is None or len(scene) == 0:
+        return None
+    cam = scene.cameras[0] if scene.cameras else None
+    c2w = np.asarray(cam.c2w if cam is not None else np.eye(4), np.float64)
+    p = (scene.means.astype(np.float64) - c2w[:3, 3]) @ c2w[:3, :3]
+    z = p[:, 2]
+    ok = (z > 0) & np.isfinite(z)
+    if getattr(scene, "opacity", None) is not None:
+        ok &= np.asarray(scene.opacity) > 0.3
+    if not ok.any():
+        return scene_depth(scene)
+    sel = ok
+    if cam is not None:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            u = cam.fx * p[:, 0] / z + cam.cx
+            v = cam.fy * p[:, 1] / z + cam.cy
+        mid = ok & (np.abs(u - cam.width / 2) < cam.width / 4) & (np.abs(v - cam.height / 2) < cam.height / 4)
+        if mid.sum() >= 50:
+            sel = mid
+    return float(np.percentile(z[sel], 30))
+
+
 def view_params(scene) -> tuple[float | None, dict | None]:
     """(initial orbit depth, levelling transform) for sharing a scene with the viewer."""
     if scene is None or len(scene) == 0:
@@ -192,11 +229,13 @@ def view_params(scene) -> tuple[float | None, dict | None]:
     import numpy as np
 
     depth = scene_depth(scene)
+    subject = subject_distance(scene) or depth
     try:
         xf = viewer_transform(scene)
-        # Initial desktop orbit target: what the capture camera was looking at.
+        # Desktop orbit target: the subject, straight ahead of the capture camera
         c2w = np.asarray(scene.cameras[0].c2w if scene.cameras else np.eye(4), np.float64)
-        look = c2w[:3, 3] + c2w[:3, 2] * (depth or 2.0)
+        look = c2w[:3, 3] + c2w[:3, 2] * (subject or 2.0)
+        xf["subject"] = subject
         from .align import quat_xyzw_to_rotmat
 
         xf["target"] = [float(v) for v in quat_xyzw_to_rotmat(xf["quaternion"]) @ look + np.asarray(xf["position"])]

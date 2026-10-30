@@ -1,3 +1,59 @@
+# 2D2VR 2.0.0-rc10 — balanced video modes; the ideal view in VR
+
+The owner asked for two things:
+- video modes as balanced as the photo modes;
+- the ideal camera position, angle and distance in VR, both when a photo or video opens and on a click of
+  either controller stick.
+
+## Video modes
+
+Until now the three video modes differed only in the number of splats per frame and the size of the depth
+map. And none of them had the photos' clean depth edges, so splats floated between people and the background.
+Those are the trails you see in VR when you move your head.
+
+| | Every frame | Time per frame (RTX 4080, 1080p) |
+|---|---|---|
+| **every mode** | one lens and scale per clip, depth stabilised to the previous frame, people's own 3D shape, **and now** depth edges sent to the person or to the background and every splat placed at the measured depth | |
+| **Fast** | ~330 000 splats, depth at 768 px, 1 MoGe-3 refinement step | ~2 s |
+| **Auto** | ~470 000 splats, depth at 1024 px, 2 steps | ~3 s |
+| **Quality** | ~740 000 splats, depth at 1536 px, 3 steps, **+ fine relief from MoGe-3's surface normals** (faces, folds of clothes) | ~5 s |
+
+- If the GPU runs out of memory, the video continues with lighter settings, dropping steps in this order:
+  Quality's fine relief, then the people's model, then a smaller depth map.
+- The report records the plan (`backend.extra.plan`) and how many frames got the fine relief.
+
+## The ideal view in VR
+
+The ideal place to see a photo's or video's splat from is where the camera stood. It is the only place where
+nothing is missing behind people and objects.
+
+So the VR player now:
+- puts that place at your head, level, facing what the camera faced, at your own eye height;
+- steps straight back when the subject is closer than 0.9 m (closer is uncomfortable in a headset; stepping
+  straight back along the camera's axis uncovers nothing hidden);
+- measures how far the subject is from the nearer part of what is in the middle of the picture. A person in
+  front of a far wall counts, the wall does not.
+
+When it is used:
+- **On entering VR.**
+- **When you click either stick** (left or right). It works from wherever you have walked or turned to:
+  - the ideal view comes to your head as it is now, facing where you look;
+  - before, the stick click went back to where you stood when you pressed ENTER VR, and set the size back too.
+- The size you set with A/B now stays. **A + B together** (or X + Y) sets it back to 100 %.
+- Without a headset the page starts at the same view and orbits around the subject instead of a point far
+  behind it.
+
+## Checks
+
+- Every test passes, including:
+  - a browser test of the VR controls (Chromium with stand-in controllers): the ideal view at the start, after
+    walking and turning, with the left and the right stick, the size kept, and A + B;
+  - the subject distance of a person 1.2 m in front of a 5 m wall measures 1.2 m (the median depth said 5 m);
+  - the video worker runs end to end with stand-in models in Quality: relief from normals and clean edges in
+    every frame. On the test scene, splats between the person and the wall drop from 2.2 % to under 1 %;
+  - the three video modes send different steps to the worker.
+- Not yet run on the RTX 4080 or a headset: the times are estimates.
+
 # 2D2VR 2.0.0-rc9 — no more AI fill; photo modes that differ
 
 The owner asked for two things:

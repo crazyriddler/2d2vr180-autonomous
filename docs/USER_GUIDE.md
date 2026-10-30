@@ -55,11 +55,11 @@ Every model shows its licence before downloading. Downloads resume if interrupte
 
    | | Photos | Videos |
    |---|---|---|
-   | **Fast** (~45 s a photo) | MoGe-3 depth once, people's own 3D shape, clean depth edges, every splat at the measured depth | ~330 000 splats per frame |
-   | **Auto** (~2 min, recommended) | + MoGe-3 Giant three times joined to Apple Depth Pro (truer shape and lens), fine relief from surface normals (faces, fingers, folds of clothes), the splat fitted to the photo (sharper texture) | ~470 000 splats per frame |
-   | **Quality** (~5 min) | + maximum detail: the photo worked at 3072 px (4608 px from 24 MP), the depth and SHARP on parts of it, 2.5-6x the splats (heavier in VR); a longer, finer fit to the photo | ~740 000 splats per frame |
+   | **Fast** (~45 s a photo, ~2 s a frame) | MoGe-3 depth once, people's own 3D shape, clean depth edges, every splat at the measured depth | ~330 000 splats per frame, depth at 768 px; people's shape, clean edges and every splat placed, as in every mode |
+   | **Auto** (~2 min, ~3 s a frame, recommended) | + MoGe-3 Giant three times joined to Apple Depth Pro (truer shape and lens), fine relief from surface normals (faces, fingers, folds of clothes), the splat fitted to the photo (sharper texture) | ~470 000 splats per frame, depth at 1024 px: sharper |
+   | **Quality** (~5 min, ~5 s a frame) | + maximum detail: the photo worked at 3072 px (4608 px from 24 MP), the depth and SHARP on parts of it, 2.5-6x the splats (heavier in VR); a longer, finer fit to the photo | ~740 000 splats per frame, depth at 1536 px, + fine relief from surface normals |
 
-   Times are for an RTX 4080 and a 24 MP photo.
+   Times are for an RTX 4080 and a 24 MP photo or a 1080p video.
 3. **Eye distance (IPD)**: the real-world size of the scene is set from the eyes of the people in it, scaled
    to be this far apart (adults 56-70 mm, 63 on average).
    - If people look too big in VR, lower it; too small, raise it.
@@ -96,8 +96,10 @@ in one file with the video's sound:
 - The lens and the real-world size are measured once for the whole clip, so the scene does not "breathe".
 - Each frame's depth is matched to the previous frame's where the picture did not change, which removes the
   small jumps of depth estimated one frame at a time.
-- **It is slow but steady**: about 3-5 s per frame on an RTX 4080.
-  - A minute of video at 24 fps takes 1.5-2 hours.
+- Pixels next to a depth edge go to the person or to the background, never in between, so no splats float
+  between them (in every mode).
+- **It is slow but steady**: about 2-5 s per frame on an RTX 4080, by quality mode.
+  - A minute of video at 24 fps takes 50 minutes (Fast) to 2 hours (Quality).
   - Memory use stays the same however long the video is: frames are written to disk as they are made.
   - If the GPU runs out of memory, the job continues from the last finished frame with lighter settings.
 
@@ -129,21 +131,26 @@ The player opens in **Google Chrome** or **Microsoft Edge** on this PC. It is se
 (127.0.0.1); nothing is uploaded.
 
 1. Connect your headset to the PC: **Quest Link** (cable), **Air Link**, **Virtual Desktop** or **SteamVR**.
-2. Press **ENTER VR** in the page. You start where the camera stood, with the horizon level.
+2. Press **ENTER VR** in the page. You start at the **ideal view**:
+   - where the camera stood (the only place where nothing is missing behind people and objects);
+   - level, facing what it photographed or filmed, at your own eye height;
+   - one step back if the subject is closer than 0.9 m, which is uncomfortable in a headset.
 3. Controllers:
 
 | Button | Action |
 |---|---|
 | **A** or **X** (hold) | make everything smaller |
 | **B** or **Y** (hold) | make everything bigger |
-| Stick click | back to the start, at the original size |
+| **Click either stick** (left or right) | back to the ideal view, from wherever you have walked or turned to; the size stays |
+| **A + B** (or **X + Y**) together | the original size |
 | Trigger | play / pause a splat video |
 | Left stick | move |
 | Right stick | turn 30° (left/right), rise/sink (up/down) |
 
 - The size you choose is remembered for that scene.
 - The app's 3D viewer also has a **Size in VR** box to set the starting size.
-- Without a headset the page works with the mouse; **+** and **−** change the size, **Space** plays/pauses.
+- Without a headset the page works with the mouse: it starts at the same ideal view and turns around the
+  subject; **R** goes back to it, **+** and **−** change the size, **Space** plays/pauses.
 
 ## Settings
 

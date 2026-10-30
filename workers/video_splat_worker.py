@@ -16,7 +16,12 @@ Request:
   {"frames": ["frame_000000.png", ...], "output_dir": "...", "checkpoint": ".../sharp_2572gikvuh.pt",
    "moge_path": ".../model.pt", "face_model": ... | null, "human_seg": ... | null, "human_pointmap": ... | null,
    "ipd_target_m": 0.063, "fov_x": null | degrees, "grid": [1.5, 3] (SHARP grid steps: front layer, back layer),
-   "keyframe_interval": 15, "moge_max_side": 1024, "people": true, "allow_cpu": false}
+   "keyframe_interval": 15, "moge_max_side": 1024, "refine_steps": 2, "people": true, "edges": true,
+   "place_all": true, "normals": false, "allow_cpu": false}
+rc10 (the quality modes, backends/video_splat.PLANS): "edges" sends each frame's depth edges to one side and
+"place_all" puts every splat the frame sees at its depth (no splats floating between a person and the
+background: the trails seen in VR); "normals" adds the fine relief of MoGe-3's own surface normals
+(workers/precision.py); "refine_steps" is MoGe-3's own refinement.
 Result: {"outputs": {"frames_dir", "meta"}, "frames", "count", "camera", "quant", "scale", "scale_from", ...}
 """
 
@@ -68,7 +73,9 @@ def main(req):
     import torch
     from PIL import Image
 
+    import detail_geometry as dg
     import human_geometry as hg
+    import precision as pr
     import sharp_depth_worker as sd
     import splv_codec as codec
 
@@ -106,10 +113,15 @@ def main(req):
                 torch.cuda.empty_cache()
 
     max_side = int(req.get("moge_max_side", 1024))
+    refine_steps = int(req.get("refine_steps", 2))
+    use_edges = bool(req.get("edges", True))
+    place_all = bool(req.get("place_all", True))
+    use_normals = bool(req.get("normals", False))
 
-    def geometry(img, fov):
+    def geometry(img, fov, want_normals=False):
         """MoGe-3 on the frame (at most max_side px), its depth brought back to the frame's full size.
-        Returns (depth (H, W) metres with NaN where unknown, the lens in full-size pixels, the field of view)."""
+        Returns (depth (H, W) metres with NaN where unknown, the lens in full-size pixels, the field of view,
+        MoGe-3's surface normals at full size or None)."""
         import torch.nn.functional as F
 
         h, w = img.shape[:2]
@@ -117,7 +129,7 @@ def main(req):
         small = img if s >= 1 else np.asarray(Image.fromarray(img).resize((round(w * s), round(h * s)), Image.BILINEAR))
         t = torch.from_numpy(np.ascontiguousarray(small).copy()).to(device).float().div(255).permute(2, 0, 1)
         with torch.no_grad():
-            o = moge.infer(t, resolution_level=9, fov_x=fov, use_fp16=device.type == "cuda", refine_steps=2)
+            o = moge.infer(t, resolution_level=9, fov_x=fov, use_fp16=device.type == "cuda", refine_steps=refine_steps)
             z = o["points"][..., 2].float()
             ok = torch.isfinite(z) & (z > 0)
             if "mask" in o:
@@ -130,7 +142,10 @@ def main(req):
             depth = torch.where(ok, z, torch.nan).cpu().numpy().astype(np.float64)
         K = o["intrinsics"].float().cpu().numpy().astype(np.float64)
         f_px = float(K[0, 0]) * w                        # normalised intrinsics → full-size pixels
-        return depth, f_px, float(np.degrees(2 * np.arctan(0.5 / K[0, 0])))
+        normal = None
+        if want_normals and o.get("normal") is not None:
+            normal = pr.resize_normals(o["normal"].float().cpu().numpy().astype(np.float64), (h, w), torch)
+        return depth, f_px, float(np.degrees(2 * np.arctan(0.5 / K[0, 0]))), normal
 
     def unproject(depth, f_px):
         h, w = depth.shape
@@ -168,7 +183,7 @@ def main(req):
         target = float(req.get("ipd_target_m") or sd.IPD_TARGET_M)
         for i in sample:
             img = load(i)
-            depth, f_px, _ = geometry(img, fov)
+            depth, f_px, _, _ = geometry(img, fov)
             depth, ratio, _ = people(img, depth, f_px)
             if ratio:
                 humans.append(1.0 / ratio)
@@ -242,7 +257,7 @@ def main(req):
             first = True               # resume: the next new frame must be a keyframe
             continue
         img = load(i)
-        depth0, f_px, _ = geometry(img, fov)
+        depth0, f_px, _, normal = geometry(img, fov, use_normals)
         depth, ratio, weight = people(img, depth0, f_px)
         ok = np.isfinite(depth) & (depth > 0)
         depth = depth * scale
@@ -251,13 +266,38 @@ def main(req):
         corr = float(min(max((r if r is not None else corr) * 0.97 + 0.03, 0.8), 1.25))
         depth = depth * corr
         prev_depth, prev_img = depth, img
+        # rc10: fine relief from the normals (Quality), depth edges sent to one side
+        band = far = None
+        relief = False
+        if use_normals and normal is not None:
+            try:
+                aligned, st = pr.align_normals(normal, pr.normals_from_depth(depth, f_px))
+                if st["ok"]:
+                    depth, nst = pr.integrate_normals(depth, aligned, f_px, torch, limit=0.03, iters=200,
+                                                      device=device)
+                    relief = bool(nst.get("used"))
+            except Exception as e:  # noqa: BLE001 - an improvement, not a requirement
+                log(f"frame {i + 1}: fine relief skipped ({type(e).__name__}: {str(e)[:120]})")
+        if use_edges:
+            try:
+                depth, band, far, _ = pr.resolve_edges(depth, img, torch, device=device)
+            except Exception as e:  # noqa: BLE001
+                log(f"frame {i + 1}: edge cleanup skipped ({type(e).__name__}: {str(e)[:120]})")
+        ok = np.isfinite(depth) & (depth > 0)
         g, info = sd.predict(predictor, img, f_px, device, torch, depth, ok)
         with torch.no_grad():
             from sharp.utils import color_space as cs
 
             all_means, all_scales = g.mean_vectors[0], g.singular_values[0]
             k = None
-            if snap and weight is not None:          # the people exactly at their measured 3D shape
+            if place_all:                            # every splat the frame sees at its depth (rc10)
+                wgt = dg.edge_weight(depth, torch)
+                if band is not None:
+                    wgt = np.maximum(wgt, band.astype(np.float64))
+                if weight is not None:
+                    wgt = np.maximum(wgt, weight)
+                all_means, all_scales, k = sd.snap_to_depth(g, depth, wgt, torch, lo=0.7, hi=1.4, band=band, back=far)
+            elif snap and weight is not None:        # the people exactly at their measured 3D shape
                 all_means, all_scales, k = sd.snap_to_depth(g, depth, weight, torch)
             means = all_means[keep_t]
             scales = all_scales[keep_t] * steps_t
@@ -280,7 +320,8 @@ def main(req):
             f.write(data)
         os.replace(path + ".tmp", path)
         json.dump({"key": bool(key), "stabilise": round(corr, 4), "still_share": round(still, 3),
-                   "people": ratio is not None},
+                   "people": ratio is not None, "relief": relief,
+                   "edges": round(float(band.mean()), 4) if band is not None else None},
                   open(path + ".json", "w"))
         prev_q, first = arr, False
         n_done = i + 1

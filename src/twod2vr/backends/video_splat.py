@@ -11,7 +11,8 @@ scene.ply / scene.splat for other splat programs.
 
 Memory: the worker loads every model once and writes each frame to disk as soon as it is made, so RAM and
 VRAM stay flat however long the video is. When the GPU runs out of memory anyway, the run resumes from the
-last finished frame with lighter settings (people's model off, then a smaller depth map).
+last finished frame with lighter settings (Quality's fine relief off, then the people's model, then a smaller
+depth map).
 """
 
 from __future__ import annotations
@@ -25,11 +26,19 @@ from .base import DYNAMIC, SCENE_STATIC, Backend, BackendContext, BackendError, 
 from .locked import FACE_MODEL, HUMAN_POINTMAP, HUMAN_SEG
 
 MOGE = "moge-3-vitl"
-# per quality mode: SHARP grid steps (front, back layer: splats per frame), depth map size, seconds per frame
-# (2.0.0-rc3: denser grids - people looked coarse up close)
-PLANS = {"fast": {"grid": [1.5, 3.0], "moge_max_side": 768, "s_per_frame": 2.5},
-         "auto": {"grid": [1.25, 2.5], "moge_max_side": 1024, "s_per_frame": 3.5},
-         "quality": {"grid": [1.0, 2.0], "moge_max_side": 1536, "s_per_frame": 5.0}}
+# What each quality mode does for a video, frame by frame (rc10: balanced like the photo modes - each step up
+# costs time for something visible). Every mode: one lens and scale per clip, depth stabilised to the previous
+# frame, the people's own 3D shape, depth edges sent to one side and every splat placed at the depth (no
+# splats floating between a person and the background).
+#   Fast    - ~330 000 splats per frame, MoGe-3 at 768 px with 1 refinement step: quick, a little soft
+#   Auto    - ~470 000 splats, MoGe-3 at 1024 px, 2 steps: sharper splats and depth
+#   Quality - ~740 000 splats, MoGe-3 at 1536 px, 3 steps, + fine relief from MoGe-3's surface normals
+#             (faces, folds of clothes): the most detail up close, about twice Fast's time and file size
+PLANS = {"fast": {"grid": [1.5, 3.0], "moge_max_side": 768, "refine_steps": 1, "normals": False, "s_per_frame": 2.0},
+         "auto": {"grid": [1.25, 2.5], "moge_max_side": 1024, "refine_steps": 2, "normals": False,
+                  "s_per_frame": 3.0},
+         "quality": {"grid": [1.0, 2.0], "moge_max_side": 1536, "refine_steps": 3, "normals": True,
+                     "s_per_frame": 5.0}}
 FRAME_SIDE = 1536            # frames are extracted at most this big (SHARP's own input size)
 BYTES_PER_SPLAT = 10         # after compression, a keyframe of a real video (estimate for the disk check)
 
@@ -124,11 +133,13 @@ class SplatVideoBackend(Backend):
                "moge_path": str(ctx.models.paths(MOGE)["model.pt"]), "face_model": face, "human_seg": human_seg,
                "human_pointmap": human_pm, "ipd_target_m": float(options.get("ipd_mm") or 63.0) / 1000.0,
                "fov_x": options.get("hfov_deg"), "grid": plan["grid"], "keyframe_interval": max(1, round(fps)),
-               "moge_max_side": plan["moge_max_side"], "people": True,
+               "moge_max_side": plan["moge_max_side"], "refine_steps": plan["refine_steps"], "people": True,
+               "edges": True, "place_all": True, "normals": plan["normals"],
                "allow_cpu": bool(getattr(ctx, "allow_cpu", False))}
         py, env = ctx.runtimes.python(self.runtime_id), ctx.runtimes.worker_env(self.runtime_id)
-        lighter = [("the people's model off", {"people": False}),
-                   ("a smaller depth map", {"people": False, "moge_max_side": 768})]
+        lighter = ([("the fine relief from normals off", {"normals": False})] if plan["normals"] else []) + [
+            ("the people's model off", {"normals": False, "people": False}),
+            ("a smaller depth map", {"normals": False, "people": False, "moge_max_side": 768, "refine_steps": 1})]
         while True:
             try:
                 out = run_worker(py, self.worker_script, req, inp.work_dir / "worker", progress, cancel, env=env,
@@ -174,7 +185,9 @@ class SplatVideoBackend(Backend):
         first.provenance[:] = INFERRED
         ply = write_gaussian_ply(first, exp / "scene.ply", include_provenance=True)
         splat = write_splat(first, exp / "scene.splat")
-        people_frames = sum(1 for p in fdir.glob("*.bin.json") if json.loads(p.read_text()).get("people"))
+        frame_notes = [json.loads(p.read_text()) for p in fdir.glob("*.bin.json")]
+        people_frames = sum(1 for f in frame_notes if f.get("people"))
+        relief_frames = sum(1 for f in frame_notes if f.get("relief"))
         shutil.rmtree(fdir, ignore_errors=True)       # the frames now live in scene.splv
         progress(1.0, "done")
         if audio is None:
@@ -201,7 +214,8 @@ class SplatVideoBackend(Backend):
                    "size_mb": round(size / 2**20, 1), "audio": audio is not None, "scale": res.get("scale"),
                    "scale_from": res.get("scale_from"), "fov_x": res.get("fov_x"),
                    "ipd_target_mm": round(req["ipd_target_m"] * 1000, 1), "grid": plan["grid"],
-                   "people_frames": people_frames, "files": files})
+                   "mode": mode, "plan": {k: v for k, v in plan.items() if k != "s_per_frame"},
+                   "people_frames": people_frames, "relief_frames": relief_frames, "files": files})
 
     def cleanup(self, inp: JobInput) -> None:
         super().cleanup(inp)

@@ -80,6 +80,16 @@ decodes the same layout):
 Maximum detail (`workers/detail_geometry.py`) does the same at up to 3072 px (4608 px, 3 x 3 parts, for
 photos of 24 MP and up), with each part's normals turned into the photo's axes first.
 
+## The ideal view (VR player)
+
+- `vr_server.subject_distance`: the 30th percentile of depth of the splats in the central half of the picture;
+  passed to the player as `subj` with the levelling transform (`q`, `p`) and the orbit target (`t`).
+- `player.js idealEye()`: the camera's place (the origin of the levelled scene), stepped back along its axis
+  when the subject is nearer than 0.9 m at the current size.
+- `recenter(head, forward)`: puts that eye at the head's current position in the `local` reference space and
+  turns the scene so the camera's heading is where the head looks (level). It runs on entering VR and on any
+  thumbstick click; the A/B size is kept (A + B resets it).
+
 ## Real-world scale
 
 - MoGe-3 gives metric depth.
