@@ -16,8 +16,8 @@ def test_settings_roundtrip_and_sanitize(tmp_path):
     assert r.mode == "auto" and r.ipd_mm == 45.0
     p.write_text("{broken")
     assert Settings.load(p) == Settings()
-    o = Settings(ipd_mm=60.0, real3d_fill=False, video_seconds=12.0, video_start_s=3.0).job_options()
-    assert o.ipd_mm == 60.0 and not o.real3d_fill and o.video_seconds == 12.0 and o.video_start_s == 3.0
+    o = Settings(ipd_mm=60.0, video_seconds=12.0, video_start_s=3.0).job_options()
+    assert o.ipd_mm == 60.0 and o.video_seconds == 12.0 and o.video_start_s == 3.0
 
 
 def test_component_catalogue(ctx):
@@ -27,10 +27,8 @@ def test_component_catalogue(ctx):
         st = component_status(ctx, c)
         assert "installed" in st and "license" in st
     ids = {c.target for c in COMPONENTS}
-    assert ids == {"photo-cu128", "render-cu124", "gen-cu128", "sharp", "moge-3-vitl", "yunet-face", "sapiens2-seg-0.4b",
-                   "sapiens2-pointmap-1b", "moge-3-vitg", "depth-pro", "sapiens2-normal-1b",
-                   "qwen-image-edit-2511-q5", "qwen-image-edit-2511-base",
-                   "qwen-edit-2511-lightning"}
+    assert ids == {"photo-cu128", "render-cu124", "sharp", "moge-3-vitl", "yunet-face", "sapiens2-seg-0.4b",
+                   "sapiens2-pointmap-1b", "moge-3-vitg", "depth-pro", "sapiens2-normal-1b"}
     # 'Install recommended' installs everything Real 3D uses
     assert all(c.recommended for c in COMPONENTS)
 
@@ -43,5 +41,8 @@ def test_models_of_older_versions_are_found_and_deleted(app_home):
     old.mkdir(parents=True)
     (old / "model.pt").write_bytes(b"x" * 1000)
     (mm.root / "sharp").mkdir()
-    assert mm.unused() == [("vggt-1b", 1000)]
-    assert mm.delete_unused() == 1000 and not old.exists() and (mm.root / "sharp").exists()
+    qwen = mm.root / "qwen-image-edit-2511-q5"                    # rc9: the AI fill's models, removed
+    qwen.mkdir()
+    (qwen / "q5.gguf").write_bytes(b"x" * 500)
+    assert mm.unused() == [("qwen-image-edit-2511-q5", 500), ("vggt-1b", 1000)]
+    assert mm.delete_unused() == 1500 and not old.exists() and not qwen.exists() and (mm.root / "sharp").exists()

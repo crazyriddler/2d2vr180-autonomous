@@ -80,28 +80,3 @@ def test_sheet_cameras_move_the_head_and_turn_around_the_subject():
     look = turn[:3, :3] @ [0, 0, 1.0]
     to_pivot = np.array([0, 0, 2.5]) - turn[:3, 3]
     assert np.allclose(look, to_pivot / np.linalg.norm(to_pivot), atol=1e-6)
-
-
-def test_hole_depth_continues_the_background_behind_an_object():
-    """A wall 4 m away seen past a box 2 m away: the hole uncovered next to the box must get the wall's
-    depth, even though the monocular depth of the filled image has its own scale and offset."""
-    from sharp_depth_worker import align_affine, dilate, hole_depth
-
-    h, w = 120, 160
-    known = np.full((h, w), 4.0)
-    known[40:80, 50:90] = 2.0                                     # the box
-    hole = np.zeros((h, w), bool)
-    hole[40:80, 90:100] = True                                    # uncovered strip right of the box
-    known[hole] = np.inf
-    truth = np.where(hole, 4.0, known)
-    mono = 0.5 * truth + 0.3                                      # what MoGe says: other scale and shift
-    depth, valid, st = hole_depth(known, mono, hole, np.ones((h, w), bool), ring_px=6)
-    assert valid.all()
-    assert np.allclose(depth[hole], 4.0, atol=0.05)               # the wall, not the box
-    assert np.allclose(depth[~hole], known[~hole])                # what exists stays exactly as rendered
-    assert st["hole_fraction"] > 0 and st["ring_pixels"] > 100
-    a, b = align_affine(np.array([1.0, 2, 3, 4] * 10), np.array([2.5, 4.5, 6.5, 8.5] * 10))
-    assert a == pytest.approx(2.0) and b == pytest.approx(0.5)
-    m = np.zeros((9, 9), bool)
-    m[4, 4] = True
-    assert dilate(m, 2).sum() == 25

@@ -1,40 +1,10 @@
-"""Memory settings of the GPU workers (rc51, after an out-of-RAM failure of Qwen on a 32 GB PC)."""
+"""Memory settings of the GPU workers (rc51, after an out-of-RAM failure on a 32 GB PC)."""
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "workers"))
 import _protocol  # noqa: E402
-import qwen_views_worker as qw  # noqa: E402
-
-
-def test_qwen_streams_its_blocks_and_never_uses_the_crashing_sync_mode():
-    assert qw.memory_attempts(16376, 1.0, 31.9) == [("stream", 1.0), ("stream", 0.6)]
-    assert qw.memory_attempts(24576, 1.0, 64.0)[0] == ("gpu", 1.0)
-
-
-def test_pinned_cache_is_released():
-    calls = []
-
-    class Cuda:
-        def synchronize(self):
-            calls.append("sync")
-
-        class memory:
-            @staticmethod
-            def host_memory_stats():
-                return {"reserved_bytes.all.current": 3 * 2 ** 20}
-
-    torch = type("T", (), {})()
-    torch.cuda = Cuda()
-    torch._C = type("C", (), {"_host_emptyCache": staticmethod(lambda: calls.append("empty"))})()
-    assert qw.release_pinned(torch) == 3 and calls == ["sync", "empty"]
-    assert qw.release_pinned(object()) is None          # builds without these APIs: no-op
-
-
-def test_system_ram_is_read():
-    total, free = qw.system_ram_gib()
-    assert total is None or (total > 0 and 0 <= free <= total)
 
 
 class FakeCuda:

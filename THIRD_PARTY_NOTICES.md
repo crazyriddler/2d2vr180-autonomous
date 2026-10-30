@@ -20,22 +20,18 @@ downloads the components below. **No model weights are bundled.**
 
 Runtimes (config/runtime-manifest.json): PyTorch (BSD-3-Clause, bundles NVIDIA CUDA runtime libraries under
 the NVIDIA EULA), torchvision, gsplat (Apache-2.0), MoGe (MIT), utils3d-moge, pipeline, FlexGEMM (MIT), Apple
-ml-sharp (Apple Sample Code License), transformers (Apache-2.0), safetensors (Apache-2.0), OpenCV (Apache-2.0),
-diffusers (Apache-2.0), peft (Apache-2.0), gguf (MIT), kornia (Apache-2.0), VideoX-Fun (Apache-2.0, part of the
-1.x painter runtime kept so existing installs stay valid), triton-windows (MIT), timm (Apache-2.0) and their
-dependencies.
+ml-sharp (Apple Sample Code License), Apple ml-depth-pro (Apple Sample Code License), transformers (Apache-2.0),
+safetensors (Apache-2.0), OpenCV (Apache-2.0), triton-windows (MIT), timm (Apache-2.0) and their dependencies.
 
 Models (config/model-manifest.json) — shown with their license before download:
 
 | Model | License | Commercial use |
 |---|---|---|
 | Apple SHARP | Apple ML Research Model License — research only | **no** |
-| MoGe-3 ViT-L (Microsoft) | MIT | yes |
+| MoGe-3 ViT-L and ViT-G (Microsoft) | MIT | yes |
+| Apple Depth Pro | Apple ML Research Model License — research only | **no** |
 | YuNet face detector (OpenCV Zoo) | MIT | yes |
-| Sapiens2 seg 0.4B and pointmap 1B (Meta) | Sapiens2 License | see licence |
-| Qwen-Image-Edit-2511 (Qwen; text encoder Qwen2.5-VL-7B, VAE) | Apache-2.0 | yes |
-| Qwen-Image-Edit-2511 GGUF Q5_K_M (unsloth) | Apache-2.0 | yes |
-| Qwen-Image-Edit-2511 Lightning LoRA (lightx2v) | Apache-2.0 | yes |
+| Sapiens2 seg 0.4B, pointmap 1B and normal 1B (Meta) | Sapiens2 License | see licence |
 
 The default license profile is "Personal / research use". The "Commercial use" profile disables every
 backend whose model license does not permit commercial use; Real 3D needs Apple SHARP, so it is not available

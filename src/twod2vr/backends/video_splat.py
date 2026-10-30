@@ -1,6 +1,6 @@
 """Splat video (2D2VR 2.0): every frame of a video made with the Real 3D technique, played back as a video.
 
-Each frame is what Real 3D makes of a photo, without the AI fill (too slow for thousands of frames): MoGe-3's
+Each frame is what Real 3D makes of a photo in its Fast form (the slower photo steps would take minutes per frame): MoGe-3's
 measured depth at the video's lens, the people's shape from Sapiens2, the real-world scale from the eyes, and
 Apple SHARP aligned to that depth (workers/video_splat_worker.py). The lens and the scale are measured once
 for the whole clip; each frame's depth is matched to the previous one where the picture did not change.

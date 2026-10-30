@@ -94,7 +94,6 @@ def ctx(app_home, monkeypatch):
     monkeypatch.setattr(LockedPhotoBackend, "geometry_script", str(FAKE_WORKER))
     monkeypatch.setattr(LockedPhotoBackend, "worker_script", str(FAKES / "fake_sharp_depth_worker.py"))
     monkeypatch.setattr(LockedPhotoBackend, "render_script", str(FAKES / "fake_render_worker.py"))
-    monkeypatch.setattr(LockedPhotoBackend, "painter_script", str(FAKES / "fake_qwen_worker.py"))
     monkeypatch.setattr(LockedPhotoBackend, "refine_script", str(FAKES / "fake_refine_worker.py"))
     monkeypatch.setattr(SplatVideoBackend, "worker_script", str(FAKES / "fake_video_splat_worker.py"))
     mm = ModelManager()

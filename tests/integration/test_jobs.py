@@ -1,5 +1,5 @@
 """End-to-end job pipeline with TEST-ONLY fake workers (tests/fakes/): Real 3D for photos (fake MoGe, fake
-SHARP with depth, fake renderer, fake painter) and splat videos for videos (fake per-frame worker). Exercises
+SHARP with depth, fake renderer, fake fit) and splat videos for videos (fake per-frame worker). Exercises
 the real worker protocol, selection, export, validation, reports and error paths."""
 
 import json
@@ -14,7 +14,6 @@ from twod2vr.scene import load_scene
 
 REQUIRED_REPORT_KEYS = {"input", "backend", "models", "hardware", "vram_peak_mib", "runtime_s", "outputs",
                         "coverage", "warnings", "selection", "timings_s", "status", "app"}
-QWEN_IDS = ("qwen-image-edit-2511-q5", "qwen-image-edit-2511-base", "qwen-edit-2511-lightning")
 
 
 def run_job(ctx, hw, path, **kw):
@@ -66,80 +65,6 @@ def test_photo_end_to_end(ctx, rtx4080, tmp_path):
     assert prog == sorted(prog) and prog[-1] == 1.0
 
 
-def test_real3d_fills_what_the_photo_hides_from_moved_views(ctx, rtx4080, photo):
-    """Renders from moved cameras → holes (what the photo never saw) → Qwen paints only the holes → SHARP with
-    the depth tied to the scene → only the holes' splats are added (GENERATIVE)."""
-    from conftest import install_fake_model
-    from twod2vr.scene import read_gaussian_ply
-
-    for mid in QWEN_IDS:
-        install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast")
-    assert rep["status"] == "succeeded", rep.get("error")
-    calls = json.loads((job.dir / "locked" / "fill" / "painted" / "stage_calls.json").read_text())
-    assert [c["stage"] for c in calls] == ["encode", "generate"]
-    views = calls[1]["views"]
-    assert calls[1]["angles_strength"] == 0 and all(v["prompt"].startswith("The pure black areas") for v in views)
-    assert all(v["image"].endswith("_holes.png") for v in views) and 1 <= len(views) <= 6
-    labels = [v["label"] for v in views]
-    assert "look 40° left" in labels and "look 40° right" in labels   # beyond the photo's frame
-    fill = json.loads((job.dir / "locked" / "fill" / "fake_fill_request.json").read_text())
-    assert len(fill["views"]) == len(views) and fill["moge_version"] == "v3"
-    ex = rep["backend"]["extra"]
-    assert ex["added_splats"] > 0 and ex["fill"][-1]["view"] == "photo"
-    assert ex["fill_status"].startswith(f"{ex['added_splats']:,} AI-painted splats added from")
-    turned = [r for r in ex["fill"] if r["view"] == "look 40° left"][0]
-    assert turned["hole_fraction"] > 0.2 and turned["added"] > 0    # what lies left of the photo is painted
-    out = rep["outputs"]
-    assert Path(out["fill_steps"]).exists() and Path(out["added_layer"]).exists()
-    added = read_gaussian_ply(Path(out["added_layer"]))
-    assert len(added) == ex["added_splats"] and (added.provenance == 2).all()
-    assert rep["coverage"]["by_splat"]["generative"] > 0
-    assert set(QWEN_IDS) <= {m["id"] for m in rep["models"]}
-
-
-def test_real3d_fill_runs_in_the_renderer_runtime_and_without_it(ctx, rtx4080, photo, monkeypatch):
-    """rc8: the moved views are drawn in the renderer runtime (prebuilt gsplat) - in the photo engine gsplat
-    needed a CUDA toolkit and never ran, so the fill was always skipped on the owner's PC. Without the
-    renderer the fill still runs on the CPU renderer instead of being skipped."""
-    from conftest import install_fake_model
-
-    for mid in QWEN_IDS:
-        install_fake_model(ctx.models, mid)
-    asked = []
-    real_python = ctx.runtimes.python
-    monkeypatch.setattr(ctx.runtimes, "python", lambda rid: asked.append(rid) or real_python(rid))
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast")
-    assert rep["status"] == "succeeded", rep.get("error")
-    assert "render-cu124" in asked and rep["backend"]["extra"]["added_splats"] > 0
-    monkeypatch.setattr(ctx.runtimes, "is_installed", lambda rid: rid != "render-cu124")
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast")
-    assert rep["status"] == "succeeded", rep.get("error")
-    ex = rep["backend"]["extra"]
-    assert ex["added_splats"] > 0, ex["fill_status"]                    # CPU renderer: still filled
-    assert ex["precision"]["photo"]["fit"]["used"] is False
-    text = (job.dir / "job.log").read_text(encoding="utf-8")
-    assert "Real 3D renderer is not installed" in text and "CPU renderer used" in text
-
-
-def test_real3d_fill_can_be_turned_off(ctx, rtx4080, photo):
-    from conftest import install_fake_model
-
-    for mid in QWEN_IDS:
-        install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", real3d_fill=False)
-    assert rep["status"] == "succeeded", rep.get("error")
-    assert rep["backend"]["extra"]["added_splats"] == 0 and not (job.dir / "locked" / "fill").exists()
-
-
-def test_real3d_without_the_painter_says_so(ctx, rtx4080, photo):
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast")
-    assert rep["status"] == "succeeded", rep.get("error")
-    assert "needs the AI painter" in (job.dir / "job.log").read_text(encoding="utf-8")
-    assert rep["backend"]["extra"]["fill_status"].startswith("skipped: needs the AI painter")
-    assert any(w.startswith("AI fill of what the photo hides: skipped") for w in rep["warnings"])
-
-
 def test_real3d_uses_the_human_model_and_the_eye_distance_setting(ctx, rtx4080, photo):
     """With Sapiens2 installed the worker gets its models, the eye distance comes from the option, and without
     faces the scale comes from the human model."""
@@ -167,9 +92,9 @@ def test_real3d_without_the_human_model_says_so(ctx, rtx4080, photo):
 
 
 def test_maximum_detail_for_photos(ctx, rtx4080, photo):
-    """The detail option (always on in Quality) reaches the worker with the full photo; the normal result is
-    kept for comparison in the views sheet."""
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", photo_detail=True, real3d_fill=False)
+    """Quality means maximum detail; the worker gets the full photo; the normal result is kept for comparison in
+    the views sheet. Auto and Fast do not use it."""
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality")
     assert rep["status"] == "succeeded", rep.get("error")
     req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
     assert req["detail"] is True and req["photo"].endswith("frame_00000.png") and req["moge_path"].endswith("model.pt")
@@ -177,12 +102,38 @@ def test_maximum_detail_for_photos(ctx, rtx4080, photo):
     assert ex["detail"]["splats"] == ex["gaussians"] and Path(rep["outputs"]["compare_normal_detail"]).exists()
     std = load_scene(Path(rep["outputs"]["compare_normal_detail"]))
     assert ex["gaussians"] == 2 * len(std)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="quality", real3d_fill=False)
-    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
-    assert req["detail"] is True                                   # Quality: always maximum detail
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto", real3d_fill=False)
-    req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
-    assert req["detail"] is False and "compare_normal_detail" not in rep["outputs"]
+    for mode in ("auto", "fast"):
+        job, rep, _ = run_job(ctx, rtx4080, photo, mode=mode)
+        req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+        assert req["detail"] is False and "compare_normal_detail" not in rep["outputs"]
+
+
+def test_photo_modes_do_different_things(ctx, rtx4080, photo):
+    """rc9 (owner: hardly any difference between Fast, Auto and Quality for photos): each mode now runs a
+    different plan (backends/locked.PHOTO_PLANS) - Fast skips the slow steps, Quality adds the most."""
+    from conftest import install_fake_model
+
+    for mid in ("depth-pro", "sapiens2-seg-0.4b", "sapiens2-pointmap-1b", "sapiens2-normal-1b", "moge-3-vitg"):
+        install_fake_model(ctx.models, mid)
+    seen = {}
+    for mode in ("fast", "auto", "quality"):
+        job, rep, _ = run_job(ctx, rtx4080, photo, mode=mode)
+        assert rep["status"] == "succeeded", rep.get("error")
+        geo = json.loads((job.dir / "worker" / "fake_moge_worker_request.json").read_text())
+        req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
+        fit = job.dir / "locked" / "fake_refine_request.json"
+        seen[mode] = {"giant": "moge-3-vitg" in geo["model_path"], "passes": geo["precision"]["passes"],
+                      "depth_pro": bool(geo["precision"]["depth_pro"]), "normals": req["normals"],
+                      "people_normals": bool(req["human_normal"]), "detail": req["detail"], "compare": req["plain"],
+                      "fit": json.loads(fit.read_text()) if fit.exists() else None,
+                      "mode": rep["backend"]["extra"]["mode"], "estimate": rep["estimate"]["seconds"]}
+    f, a, q = seen["fast"], seen["auto"], seen["quality"]
+    assert not any((f["giant"], f["passes"], f["depth_pro"], f["normals"], f["people_normals"], f["detail"],
+                    f["compare"])) and f["fit"] is None
+    assert all((a["giant"], a["passes"], a["depth_pro"], a["normals"], a["people_normals"])) and not a["detail"]
+    assert a["fit"]["iters"] == 300 and a["fit"]["max_side"] == 2048
+    assert q["detail"] and q["giant"] and q["fit"]["iters"] == 600 and q["fit"]["max_side"] == 2560
+    assert f["estimate"] < a["estimate"] < q["estimate"] and [seen[m]["mode"] for m in seen] == list(seen)
 
 
 def test_precision_for_photos(ctx, rtx4080, photo, monkeypatch):
@@ -192,7 +143,7 @@ def test_precision_for_photos(ctx, rtx4080, photo, monkeypatch):
 
     for mid in ("depth-pro", "sapiens2-seg-0.4b", "sapiens2-pointmap-1b", "sapiens2-normal-1b", "moge-3-vitg"):
         install_fake_model(ctx.models, mid)
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", real3d_fill=False)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto")
     assert rep["status"] == "succeeded", rep.get("error")
     geo = json.loads((job.dir / "worker" / "fake_moge_worker_request.json").read_text())
     assert geo["precision"]["passes"] and geo["precision"]["depth_pro"].endswith("depth_pro.pt")
@@ -210,13 +161,13 @@ def test_precision_for_photos(ctx, rtx4080, photo, monkeypatch):
     assert "Depth Pro" in rep["coverage"]["note"]
     # an EXIF lens both depth models disagree with is replaced, and said so
     monkeypatch.setenv("FAKE_LENS_OFF", "1")
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", real3d_fill=False)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast")
     assert any("lens" in w and "disagrees" in w for w in rep["warnings"])
     # without the optional models the precision path still runs on MoGe alone
     for mid in ("depth-pro", "sapiens2-normal-1b", "moge-3-vitg"):
         ctx.models.delete(mid)
     monkeypatch.delenv("FAKE_LENS_OFF")
-    job, rep, _ = run_job(ctx, rtx4080, photo, mode="fast", real3d_fill=False)
+    job, rep, _ = run_job(ctx, rtx4080, photo, mode="auto")
     assert rep["status"] == "succeeded"
     geo = json.loads((job.dir / "worker" / "fake_moge_worker_request.json").read_text())
     req = json.loads((job.dir / "locked" / "fake_sharp_depth_request.json").read_text())
@@ -283,8 +234,9 @@ def test_job_state_is_final_only_after_report_is_written(ctx, rtx4080, photo, mo
 
 
 def test_old_options_are_ignored():
-    o = JobOptions.from_dict({"mode": "fast", "vr180": True, "layouts": ["sbs"], "ipd_mm": 60})
-    assert o.mode == "fast" and o.ipd_mm == 60 and not hasattr(o, "vr180")
+    o = JobOptions.from_dict({"mode": "fast", "vr180": True, "layouts": ["sbs"], "ipd_mm": 60,
+                              "real3d_fill": True, "photo_detail": True})
+    assert o.mode == "fast" and o.ipd_mm == 60 and not hasattr(o, "vr180") and not hasattr(o, "real3d_fill")
 
 
 # ------------------------------------------------------------------ videos: splat videos

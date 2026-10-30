@@ -197,30 +197,3 @@ jobs:
           name: integration-render
           path: D:\ci-out\*
           if-no-files-found: warn
-
-  integration-generative:
-    if: github.event_name == 'workflow_dispatch' && inputs.integration
-    runs-on: windows-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Bootstrap and build
-        shell: pwsh
-        run: |
-          ./scripts/bootstrap.ps1
-          ./scripts/build.ps1
-      - name: AI painter runtime (install and import smoke test)
-        shell: pwsh
-        env:
-          TWOD2VR_HOME: D:\2d2vr-home
-        run: .venv\Scripts\python.exe scripts\ci_integration.py --app dist\2D2VR\2d2vr-cli.exe --runtime gen-cu128 --out D:\ci-out
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-generative
-          path: D:\ci-out\*
-          if-no-files-found: warn

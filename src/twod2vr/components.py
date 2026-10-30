@@ -26,8 +26,8 @@ COMPONENTS: list[Component] = [
     Component("engine-photo", "Real 3D engine", "runtime", "photo-cu128",
               "Makes the 3D of photos and splat videos (PyTorch + CUDA, installed privately for 2D2VR).", True),
     Component("engine-render", "Real 3D renderer", "runtime", "render-cu124",
-              "Draws the splat from moved positions on the GPU (gsplat, ready-built for CUDA): needed by the AI fill "
-              "of what a photo hides and by the fit of the splat to the photo. About 3 GB.", True),
+              "Draws the splat on the GPU (gsplat, ready-built for CUDA): the fit of each photo's splat to the "
+              "photo (Auto and Quality) and the views sheet. About 3 GB.", True),
     Component("model-sharp", "Apple SHARP — the 3D Gaussians of every photo and frame (research only)", "model",
               "sharp", "Feed-forward 3D Gaussians from one picture, aligned to the measured depth. Apple research "
               "licence: non-commercial.", True, ("engine-photo",)),
@@ -35,11 +35,12 @@ COMPONENTS: list[Component] = [
               "Metric depth and field of view of every photo and video frame (MIT).", True,
               ("engine-photo", "model-sharp", "model-face", "model-sapiens-pointmap")),
     Component("model-moge3-giant", "MoGe-3 Giant — the most accurate depth for photos", "model", "moge-3-vitg",
-              "MoGe-3 with a 4x bigger network (MIT, 5 GB): photos use it instead of the Large model when it is "
-              "installed (splat videos keep the Large one, for speed).", True, ("engine-photo", "model-moge3")),
+              "MoGe-3 with a 4x bigger network (MIT, 5 GB): photos in Auto and Quality use it instead of the "
+              "Large model (Fast and splat videos keep the Large one, for speed).", True, ("engine-photo", "model-moge3")),
     Component("model-depth-pro", "Apple Depth Pro — a second measured depth for photos (research only)", "model",
               "depth-pro", "A second, independent metric depth with the sharpest object edges and its own lens "
-              "estimate, joined to MoGe-3 (Apple research licence: non-commercial, 1.9 GB).", True,
+              "estimate, joined to MoGe-3 for photos in Auto and Quality (Apple research licence: non-commercial, "
+              "1.9 GB).", True,
               ("engine-photo",)),
     Component("model-face", "YuNet face finder — real-world scale from the eyes", "model", "yunet-face",
               "Finds the eyes of the people so the scene is scaled to the eye distance you set (MIT, 0.2 MB, runs "
@@ -53,21 +54,8 @@ COMPONENTS: list[Component] = [
               "helps set the real-world scale. 6.5 GB.", True, ("engine-photo", "model-sapiens-seg")),
     Component("model-sapiens-normal", "Sapiens2 surface normals of people — their fine relief", "model",
               "sapiens2-normal-1b", "The slopes of people's surfaces from a model trained only on humans (Meta "
-              "Sapiens2): folds of clothes, fingers and the relief of a face, added to their 3D shape in photos. "
-              "6.2 GB.", True, ("engine-photo", "model-sapiens-seg")),
-    # ---------------------------------------------------------------- AI fill (photos)
-    Component("engine-gen", "AI painter engine", "runtime", "gen-cu128",
-              "Paints what a photo hides when you move your head (Real 3D fill).", True),
-    Component("model-qwen", "Qwen-Image-Edit-2511 — paints what the photo hides (Apache-2.0)", "model",
-              "qwen-image-edit-2511-q5", "Image model that fills the holes seen from moved positions, about 1 "
-              "megapixel. ~30 GB with its text encoder; needs ~32 GB of RAM. Photos only.", True,
-              ("engine-gen", "model-qwen-base", "model-qwen-lightning", "engine-photo", "engine-render", "model-sharp",
-               "model-moge3")),
-    Component("model-qwen-base", "Qwen-Image-Edit-2511 text encoder and VAE", "model",
-              "qwen-image-edit-2511-base", "Qwen2.5-VL-7B text/image encoder, VAE and configuration.", True,
-              ("engine-gen",)),
-    Component("model-qwen-lightning", "Qwen-Image-Edit Lightning LoRA (4 steps)", "model", "qwen-edit-2511-lightning",
-              "Makes each painting take 4 sampling steps instead of 40.", True, ("engine-gen",)),
+              "Sapiens2): folds of clothes, fingers and the relief of a face, added to their 3D shape in photos "
+              "(Auto and Quality). 6.2 GB.", True, ("engine-photo", "model-sapiens-seg")),
 ]
 
 

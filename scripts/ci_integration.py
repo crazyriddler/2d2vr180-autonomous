@@ -81,7 +81,7 @@ def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--app", required=True)
-    ap.add_argument("--runtime", required=True, choices=["photo-cu128", "render-cu124", "gen-cu128"])
+    ap.add_argument("--runtime", required=True, choices=["photo-cu128", "render-cu124"])
     ap.add_argument("--out", default="ci-out")
     a = ap.parse_args()
     out = Path(a.out).resolve()

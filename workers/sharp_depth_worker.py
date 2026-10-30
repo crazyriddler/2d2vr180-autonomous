@@ -18,15 +18,7 @@ rc58: people's shape from Sapiens2 (human_geometry.py) inside their outline, and
 calibrated - to the adult eye distance (ipd_target_m) when faces are found, else to the human model's
 distance of the people.
 
-Request (mode "fill", rc57): new content for the holes a moved camera sees, tied to the known geometry:
-  {"mode": "fill", "checkpoint": "...", "moge_path": ".../model.pt", "moge_version": "v3" | "v2",
-   "views": [{"image": "filled.png", "mask": "hole.png" (white = hole), "known": "known.npz" (depth: the
-              rendered depth of the scene, inf where it has nothing), "fx", "fy", "cx", "cy",
-              "out": "fill.ply"}], "ring_px": 12}
-For every view: MoGe's depth of the filled image is aligned (robust scale and shift) to the rendered depth
-in a ring around the holes - on the far side, the background the hole belongs to - and SHARP runs with the
-rendered depth where the scene exists and the aligned depth inside the holes. The app keeps only the
-splats that fall in the holes.
+2.0.0-rc9: the "fill" mode (new content for the holes of moved views) was removed with the AI fill.
 """
 
 import os
@@ -305,59 +297,6 @@ def snap_to_depth(g, depth, weight, torch, lo=0.6, hi=1.6, band=None, back=None)
     return means * kk, scales * kk, k
 
 
-def align_affine(z_src, z_ref, iters=4, keep=0.8):
-    """Robust (a, b) with a z_src + b ≈ z_ref (a > 0), trimmed least squares; scale only as a fallback."""
-    import numpy as np
-
-    x, y = np.asarray(z_src, np.float64), np.asarray(z_ref, np.float64)
-    if len(x) < 20:
-        return 1.0, 0.0
-    a, b = float(np.median(y / x)), 0.0
-    for _ in range(iters):
-        r = np.abs(a * x + b - y)
-        sel = r <= np.quantile(r, keep)
-        A = np.stack([x[sel], np.ones(int(sel.sum()))], 1)
-        a2, b2 = np.linalg.lstsq(A, y[sel], rcond=None)[0]
-        if a2 <= 0:
-            return float(np.median(y / x)), 0.0
-        a, b = float(a2), float(b2)
-    return a, b
-
-
-def dilate(mask, r):
-    """Binary dilation by r pixels (square neighbourhood), numpy only."""
-    import numpy as np
-
-    m = np.asarray(mask, bool)
-    for _ in range(int(r)):
-        p = np.pad(m, 1)
-        m = p[1:-1, 1:-1] | p[:-2, 1:-1] | p[2:, 1:-1] | p[1:-1, :-2] | p[1:-1, 2:]
-        m = m | p[:-2, :-2] | p[:-2, 2:] | p[2:, :-2] | p[2:, 2:]
-    return m
-
-
-def hole_depth(known, mono, hole, mono_ok, ring_px=12):
-    """Composite depth for a filled view: the known (rendered) depth outside the holes, the monocular depth
-    aligned to the known one's far side around the holes inside them. Returns (depth, valid, stats)."""
-    import numpy as np
-
-    known_ok = np.isfinite(known) & (known > 0)
-    ring = dilate(hole, ring_px) & ~hole & known_ok & mono_ok
-    stats = {"hole_fraction": round(float(hole.mean()), 5), "ring_pixels": int(ring.sum())}
-    if ring.sum() >= 20:
-        far = ring & (known >= np.median(known[ring]))      # the background the hole belongs to
-        use = far if far.sum() >= 20 else ring
-        a, b = align_affine(mono[use], known[use])
-    else:     # no known surroundings: the monocular depth at the scene's own scale
-        both = known_ok & mono_ok & ~hole
-        a, b = (float(np.median(known[both] / mono[both])), 0.0) if both.sum() >= 20 else (1.0, 0.0)
-    filled = a * mono + b
-    depth = np.where(hole, filled, known)
-    valid = np.where(hole, mono_ok & (filled > 0), known_ok)
-    stats.update(scale=round(a, 5), shift=round(b, 5))
-    return depth, valid, stats
-
-
 def load_moge(path, version, device, torch):
     if version == "v3":
         os.environ.setdefault("FLEX_GEMM_AUTOTUNE_MODE", "never")
@@ -368,48 +307,6 @@ def load_moge(path, version, device, torch):
     else:
         from moge.model.v2 import MoGeModel
     return MoGeModel.from_pretrained(path).to(device).eval()
-
-
-def fill(req, torch, device):
-    import math
-
-    import numpy as np
-    from PIL import Image
-    from sharp.utils.gaussians import save_ply
-
-    version = req.get("moge_version", "v2")
-    progress(0.02, f"loading MoGe-{version[1:]} and SHARP")
-    moge = load_moge(req["moge_path"], version, device, torch)
-    predictor = load_predictor(req["checkpoint"], device, torch)
-    stats = []
-    views = req["views"]
-    for i, v in enumerate(views):
-        img = np.asarray(Image.open(v["image"]).convert("RGB"))
-        h, w = img.shape[:2]
-        hole = np.asarray(Image.open(v["mask"]).convert("L").resize((w, h), Image.NEAREST)) > 127
-        with np.load(v["known"]) as z:
-            known = z["depth"].astype(np.float64)
-        t = torch.from_numpy(img).to(device).float().div(255).permute(2, 0, 1)
-        kw = {"refine_steps": 3} if version == "v3" else {}
-        fov = math.degrees(2 * math.atan(w / 2 / float(v["fx"])))
-        with torch.no_grad():
-            out = moge.infer(t, resolution_level=9, fov_x=fov, use_fp16=device.type == "cuda", **kw)
-        mono = out["depth"].float().cpu().numpy().astype(np.float64)
-        mono_ok = np.isfinite(mono) & (mono > 0)
-        if "mask" in out:
-            mono_ok &= out["mask"].cpu().numpy().astype(bool)
-        mono = np.where(mono_ok, mono, 1.0)
-        depth, valid, st = hole_depth(known, mono, hole, mono_ok, int(req.get("ring_px", 12)))
-        g, info = predict(predictor, img, float(v["fx"]), device, torch, depth, valid)
-        save_ply(g, float(v["fx"]), (h, w), v["out"])
-        st.update(info)
-        stats.append(st)
-        log(f"fill view {i + 1}/{len(views)}: holes {st['hole_fraction']:.1%} of the picture, their depth tied to "
-            f"{st['ring_pixels']:,} known pixels around them (×{st['scale']:.3f} {st['shift']:+.3f} m)")
-        progress((i + 1) / len(views), f"new content for view {i + 1}/{len(views)}")
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
-    emit("result", outputs=[v["out"] for v in views], stats=stats, vram_peak_mib=vram_peak_mib(torch))
 
 
 def people_normals(req, img, parts, device, torch):
@@ -519,6 +416,7 @@ def detail_photo(req, predictor, img, depth, f_px, parts, device, torch, people_
     rep = {"work_size": [W, H], "tiles": n * n}
     fused = G
     precise = bool(req.get("precision"))
+    use_normals = precise and bool(req.get("normals", True))
     crop_normals = []
     if n > 1 and req.get("moge_path"):
         progress(0.45, f"fine relief: MoGe-3 on {n * n} parts of the photo at {W}x{H}")
@@ -541,7 +439,7 @@ def detail_photo(req, predictor, img, depth, f_px, parts, device, torch, people_
                 ok &= o["mask"].bool()
             d = torch.where(ok, d, torch.nan).cpu().numpy()
             crops.append((crop, dg.resize_nan(d, (y1 - y0, x1 - x0), torch)))
-            if precise and o.get("normal") is not None:
+            if use_normals and o.get("normal") is not None:
                 nm = o["normal"].float().cpu().numpy().astype(np.float64)
                 crop_normals.append((crop, pr.resize_normals(nm, (y1 - y0, x1 - x0), torch)))
             progress(0.45 + 0.1 * (k + 1) / len(boxes), f"fine relief: part {k + 1}/{len(boxes)}")
@@ -566,7 +464,9 @@ def detail_photo(req, predictor, img, depth, f_px, parts, device, torch, people_
                 aligned.append((crop, a))
         scene_n = pr.blend_normals((H, W), aligned) if aligned else None
         pn = pr.resize_normals(people_n, (H, W), torch) if people_n is not None else None
-        normals, rep["normals_fit"] = relief_normals(fused, fw, scene_n, pn, pw)
+        normals = None
+        if use_normals:
+            normals, rep["normals_fit"] = relief_normals(fused, fw, scene_n, pn, pw)
         fused, band, far, rep["precision"] = precise_depth(fused, work, fw, normals, torch, device)
     weight = dg.edge_weight(fused, torch)
     if band is not None:
@@ -622,9 +522,6 @@ def main(req):
     from sharp.utils.gaussians import save_ply
 
     device = torch.device("cuda" if env["cuda_available"] else "cpu")
-    if req.get("mode") == "fill":
-        fill(req, torch, device)
-        return
     out_dir = req["output_dir"]
     os.makedirs(out_dir, exist_ok=True)
     geo = np.load(req["geometry"])
@@ -676,24 +573,29 @@ def main(req):
 
     # ---- precision (rc7): fine relief from the surface normals, clean depth edges
     precise = bool(req.get("precision"))
+    use_normals = precise and bool(req.get("normals", True))       # rc9: off in the Fast mode
     prec, band, far, people_n, before_relief = {}, None, None, None, depth.copy()
     if precise:
-        if parts is not None:
+        if parts is not None and use_normals:
             try:
                 people_n = people_normals(req, img, parts, device, torch)
             except Exception as e:  # noqa: BLE001 - an improvement, not a requirement
                 log(f"people's normals unavailable ({type(e).__name__}: {str(e)[:200]})")
                 if device.type == "cuda":
                     torch.cuda.empty_cache()
-        scene_n = None
-        if "normal" in geo.files:
+        scene_n, normals = None, None
+        if "normal" in geo.files and use_normals:
             scene_n = geo["normal"].astype(np.float64)
             scene_n = np.where((np.linalg.norm(scene_n, axis=-1) > 0.5)[..., None], scene_n, np.nan)
-        progress(0.18, "fine relief from the surface normals; clean depth edges")
-        normals, prec["normals_fit"] = relief_normals(depth, f_px, scene_n, people_n,
-                                                      parts["weight"] if parts is not None else None)
+        progress(0.18, "fine relief from the surface normals; clean depth edges" if use_normals
+                 else "clean depth edges")
+        if use_normals:
+            normals, prec["normals_fit"] = relief_normals(depth, f_px, scene_n, people_n,
+                                                          parts["weight"] if parts is not None else None)
         depth, band, far, more = precise_depth(depth, img, f_px, normals, torch, device)
         prec.update(more)
+        if not use_normals:
+            prec["normals"] = {"used": False, "reason": "off in the Fast mode"}
         valid = np.isfinite(depth) & (depth > 0)
         nr = prec.get("normals") or {}
         if nr.get("used"):

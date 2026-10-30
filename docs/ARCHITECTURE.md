@@ -16,12 +16,10 @@
   2 Sapiens2: people's shape               workers/video_splat_worker.py, models loaded once:
   3 scale from the eyes (YuNet)              calibration: one lens + one scale per clip
   4 normals → fine relief, clean edges       per frame: MoGe-3 → Sapiens2 → scale →
-    SHARP with the depth, every splat placed,
-    fitted to the photo (refine.py)              depth stabilised to the previous frame →
-  5 AI painter (painter.py → Qwen)
-    paints the holes of moved views              SHARP with depth → fixed grid subset →
-  6 SHARP on the painted views,                  quantize + filters + deflate → frames/N.bin
-    added only in the holes (fusion.py)    assemble scene.splv (splv_codec.write_file)
+  5 SHARP with the depth, every splat         depth stabilised to the previous frame →
+    placed (maximum detail: on parts)           SHARP with depth → fixed grid subset →
+  6 fitted to the photo (refine_worker)        quantize + filters + deflate → frames/N.bin
+  steps per quality mode: PHOTO_PLANS     assemble scene.splv (splv_codec.write_file)
      │                                         │
      ▼                                         ▼
  scene.ply / scene.splat                  scene.splv (+ frame 0 as scene.ply / .splat)
@@ -38,10 +36,10 @@
 
 - The GUI never imports research code. Each upstream project is used by a worker script that runs inside an
   isolated runtime (`photo-cu128`: MoGe, SHARP, Depth Pro, Sapiens2; `render-cu124`: gsplat with its prebuilt CUDA
-  kernels - the renders of moved views and the fit to the photo; `gen-cu128`: Qwen-Image-Edit) and talks
+  kernels - the fit to the photo and the views sheet) and talks
   JSON lines on stdout (`workers/_protocol.py`). The app kills the worker's process tree on cancel.
-- Every splat carries its provenance: INFERRED (seen in the photo/frame, depth predicted) or GENERATIVE
-  (painted by AI). Painted parts are exported separately (`added_layer.ply`).
+- Every splat carries its provenance: INFERRED (seen in the photo/frame, depth predicted). Nothing is
+  AI-generated (the AI fill of what a photo hides was removed in 2.0.0-rc9).
 - Fail honestly: a backend that cannot run says why (selection → `rejected` in the report); a GPU out of
   memory in a splat video resumes from the last finished frame with lighter settings, and the report says so.
 - Memory is bounded everywhere: the video worker writes each frame to disk as soon as it is made; the file is
@@ -96,7 +94,7 @@ photos of 24 MP and up), with each part's normals turned into the photo's axes f
 |---|---|
 | `jobs.py` | the job pipeline and its report |
 | `selector.py` | photo → `photo_locked`, video → `splat_video`, with the reasons when they cannot run |
-| `backends/locked.py`, `backends/painter.py`, `fusion.py` | Real 3D for photos |
+| `backends/locked.py`, `fusion.py` | Real 3D for photos (quality modes: `PHOTO_PLANS`) |
 | `workers/precision.py`, `workers/refine.py`, `workers/detail_geometry.py` | precision and detail of photos |
 | `backends/video_splat.py`, `workers/video_splat_worker.py` | splat videos |
 | `splv.py`, `workers/splv_codec.py` | the splat video format |

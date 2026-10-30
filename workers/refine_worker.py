@@ -2,7 +2,7 @@
 CUDA kernels; 2.0.0-rc8: in the photo engine gsplat could not run without a CUDA toolkit).
 
 Request: {"ply": "locked.ply", "out": "locked_fitted.ply", "photo": "photo.png", "fx": 1245.2,
-          "size": [W, H], "iters": 300}
+          "size": [W, H], "iters": 300, "max_side": 2048}
 The photo is read at any size (EXIF orientation applied) and compared with the splat seen from its camera
 (principal point at the centre of ``size``, focal length ``fx`` in those pixels). Result: refine.refine_ply's
 stats; "out" is written only when the fit improved.
@@ -29,8 +29,18 @@ def main(req):
     with Image.open(req["photo"]) as im:
         img = np.asarray(ImageOps.exif_transpose(im).convert("RGB"))
     progress(0.05, "fitting the splat to the photo")
-    st = refine.refine_ply(req["ply"], req["out"], img, float(req["fx"]), req["size"], torch, torch.device("cuda"),
-                           iters=int(req.get("iters", 300)), log=log)
+    sides = [int(req.get("max_side") or 2048)]
+    sides += [s for s in (2048, 1536) if s < sides[0]]
+    for i, side in enumerate(sides):          # rc9: Quality fits at 2560 px; less when the GPU is short
+        try:
+            st = refine.refine_ply(req["ply"], req["out"], img, float(req["fx"]), req["size"], torch,
+                                   torch.device("cuda"), iters=int(req.get("iters", 300)), max_side=side, log=log)
+            break
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            if i == len(sides) - 1:
+                raise
+            log(f"the GPU ran out of memory fitting at {side} px; trying {sides[i + 1]} px")
     progress(1.0, "done")
     emit("result", outputs={"fitted": req["out"] if st.get("used") else None}, stats=st,
          vram_peak_mib=vram_peak_mib(torch))

@@ -49,7 +49,7 @@
     },
     {
       "id": "render-cu124",
-      "description": "Real 3D renderer: gsplat with prebuilt CUDA kernels (the AI fill's moved views, the fit to the photo, the views sheet)",
+      "description": "Real 3D renderer: gsplat with prebuilt CUDA kernels (the fit of the splat to the photo, the views sheet)",
       "python": "3.10",
       "torch_index": "https://download.pytorch.org/whl/cu124",
       "extra_index": "https://docs.gsplat.studio/whl/pt24cu124",
@@ -63,28 +63,6 @@
       "local_versions": {
         "torch": "+cu124",
         "gsplat": "+pt24cu124"
-      }
-    },
-    {
-      "id": "gen-cu128",
-      "description": "AI painter engine: Qwen-Image-Edit-2511 (paints what a photo hides in Real 3D)",
-      "python": "3.12",
-      "torch_index": "https://download.pytorch.org/whl/cu128",
-      "min_driver": "570.00",
-      "approx_size_gb": 6.0,
-      "status": "unverified: install and GPU smoke test not yet run on Windows/RTX 4080",
-      "archives_no_deps": [
-        {
-          "name": "videox-fun",
-          "url": "https://github.com/aigc-apps/VideoX-Fun/archive/4b7b6402a1e0f0406bd6801fb66c0a00bd922621.zip",
-          "copy_package": "videox_fun"
-        }
-      ],
-      "smoke_test": "import torch, diffusers, kornia, transformers, omegaconf, peft, gguf; from diffusers import QwenImageEditPlusPipeline, GGUFQuantizationConfig; print('cuda', torch.cuda.is_available())",
-      "lock": "locks/gen-cu128.txt",
-      "local_versions": {
-        "torch": "+cu128",
-        "torchvision": "+cu128"
       }
     }
   ]

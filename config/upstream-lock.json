@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "status": "resolved-2026-10-19",
+  "status": "resolved-2026-10-30",
   "policy": "Exact commits resolved with 'git ls-remote' and shallow clones on 2026-09-27. Inference has NOT been run for any backend yet: the reconnaissance sandbox had no GPU and its network policy blocked huggingface.co, ml-site.cdn-apple.com and download.pytorch.org. 'gpu_smoke_test' records that honestly.",
   "license_categories": [
     "reference-only",
@@ -39,7 +39,7 @@
       "entry_point": "sharp predict -i DIR -o DIR -c sharp_2572gikvuh.pt -> <stem>.ply (OpenCV convention, sRGB SH DC)",
       "model_url": "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt",
       "gpu_smoke_test": "not run",
-      "integration": "backend 'sharp' (Quick 3D); Real 3D 'the photo locked' (rc56, workers/sharp_depth_worker.py): RGBGaussianPredictor.forward(image, disparity_factor, depth=MoGe metric depth) - the released LearnedAlignment UNet aligns SHARP's depth to the measured one; the AI-views method (rc55) joins SHARP on the photo and 3 Qwen views (fusion.py); research profile only; user downloads weights after accepting the Apple license"
+      "integration": "Real 3D 'the photo locked' (rc56, workers/sharp_depth_worker.py): RGBGaussianPredictor.forward(image, disparity_factor, depth=measured metric depth) - the released LearnedAlignment UNet aligns SHARP's depth to the measured one; maximum detail runs it on parts of the photo with their real principal point; research profile only; user downloads weights after accepting the Apple license"
     },
     {
       "name": "sapiens2",
@@ -70,36 +70,6 @@
       "vram": "n/a",
       "gpu_smoke_test": "not run",
       "integration": "inside runtimes (SHARP dependency, recon3d training). The application's own preview/VR180 renderer is a numpy reference renderer."
-    },
-    {
-      "name": "videox-fun",
-      "url": "https://github.com/aigc-apps/VideoX-Fun",
-      "role": "backend",
-      "commit": "4b7b6402a1e0f0406bd6801fb66c0a00bd922621",
-      "commit_date": "2026-09-29",
-      "code_license": "Apache-2.0",
-      "model_license": "Apache-2.0 (alibaba-pai/Wan2.2-Fun-5B-Control-Camera)",
-      "category": "redistributable",
-      "windows": "pure PyTorch; Triton kernel imported at module level is stubbed (unused); SDPA attention",
-      "vram": "5B transformer bf16 ~10 GB + activations; model_cpu_offload, fp8 fallback",
-      "gpu_smoke_test": "not run",
-      "integration": "workers/wan_worker.py: camera-controlled image-to-video shots from the photo (CameraCtrl poses -> Plucker), frames reconstructed by the multi-view engine.",
-      "findings": "Stable Virtual Camera distorts people (documented upstream limitation, confirmed by the owner on RTX 4080); Wan 2.2 is trained on large amounts of real video including people."
-    },
-    {
-      "name": "qwen-image-edit",
-      "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2511",
-      "role": "backend",
-      "commit": "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9",
-      "commit_date": "2026-10-02",
-      "code_license": "Apache-2.0 (diffusers 0.37.1 QwenImageEditPlusPipeline)",
-      "model_license": "Apache-2.0 (Qwen/Qwen-Image-Edit-2511; unsloth GGUF Q5_K_M rev 0d33d9692b4b26212297240d87b0d4719aa4fd06; fal Multiple-Angles LoRA rev e3066224ab74263f4a5b6179cd1a3b0a15577e44; lightx2v Lightning LoRA rev d74eba145674fd7e31b949324e148e21e7118abd)",
-      "category": "redistributable",
-      "windows": "pure PyTorch via diffusers; GGUF dequantised on the fly; text encoder 4-bit (bitsandbytes Windows wheel) with bf16/offload fallback",
-      "vram": "Q5_K_M transformer 15 GB streamed block by block (group offload); text encoder 4-bit ~5.5 GB in a separate process",
-      "gpu_smoke_test": "not run",
-      "integration": "workers/qwen_views_worker.py: '<sks> [azimuth] [elevation] [distance]' prompts, one ~1 MP view per camera position from the photo, 4 Lightning steps; views assembled by sharp fusion.",
-      "findings": "Owner asked for fewer, more widely spaced views (45/90/135/180/270, overhead, below) and an image model with higher per-view resolution than Wan video frames."
     },
     {
       "name": "splatv",

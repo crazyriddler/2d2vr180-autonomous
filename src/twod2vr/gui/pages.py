@@ -19,12 +19,23 @@ from ..media import IMAGE_EXTS, VIDEO_EXTS
 
 MODE_HELP = {
     "auto": "balanced (recommended)",
-    "quality": "more detail; videos: more splats per frame, slower",
-    "fast": "quicker; videos: fewer splats per frame",
+    "quality": "most detail up close, slowest",
+    "fast": "quickest",
+}
+# what each mode does (backends/locked.PHOTO_PLANS, backends/video_splat.PLANS), shown under the choice
+MODE_DETAIL = {
+    "fast": "<b>Photos</b> (~45 s): MoGe-3 depth once, people's own 3D shape, clean depth edges. "
+            "<b>Videos</b>: ~330 000 splats per frame.",
+    "auto": "<b>Photos</b> (~2 min): + MoGe-3 Giant three times joined to Apple Depth Pro (truer shape), fine relief "
+            "from surface normals (faces, folds of clothes), and the splat fitted to the photo (sharper texture). "
+            "<b>Videos</b>: ~470 000 splats per frame.",
+    "quality": "<b>Photos</b> (~5 min): + maximum detail - the photo worked at 3072-4608 px, the depth and SHARP "
+               "on parts of it: 2.5-6x the splats, the most small geometry up close (heavier in VR) - and a longer, "
+               "finer fit. <b>Videos</b>: ~740 000 splats per frame, slower.",
 }
 PROVENANCE_HELP = ("<b>Observed</b>: reconstructed from several views. <b>Inferred</b>: seen in the input but its "
-                   "depth is predicted by a network. <b>Generative</b>: painted by AI where the photo shows nothing "
-                   "(Real 3D fill). <b>Unknown</b>: the backend could not say.")
+                   "depth is predicted by a network. <b>Generative</b>: invented by AI where the input shows nothing "
+                   "(not used by Real 3D). <b>Unknown</b>: the backend could not say.")
 VIDEO_LENGTHS = (("The whole video", 0.0), ("5 seconds", 5.0), ("10 seconds", 10.0), ("20 seconds", 20.0),
                  ("30 seconds", 30.0), ("1 minute", 60.0), ("2 minutes", 120.0), ("5 minutes", 300.0))
 VIDEO_RATES = (("The video's own, up to 24 (recommended)", 0.0), ("12 per second", 12.0), ("15 per second", 15.0),
@@ -183,6 +194,8 @@ class CreatePage(QWidget):
             self.quality.addItem(f"{m.capitalize()} — {MODE_HELP[m]}", m)
         self.quality.setCurrentIndex(max(self.quality.findData(win.settings.mode), 0))
         f.addRow("Quality", self.quality)
+        self.mode_note = note(MODE_DETAIL.get(win.settings.mode, MODE_DETAIL["auto"]))
+        f.addRow("", self.mode_note)
         self.ipd = QDoubleSpinBox()
         self.ipd.setRange(45.0, 80.0)
         self.ipd.setDecimals(1)
@@ -193,20 +206,6 @@ class CreatePage(QWidget):
                             "scaled to be this far apart (adults 56-70 mm, average 63). If people look too big in VR, "
                             "lower it; too small, raise it. In VR you can also resize with the A/B buttons.")
         f.addRow("Eye distance (IPD)", self.ipd)
-        self.real3d_fill = QCheckBox("Photos: AI paints what the photo hides")
-        self.real3d_fill.setChecked(win.settings.real3d_fill)
-        self.real3d_fill.setToolTip("The photo's splat is looked at from a little to each side; what the photo never "
-                                    "saw (behind edges) is painted by Qwen-Image-Edit and added at a depth tied to the "
-                                    "photo's. Shown as 'generative'. Not used for videos (too slow per frame).")
-        f.addRow("", self.real3d_fill)
-        self.photo_detail = QCheckBox("Photos: maximum detail (slower, more splats)")
-        self.photo_detail.setChecked(win.settings.photo_detail)
-        self.photo_detail.setToolTip("More of the photo's small geometry: the photo at up to 3072 px, fine relief "
-                                     "from the depth model on parts of it, SHARP on parts of it, and everything the "
-                                     "photo sees placed at that depth. About 2-3x the detail up close, a minute "
-                                     "more, and several million splats (heavier in VR). Always on in Quality.")
-        self.photo_detail.setEnabled(win.settings.mode != "quality")
-        f.addRow("", self.photo_detail)
         opts.addWidget(box)
 
         vbox = QGroupBox("Videos → splat video")
@@ -238,8 +237,6 @@ class CreatePage(QWidget):
             w.currentIndexChanged.connect(self._save_opts)
         for w in (self.ipd, self.video_start):
             w.valueChanged.connect(self._save_opts)
-        self.real3d_fill.toggled.connect(self._save_opts)
-        self.photo_detail.toggled.connect(self._save_opts)
         top.addLayout(opts, 2)
         v.addLayout(top)
 
@@ -303,9 +300,7 @@ class CreatePage(QWidget):
     def _save_opts(self, *a):
         s = self.win.settings
         s.mode = self.mode()
-        s.real3d_fill = self.real3d_fill.isChecked()
-        s.photo_detail = self.photo_detail.isChecked()
-        self.photo_detail.setEnabled(self.mode() != "quality")      # Quality always uses maximum detail
+        self.mode_note.setText(MODE_DETAIL.get(s.mode, MODE_DETAIL["auto"]))
         s.ipd_mm = float(self.ipd.value())
         s.video_start_s = float(self.video_start.value())
         s.video_seconds = float(self.video_len.currentData())
@@ -512,9 +507,14 @@ class ResultsPage(QWidget):
         if rep.get("error"):
             html.append(f"<p style='color:#e66'><b>Error</b> [{rep['error'].get('code')}]: "
                         f"{rep['error'].get('message')}</p>")
-        fs = ((rep.get("backend") or {}).get("extra") or {}).get("fill_status")
-        if fs:
-            html.append(f"<p><b>AI fill of what the photo hides</b>: {fs}</p>")
+        ex = (rep.get("backend") or {}).get("extra") or {}
+        if ex.get("assembly") == "locked":            # a photo: what its quality mode did
+            mode = str(ex.get("mode") or (rep.get("options") or {}).get("mode") or "auto").capitalize()
+            fit = ((ex.get("precision") or {}).get("photo") or {}).get("fit") or {}
+            line = f"<p><b>Quality</b>: {mode} · {ex.get('gaussians', 0):,} splats"
+            if fit.get("used"):
+                line += f" · fitted to the photo ({fit.get('psnr_before', 0):.1f} → {fit.get('psnr_after', 0):.1f} dB)"
+            html.append(line + "</p>")
         if out.get("splv"):
             html.append(f"<p><b>Splat video</b>: {out.get('frames')} frames at {out.get('fps')} fps, "
                         f"{out.get('splats_per_frame') or 0:,} splats per frame"

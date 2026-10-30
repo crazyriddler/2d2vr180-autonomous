@@ -4,7 +4,7 @@ A Windows desktop application that turns, on your own NVIDIA GPU (target: RTX 40
 
 - **a photo into a Real 3D Gaussian splat**: Apple SHARP's 3D Gaussians aligned to the photo's measured
   metric depth (MoGe-3) at its real lens, people with their real 3D shape (Sapiens2), the real-world size set
-  from their eyes, and what the photo hides painted by AI (Qwen-Image-Edit) and added only where it is missing;
+  from their eyes; three quality modes (Fast, Auto, Quality) that each add visible precision;
 - **a video into a splat video** (`.splv`): every frame made the same way, one file with the sound, played
   smoothly in the app's 3D viewer and in the browser VR player (WebXR), where the controller buttons resize
   the scene.
@@ -37,7 +37,7 @@ Build instructions: `docs/BUILDING.md`. Architecture: `docs/ARCHITECTURE.md`.
 | Path | Content |
 |---|---|
 | `src/twod2vr/` | application: hardware probe, media, job system, selector, scene I/O, splat video I/O, model & runtime managers, VR player server, CLI, GUI |
-| `src/twod2vr/backends/` | `photo_locked` (Real 3D for photos, with the AI painter in `painter.py`) and `splat_video` (videos) |
+| `src/twod2vr/backends/` | `photo_locked` (Real 3D for photos, its quality plans in `PHOTO_PLANS`) and `splat_video` (videos) |
 | `workers/` | scripts executed inside the isolated GPU runtimes (JSON-lines protocol); `splv_codec.py` is the splat video format |
 | `assets/webxr/` | the browser player (`player.html`, `player.js`) for `.splat` and `.splv` |
 | `config/` | upstream commit lock, model manifest, runtime manifest, bundled-tool lock |

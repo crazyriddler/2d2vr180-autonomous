@@ -249,3 +249,24 @@ def test_maximum_detail_with_precision(stubs, tmp_path, capsys):
     assert det["precision"]["normals"]["used"] and det["normals_fit"]["scene"]["ok"]
     assert res["outputs"]["locked"].endswith("locked_detail.ply") and res["outputs"]["standard"].endswith("locked.ply")
     assert res["size"] == [2200, 1600]
+
+
+def test_the_fast_plan_skips_the_relief_from_normals(stubs, tmp_path, capsys):
+    """rc9 Fast: one MoGe pass, no normals; clean edges and every splat placed still run."""
+    import moge_worker as mw
+    import sharp_depth_worker as sd
+
+    src = photo(tmp_path / "p.png", 480, 360)
+    mw.main({"model_path": "m.pt", "version": "v3", "max_side": 480, "allow_cpu": True,
+             "images": [{"path": str(src), "out": str(tmp_path / "photo.npz"), "fov_x": 60.0}],
+             "precision": {"passes": False, "depth_pro": None, "lens_check": True}})
+    rep = [e for e in events(capsys.readouterr().out) if e["event"] == "result"][0]["precision"][0]
+    assert rep["passes"] == 1
+    torch.save({}, tmp_path / "sharp.pt")
+    sd.main({"mode": "photo", "checkpoint": str(tmp_path / "sharp.pt"), "geometry": str(tmp_path / "photo.npz"),
+             "output_dir": str(tmp_path / "out"), "plain": False, "allow_cpu": True, "precision": True,
+             "normals": False, "photo": str(src)})
+    res = [e for e in events(capsys.readouterr().out) if e["event"] == "result"][0]
+    p = res["precision"]
+    assert p["normals"] == {"used": False, "reason": "off in the Fast mode"} and "normals_fit" not in p
+    assert p["edges"]["band_share"] > 0 and p["placed_share"] > 0.9 and "plain" not in res["outputs"]

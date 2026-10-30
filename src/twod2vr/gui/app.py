@@ -82,10 +82,9 @@ class WelcomeDialog(QDialog):
         body = QLabel(
             f"<p>{gpu}</p><p>Turn photos into 3D Gaussian splats and videos into splat videos you can walk "
             "into in VR — entirely on this computer. Nothing you process ever leaves it.</p><p>Before the first "
-            "run, the app downloads its two AI engines (about 5–7 GB each) and the recommended models (about "
-            "45 GB, most of it the Qwen-Image-Edit model that paints what a photo hides) from their original "
-            "publishers — plan for ~60 GB of free disk space. You will see each model's licence before it is "
-            "downloaded.</p>")
+            "run, the app downloads its engine and renderer (about 9 GB) and the recommended models (about "
+            "25 GB) from their original publishers — plan for ~40 GB of free disk space. You will see each "
+            "model's licence before it is downloaded.</p>")
         body.setWordWrap(True)
         body.setTextFormat(Qt.RichText)
         v.addWidget(body)

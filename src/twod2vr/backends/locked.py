@@ -1,34 +1,15 @@
-"""Real 3D v3 (rc56): the photo locked.
+"""Real 3D (rc56): the photo locked - the photo's geometry rules everything it shows.
 
-Research (docs/research/single-image-splat.md, "Real 3D v3") found the common thread of every Real 3D
-failure so far: AI views are drawn independently and are not 3D-consistent, and every view got its own
-monocular depth. Nothing reconstructs one rigid 3D from that. The practice that works (3D Photo Inpainting,
-WonderWorld, GaussVideoDreamer, GEN3C/Lyra) is the opposite: the photo's geometry rules everything it shows,
-and new content only fills holes, with its depth tied to the known one.
-
-This backend builds that foundation:
-  1. the photo's lens (EXIF, else MoGe's field of view) and metric geometry (MoGe-3, else MoGe-2);
-  2. a real-world scale check from the eyes of the people in the photo (YuNet; adults' eyes are 56-70 mm
-     apart): the depth is rescaled only when it is clearly outside that range;
+  1. the photo's lens (EXIF, checked against the depth models' own estimates) and metric geometry (MoGe-3);
+  2. people's own 3D shape (Sapiens2) and the real-world scale from their eyes (YuNet);
   3. Apple SHARP *with that depth injected* (workers/sharp_depth_worker.py): SHARP's sharp splats and its
-     second layer behind edges, with MoGe's geometry and scale instead of SHARP's monocular guess;
-  4. diagnostics: SHARP alone is exported next to it, and a sheet of views (head 15 cm to each side and up,
-     15° around the subject) compares the two.
-2.0.0-rc7 "precision" (workers/precision.py, refine.py): the EXIF lens checked against MoGe-3's and Depth
-Pro's own estimates; MoGe-3 several times (photo, mirror image, coarser level) joined to Apple Depth Pro; fine
-relief from surface normals (MoGe-3's; Sapiens2's for people); depth edges sent to one side; every splat the
-photo sees placed at that depth; the splat fitted to the photo from its own camera (colours, opacities,
-sizes); relief.png shows each step. MoGe-3 Giant replaces the Large model for photos when installed.
-Then (rc57) the holes are filled, consistent with the photo by construction:
-  5. the locked splat is rendered from moved cameras (head 15 cm to each side, 15° around the subject; Auto and
-     Quality go further). A hole is every pixel showing nothing the photo saw: empty, or SHARP's own guesses
-     behind the photo's surfaces (fusion.unseen_by_photo);
-  6. only the holes are painted (Qwen-Image-Edit with the holes blacked out, else LaMa); everything visible
-     stays exactly the render;
-  7. SHARP runs on each filled view with the rendered depth where the scene exists and MoGe's depth of the
-     new pixels tied to the background around each hole (sharp_depth_worker "fill");
-  8. only the splats in the holes are added (GENERATIVE), never on or in front of what the photo shows; the
-     photo's own guesses where new content lands are replaced (fusion.add_fills).
+     second layer behind edges, with the measured geometry and scale instead of SHARP's monocular guess;
+     every splat the photo sees placed at that depth, depth edges sent to one side;
+  4. the splat fitted to the photo from its own camera (workers/refine_worker.py, renderer runtime);
+  5. diagnostics: views_sheet.png (moved positions), relief.png, people_shape.png, SHARP alone.
+What each quality mode adds is PHOTO_PLANS (2.0.0-rc9: the modes used to differ in almost nothing for photos;
+the AI fill of what the photo hides was removed at the owner's request: it did not work well enough for the
+space its models took).
 """
 
 from __future__ import annotations
@@ -39,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..scene import GENERATIVE, INFERRED, Camera, GaussianScene, read_gaussian_ply, write_gaussian_ply, write_splat
+from ..scene import INFERRED, Camera, GaussianScene, read_gaussian_ply, write_gaussian_ply, write_splat
 from .base import (SCENE_STATIC, SINGLE_VIEW, Availability, Backend, BackendContext, BackendError, BackendResult,
                    Estimate, JobInput, run_worker)
 
@@ -50,30 +31,33 @@ HUMAN_POINTMAP = "sapiens2-pointmap-1b"
 HUMAN_NORMAL = "sapiens2-normal-1b"        # rc7: people's fine relief
 DEPTH_PRO = "depth-pro"                    # rc7: a second measured depth (sharp edges, lens check)
 RENDER_RUNTIME = "render-cu124"            # rc8: gsplat with prebuilt CUDA kernels (the photo engine has none)
-# "move": head translation (m); "orbit": (azimuth, elevation) degrees around the subject; "turn": (yaw, pitch)
-# degrees looking around from the camera's place (positive: right, up) - what is outside the photo's frame.
-_TURNS = [("look 40° left", "turn", (-40, 0)), ("look 40° right", "turn", (40, 0)),
-          ("look 25° up", "turn", (0, 25)), ("look 25° down", "turn", (0, -25))]
+# What each quality mode does for a photo. Each step up costs time for something visible:
+#   Fast    - MoGe-3 Large once, people's shape, clean edges, every splat placed: the 3D in well under a minute
+#   Auto    - + MoGe-3 Giant (when installed) three times, Apple Depth Pro joined, fine relief from surface
+#             normals (MoGe-3, Sapiens2 for people), the splat fitted to the photo: truer shape, sharper texture
+#   Quality - + maximum detail (the photo at 3072-4608 px, MoGe-3 and SHARP on parts of it: 2.5-6x the
+#             splats) and a longer, finer fit: the most small geometry and texture up close
+PHOTO_PLANS = {
+    "fast": {"moge": "moge-3-vitl", "passes": False, "depth_pro": False, "normals": False, "detail": False,
+             "fit_iters": 0, "fit_side": 0, "compare": False, "seconds": 45},
+    "auto": {"moge": None, "passes": True, "depth_pro": True, "normals": True, "detail": False,
+             "fit_iters": 300, "fit_side": 2048, "compare": True, "seconds": 120},
+    "quality": {"moge": None, "passes": True, "depth_pro": True, "normals": True, "detail": True,
+                "fit_iters": 600, "fit_side": 2560, "compare": True, "seconds": 330},
+}
+# moved positions of views_sheet.png: "move" = head translation (m), "orbit" = (azimuth, elevation) degrees
+# around the subject
 SHEET_VIEWS = [("head 15 cm left", "move", (-0.15, 0, 0)), ("head 15 cm right", "move", (0.15, 0, 0)),
-               ("head 10 cm up", "move", (0, -0.10, 0)), ("15° left", "orbit", (-15, 0)), ("15° right", "orbit", (15, 0)),
-               _TURNS[0], _TURNS[1]]
-# Moved cameras whose holes are filled, small moves first (an earlier view's content wins where they overlap);
-# then (2.0.0-rc5) looking around from the camera's place, so in VR there is scene beyond the photo's frame.
-_FAST = [("head 15 cm left", "move", (-0.15, 0, 0)), ("head 15 cm right", "move", (0.15, 0, 0)),
-         ("15° left", "orbit", (-15, 0)), ("15° right", "orbit", (15, 0))]
-_AUTO = _FAST + [("head 10 cm up", "move", (0, -0.10, 0)), ("30° left", "orbit", (-30, 0)), ("30° right", "orbit", (30, 0))]
-FILL_VIEWS = {"fast": _FAST + _TURNS[:2], "auto": _AUTO + _TURNS,
-              "quality": _AUTO + [("head 10 cm down", "move", (0, 0.10, 0)), ("15° from above", "orbit", (0, 15)),
-                                  ("head 30 cm left", "move", (-0.30, 0, 0)), ("head 30 cm right", "move", (0.30, 0, 0))]
-              + _TURNS}
-FILL_PROMPT = ("The pure black areas are missing parts of this picture. Fill them with what is hidden behind, "
-               "continuing the surrounding background, surfaces, texture and lighting seamlessly. Do not add new "
-               "objects or people. Keep everything else exactly the same.")
-MIN_HOLE = 0.002            # views with less of their picture in holes are skipped
+               ("head 10 cm up", "move", (0, -0.10, 0)), ("15° left", "orbit", (-15, 0)), ("15° right", "orbit", (15, 0))]
 
 
-def moge_model(ctx) -> str | None:
-    for m in MOGE_MODELS:
+def photo_plan(mode: str) -> dict:
+    return PHOTO_PLANS.get(mode, PHOTO_PLANS["auto"])
+
+
+def moge_model(ctx, prefer: str | None = None) -> str | None:
+    """The MoGe model to use: ``prefer`` when installed, else the best installed one."""
+    for m in ((prefer,) if prefer else ()) + MOGE_MODELS:
         if m in ctx.models.entries and ctx.models.is_installed(m):
             return m
     return None
@@ -96,20 +80,11 @@ def sheet_cameras(cam: Camera, pivot: float, side: int = 480, views=None, photo:
         c2w = np.eye(4)
         if kind == "move":
             c2w[:3, 3] = v
-        elif kind == "turn":                 # OpenCV axes: yaw about y (right +), pitch about x (up +)
-            yw, pt = np.radians(v[0]), np.radians(v[1])
-            ry = np.array([[np.cos(yw), 0, np.sin(yw)], [0, 1, 0], [-np.sin(yw), 0, np.cos(yw)]])
-            rx = np.array([[1, 0, 0], [0, np.cos(pt), -np.sin(pt)], [0, np.sin(pt), np.cos(pt)]])
-            c2w[:3, :3] = ry @ rx
         else:
             _, R, t = orbit_pose(v[0], v[1], pivot)
             c2w[:3, :3], c2w[:3, 3] = R, t
         out.append((label, {**base, "c2w": c2w.tolist()}))
     return out
-
-
-def view_camera(c: dict) -> Camera:
-    return Camera(int(c["width"]), int(c["height"]), c["fx"], c["fy"], c["cx"], c["cy"], np.array(c["c2w"]))
 
 
 def grid(rows: list[tuple[str, list]], col_labels: list[str], out_png: Path) -> Path:
@@ -196,7 +171,6 @@ class LockedPhotoBackend(Backend):
     worker_script = "sharp_depth_worker.py"
     render_script = "render_worker.py"
     refine_script = "refine_worker.py"
-    painter_script = None             # default: backends/painter.SCRIPT (tests swap in a fake)
     description = ("One photo → Apple SHARP's Gaussians aligned to the photo's measured metric depth (MoGe-3) at "
                    "its real lens, with a scale check from the people's eyes.")
 
@@ -215,7 +189,9 @@ class LockedPhotoBackend(Backend):
         return av
 
     def estimate(self, inp: JobInput, hw, options: dict) -> Estimate:
-        return Estimate(seconds=60, vram_gb=8, disk_gb=0.3, notes=["estimate; not yet benchmarked on RTX 4080"])
+        plan = photo_plan(options.get("mode", "auto"))
+        return Estimate(seconds=plan["seconds"], vram_gb=12 if plan["detail"] else 8,
+                        disk_gb=1.0 if plan["detail"] else 0.3, notes=["estimate on an RTX 4080 for a 24 MP photo"])
 
     def run(self, inp: JobInput, ctx: BackendContext, options: dict, progress, cancel) -> BackendResult:
         log = options.get("log") or (lambda m: None)
@@ -235,8 +211,13 @@ class LockedPhotoBackend(Backend):
                 return str(next(iter(ctx.models.paths(mid).values())))
             return None
 
+        plan = photo_plan(options.get("mode", "auto"))
+        log("quality: " + {"fast": "Fast (MoGe-3 once, people, clean edges)",
+                           "quality": "Quality (Auto + maximum detail and a finer fit to the photo)"}.get(
+            options.get("mode"), "Auto (MoGe-3 x3 + Depth Pro, fine relief from normals, fit to the photo)"))
+
         # 1. the photo's lens and metric geometry (rc7 "precision": lens check, several passes, Depth Pro)
-        mg = moge_model(ctx)
+        mg = moge_model(ctx, plan["moge"])
         version = "v3" if mg.startswith("moge-3") else "v2"
         precise = bool(options.get("precision", True))
         item = {"path": str(ref), "out": str(work / "photo.npz")}
@@ -248,10 +229,10 @@ class LockedPhotoBackend(Backend):
                    "refine_steps": 3, "max_side": 1536, "fp16": True, "images": [item],
                    "allow_cpu": bool(getattr(ctx, "allow_cpu", False))}
         if precise:
-            dp = installed_file(DEPTH_PRO)
-            if not dp:
+            dp = installed_file(DEPTH_PRO) if plan["depth_pro"] else None
+            if plan["depth_pro"] and not dp:
                 log("a second measured depth needs Apple Depth Pro (Components); MoGe alone is used")
-            geo_req["precision"] = {"passes": True, "depth_pro": dp, "lens_check": True}
+            geo_req["precision"] = {"passes": plan["passes"], "depth_pro": dp, "lens_check": True}
         geo_out = run_worker(py, self.geometry_script, geo_req, inp.work_dir / "worker", progress, cancel, env=env,
                              log=log, progress_range=(0.0, 0.25), timeout_s=1800)
         used(mg)
@@ -264,15 +245,17 @@ class LockedPhotoBackend(Backend):
         if not (human_seg and human_pm):
             human_seg = human_pm = None
             log("people's own 3D shape needs Sapiens2 (Components); the scene's depth is used for them")
-        human_normal = installed_file(HUMAN_NORMAL) if precise and human_seg else None
+        normals = precise and plan["normals"]
+        human_normal = installed_file(HUMAN_NORMAL) if normals and human_seg else None
         ipd = float(options.get("ipd_mm") or 63.0)
-        detail = bool(options.get("detail"))
+        detail = bool(options.get("detail", plan["detail"]))
         if detail:
             log("maximum detail: the photo at up to 3072 px (4608 px from 24 MP), fine relief from MoGe-3 on parts "
                 "of it, SHARP on parts")
         out = run_worker(py, self.worker_script,
                          {"mode": "photo", "checkpoint": str(ctx.models.paths("sharp")["sharp_2572gikvuh.pt"]),
-                          "geometry": item["out"], "output_dir": str(work), "face_model": face, "plain": True,
+                          "geometry": item["out"], "output_dir": str(work), "face_model": face,
+                          "plain": plan["compare"], "normals": normals,
                           "ipd_target_m": ipd / 1000.0, "human_seg": human_seg, "human_pointmap": human_pm,
                           "detail": detail, "photo": str(ref), "moge_path": str(ctx.models.paths(mg)["model.pt"]),
                           "moge_version": version, "precision": precise, "refine": False,
@@ -281,8 +264,8 @@ class LockedPhotoBackend(Backend):
                          timeout_s=3600)
         used("sharp")
         res = out["result"]
-        if precise:                     # the splat fitted to the photo, in the renderer runtime (rc8)
-            fit = self._fit(ctx, inp, ref, res, work, progress, cancel, log)
+        if precise and plan["fit_iters"]:     # the splat fitted to the photo, in the renderer runtime (rc8)
+            fit = self._fit(ctx, inp, ref, res, work, progress, cancel, log, plan)
             if fit.get("used") and fit.get("ply"):
                 res["outputs"]["locked"] = fit.pop("ply")
             if isinstance(res.get("precision"), dict):
@@ -304,41 +287,16 @@ class LockedPhotoBackend(Backend):
             exp.mkdir(parents=True, exist_ok=True)
             shutil.copy2(res["outputs"]["relief"], exp / "relief.png")
             extra_people["relief"] = str(exp / "relief.png")
-        locked_ply = write_gaussian_ply(scene, work / "locked_scene.ply", include_provenance=True)
-        extra_files, fill_report, final = dict(extra_people), [], scene
+        extra_files = dict(extra_people)
         warnings = ["OBJ mesh is not available for SHARP output."]
         lens = (geo_prec or {}).get("lens") or {}
         if str(lens.get("from", "")).startswith("models (EXIF"):
             warnings.append("The photo's lens: " + lens.get("note", "the EXIF lens disagreed with the depth models"))
-
-        # 5-8. fill the holes of moved views
-        fill_status = "off (option turned off)"
-        if options.get("real3d_fill", True):
-            self.fill_note = None
-            try:
-                filled = self._fill(inp, ctx, options, progress, cancel, log, scene, locked_ply, cam, mg, used)
-            except BackendError as e:
-                if e.code == "cancelled":
-                    raise
-                filled = None
-                self.fill_note = f"failed: {str(e).splitlines()[0][:200]}"
-            if filled is None:
-                fill_status = self.fill_note or "nothing to fill"
-                warnings.append(f"AI fill of what the photo hides: {fill_status}. The photo's splat is used as it is.")
-                log(warnings[-1])
-            if filled is not None:
-                final, added, fill_report, steps = filled
-                extra_files["added_layer"] = str(write_gaussian_ply(added, exp / "added_layer.ply",
-                                                                    include_provenance=True))
-                if steps:
-                    extra_files["fill_steps"] = str(steps)
+        final = scene
         final.cameras = [cam]
         ply = write_gaussian_ply(final, exp / "scene.ply", include_provenance=True)
         splat = write_splat(final, exp / "scene.splat")
-        rows = [("Real 3D" + (" (photo locked + filled holes)" if final is not scene else " (photo locked)"),
-                 ply, final)]
-        if final is not scene:
-            rows.append(("photo locked, no fill", locked_ply, scene))
+        rows = [("Real 3D", ply, final)]
         if res["outputs"].get("standard"):          # maximum detail: the normal result next to it
             std = read_gaussian_ply(Path(res["outputs"]["standard"]))
             std.provenance[:] = INFERRED
@@ -371,32 +329,25 @@ class LockedPhotoBackend(Backend):
         elif res.get("scale_from") == "human model":
             warnings.append(f"Real-world scale set from the human model's distance of the people: "
                             f"×{res.get('scale', 1.0):.3f}.")
-        added_n = int((final.provenance == GENERATIVE).sum())
-        if final is not scene:
-            views_added = [r for r in fill_report if r.get("view") != "photo" and r.get("added")]
-            fill_status = (f"{added_n:,} AI-painted splats added from {len(views_added)} of "
-                           f"{len([r for r in fill_report if r.get('view') != 'photo'])} views")
         return BackendResult(
             backend=self.id, scene_ply=ply, splat=splat, obj=None, cameras=[cam.to_dict()], metric_scale=True,
-            provenance_note=(f"{len(final) - added_n:,} splats INFERRED from the photo: Apple SHARP aligned to the "
+            provenance_note=(f"{len(final):,} splats INFERRED from the photo: Apple SHARP aligned to the "
                              f"measured depth ({moge_name(mg)}"
                              + (" + Depth Pro" if ((geo_prec or {}).get("depth_pro") or {}).get("used") else "")
-                             + "). "
-                             + (f"{added_n:,} GENERATIVE splats fill what the photo hides (AI-painted, their depth "
-                                "tied to the photo's)." if added_n else "Nothing behind the subject is invented.")),
+                             + "). Nothing behind the subject is invented."),
             vram_peak_mib=res.get("vram_peak_mib"), worker_env=out["env"], models_used=models_used,
             warnings=warnings,
-            extra={"gaussians": len(final), "assembly": "locked", "trajectory": "tri", "added_splats": added_n,
+            extra={"gaussians": len(final), "assembly": "locked", "mode": options.get("mode", "auto"),
                    "sharp_own_scale": res.get("sharp_own_scale"), "depth_coverage": res.get("depth_coverage"),
                    "faces": res.get("faces") or [], "face_scale": res.get("face_scale", 1.0),
                    "scale": res.get("scale", 1.0), "scale_from": res.get("scale_from"),
                    "ipd_target_mm": round(res.get("ipd_target_m", 0.063) * 1000, 1), "people": res.get("people"),
                    "hfov_used_deg": float(np.degrees(2 * np.arctan(res["size"][0] / 2 / res["f_px"]))),
-                   "fill": fill_report, "fill_status": fill_status, "detail": res.get("detail"),
+                   "plan": {k: v for k, v in plan.items() if k != "seconds"}, "detail": res.get("detail"),
                    "precision": {"geometry": geo_prec, "photo": res.get("precision")} if precise else None,
                    "files": extra_files})
 
-    def _fit(self, ctx, inp, ref, res, work, progress, cancel, log) -> dict:
+    def _fit(self, ctx, inp, ref, res, work, progress, cancel, log, plan) -> dict:
         """refine_worker in the renderer runtime: the splat's colours, opacities and sizes fitted to the photo.
         Returns its stats (+ "ply" when kept); never fails the job."""
         if not ctx.runtimes.is_installed(RENDER_RUNTIME):
@@ -407,7 +358,7 @@ class LockedPhotoBackend(Backend):
         try:
             r = run_worker(ctx.runtimes.python(RENDER_RUNTIME), self.refine_script,
                            {"ply": str(src), "out": str(out), "photo": str(ref), "fx": float(res["f_px"]),
-                            "size": list(res["size"]), "iters": 300},
+                            "size": list(res["size"]), "iters": plan["fit_iters"], "max_side": plan["fit_side"]},
                            inp.work_dir / "worker", progress, cancel, env=ctx.runtimes.worker_env(RENDER_RUNTIME),
                            log=log, progress_range=(0.45, 0.47), timeout_s=1800)
         except BackendError as e:
@@ -421,108 +372,6 @@ class LockedPhotoBackend(Backend):
         else:
             log(f"fit to the photo not kept: {st.get('reason') or st.get('error')}")
         return st
-
-    def _fill(self, inp, ctx, options, progress, cancel, log, scene, locked_ply, cam, mg, used):
-        """Holes of moved views → painted → SHARP with tied depth → added. None when it cannot run."""
-        from PIL import Image
-
-        from ..fusion import DepthBuffer, add_fills, unseen_by_photo
-        from . import painter
-
-        if not painter.installed(ctx):
-            self.fill_note = "skipped: needs the AI painter (Components: AI painter engine and Qwen-Image-Edit)"
-            return None
-        mode = options.get("mode", "auto")
-        work = inp.work_dir / "locked" / "fill"
-        work.mkdir(parents=True, exist_ok=True)
-        pivot = pivot_depth(scene, cam)
-        cams = sheet_cameras(cam, pivot, side=1024, views=FILL_VIEWS.get(mode, FILL_VIEWS["auto"]), photo=False)
-        progress(0.46, f"looking from {len(cams)} moved positions")
-        renders = render_views(ctx, locked_ply, scene, [c for _, c in cams], work / "render", work,
-                               self.render_script, log, cpu_fallback=True)
-        if renders is None:
-            self.fill_note = "skipped: no renderer could draw the moved views (see job.log)"
-            return None
-        photo_buf = DepthBuffer(cam).fill(scene.means, scene.opacity > 0.1)
-        todo = []
-        for k, ((label, c), r) in enumerate(zip(cams, renders)):
-            vc = view_camera(c)
-            hole = unseen_by_photo(r["depth"], r["alpha"], vc, vc.c2w, photo_buf)
-            for _ in range(2):                        # cover the fringe of stretched splats too
-                g = hole.copy()
-                g[1:] |= hole[:-1]
-                g[:-1] |= hole[1:]
-                g[:, 1:] |= hole[:, :-1]
-                g[:, :-1] |= hole[:, 1:]
-                hole = g
-            if hole.mean() < MIN_HOLE:
-                log(f"{label}: nothing to fill")
-                continue
-            rgb = r["rgb"].copy()
-            rgb[hole] = 0
-            base = work / f"v{k:02d}"
-            Image.fromarray(rgb).save(f"{base}_holes.png")
-            Image.fromarray(hole.astype(np.uint8) * 255).save(f"{base}_mask.png")
-            np.savez(f"{base}_known.npz", depth=np.where(hole, np.inf, r["depth"]).astype(np.float32))
-            todo.append({"k": k, "label": label, "cam": c, "hole": hole, "render": r["rgb"], "base": str(base)})
-        if not todo:
-            self.fill_note = "nothing to fill: no holes seen from the moved positions"
-            return None
-        log(f"painting the holes of {len(todo)} views with Qwen-Image-Edit")
-        req = painter.request(ctx, f"{todo[0]['base']}_holes.png", str(work / "painted"),
-                              [{"label": t["label"], "prompt": FILL_PROMPT, "image": f"{t['base']}_holes.png"}
-                               for t in todo], 1.0 if mode != "fast" else 0.75, int(options.get("seed", 42)))
-        painted = painter.paint(ctx, req, inp.work_dir / "worker", progress, cancel, log, 0.5, 0.75,
-                                self.painter_script)
-        for m in painter.MODELS:
-            used(m)
-        if len(painted) != len(todo):
-            raise BackendError(f"the painter returned {len(painted)} pictures for {len(todo)} views")
-        for t, p in zip(todo, painted):
-            c = t["cam"]
-            with Image.open(p) as im:
-                g = np.asarray(im.convert("RGB").resize((c["width"], c["height"]), Image.LANCZOS))
-            filled = t["render"].copy()
-            filled[t["hole"]] = g[t["hole"]]           # everything visible stays exactly the render
-            t["filled"] = filled
-            Image.fromarray(filled).save(f"{t['base']}_filled.png")
-
-        # SHARP on every filled view, its depth tied to the scene
-        out = run_worker(ctx.runtimes.python(self.runtime_id), self.worker_script,
-                         {"mode": "fill", "checkpoint": str(ctx.models.paths("sharp")["sharp_2572gikvuh.pt"]),
-                          "moge_path": str(ctx.models.paths(mg)["model.pt"]),
-                          "moge_version": "v3" if mg.startswith("moge-3") else "v2",
-                          "views": [{"image": f"{t['base']}_filled.png", "mask": f"{t['base']}_mask.png",
-                                     "known": f"{t['base']}_known.npz", "fx": t["cam"]["fx"], "fy": t["cam"]["fy"],
-                                     "cx": t["cam"]["cx"], "cy": t["cam"]["cy"], "out": f"{t['base']}_fill.ply"}
-                                    for t in todo]},
-                         inp.work_dir / "worker", progress, cancel, env=ctx.runtimes.worker_env(self.runtime_id),
-                         log=log, progress_range=(0.75, 0.88), timeout_s=3600)
-        fills = []
-        for t, ply in zip(todo, out["result"]["outputs"]):
-            sc = read_gaussian_ply(Path(ply))
-            vc = view_camera(t["cam"])
-            fills.append((sc, vc, vc.c2w, t["hole"], t["label"]))
-        progress(0.9, "joining the new content")
-        merged, added, report = add_fills(scene, cam, fills, log=log)
-        for rep, st in zip(report, out["result"].get("stats") or []):
-            rep["depth_tie"] = st
-
-        # what each step did, in one picture
-        steps = None
-        try:
-            mply = write_gaussian_ply(merged, work / "merged.ply", include_provenance=True)
-            after = render_views(ctx, mply, merged, [t["cam"] for t in todo], work / "after", work,
-                                 self.render_script, log)
-            rows = []
-            for t, a in zip(todo, after):
-                shown = t["render"].copy()
-                shown[t["hole"]] = (255, 0, 255)
-                rows.append((t["label"], [shown, t["filled"], a["rgb"]]))
-            steps = grid(rows, ["holes (magenta)", "painted", "result"], inp.work_dir / "export" / "fill_steps.png")
-        except Exception as e:  # noqa: BLE001 - a diagnostic
-            log(f"fill steps picture skipped: {e}")
-        return merged, added, report, steps
 
     def export(self, result: BackendResult, destination: Path) -> list[Path]:
         out = super().export(result, destination)

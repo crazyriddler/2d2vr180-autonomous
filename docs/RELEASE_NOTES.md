@@ -1,3 +1,48 @@
+# 2D2VR 2.0.0-rc9 — no more AI fill; photo modes that differ
+
+The owner asked for two things:
+- remove the option that paints what the photo does not show, and its models: it did not work as wished and
+  took a lot of space;
+- make Fast, Auto and Quality differ for photos: there was hardly any difference between them.
+
+## The AI fill is gone
+
+- The option *"Photos: AI paints what the photo hides"* is gone, and so is everything only it used:
+  - the Qwen-Image-Edit-2511 models (base, Q5 GGUF and Lightning);
+  - the AI painter engine;
+  - the fill steps.
+- What a photo does not show now stays empty: nothing is invented.
+- **To get the space back:** Components → *Delete them* (under "old downloads"). That is about 36 GB: the
+  painter engine and the Qwen models.
+- The Real 3D renderer (rc8) stays: Auto and Quality use it to fit the splat to the photo, and the views sheet
+  uses it too.
+
+## Three modes that do different things
+
+Until now a photo got almost the same steps in every mode. Quality only added "maximum detail", which in
+rc6-rc7 added noise (fixed in rc8). Now each step up adds something you can see, and costs time for it:
+
+| | Photos | Time (RTX 4080, 24 MP) |
+|---|---|---|
+| **Fast** | MoGe-3 Large once, people's own 3D shape, clean depth edges, every splat at the measured depth. No SHARP-alone comparison | ~45 s |
+| **Auto** | + MoGe-3 Giant three times, joined to Apple Depth Pro (truer shape and lens); fine relief from surface normals (MoGe-3, and Sapiens2 for people); the splat fitted to the photo for 300 steps at 2048 px (sharper texture) | ~2 min |
+| **Quality** | + maximum detail: the photo at 3072 px, or 4608 px from 24 MP; MoGe-3 and SHARP on parts of it; 2.5-6x the splats. The fit runs 600 steps at 2560 px, and drops to 2048 or 1536 px if the GPU runs out of memory | ~5 min |
+
+- The separate *"maximum detail"* checkbox is gone: it is what Quality is.
+- The Create page shows what the chosen mode does.
+- Results shows the mode, the number of splats and how much the fit to the photo improved it.
+- The job report records the plan (`backend.extra.plan`).
+- Videos keep their modes (330 000, 470 000 or 740 000 splats per frame).
+
+## Checks
+
+- Every test passes, including:
+  - a new test that runs one photo in each mode and checks that the steps differ as in the table;
+  - the real photo workers run end to end in the Fast plan (no normals) with stand-in models;
+  - the old fill and detail settings in saved files are ignored;
+  - the Qwen folders appear among the old downloads to delete.
+- Not yet run on the RTX 4080: the times above are estimates.
+
 # 2D2VR 2.0.0-rc8 — the AI fill really runs; scale and maximum detail fixed
 
 The owner's rc7 tests (the same 24 MP photo in Fast, and in Quality with maximum detail and the AI fill):

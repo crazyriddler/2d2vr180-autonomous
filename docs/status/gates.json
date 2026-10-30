@@ -54,7 +54,7 @@
    "id": "D-novel-views",
    "mandatory": false,
    "status": "not_run",
-   "evidence": "Real 3D fill of what the photo hides from moved views: tested with fake painter/SHARP workers."
+   "evidence": "2.0.0-rc9: the AI fill of what a photo hides was removed at the owner's request; no novel-view generation."
   },
   {
    "id": "E-splat-video-playback",
@@ -72,7 +72,7 @@
    "id": "F-generated-content-honesty",
    "mandatory": true,
    "status": "pass",
-   "evidence": "Per-splat provenance (INFERRED photo/frames, GENERATIVE AI fill exported separately as added_layer.ply), coverage in run_report.json; splat videos invent nothing."
+   "evidence": "Per-splat provenance (INFERRED from the photo/frames), coverage in run_report.json; nothing is AI-generated (the AI fill was removed in 2.0.0-rc9)."
   },
   {
    "id": "G-licensing",

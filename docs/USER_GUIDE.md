@@ -7,8 +7,8 @@ Everything runs on your own computer: nothing you process is uploaded anywhere.
 
 - Windows 10 (build 19041+) or Windows 11, 64-bit
 - An NVIDIA GPU with a recent driver (target: RTX 4080 16 GB; 8 GB+ works). Driver 570 or newer.
-- 32 GB of RAM recommended (the AI painter of photos needs it)
-- About 80 GB of free disk space for the engines and models, plus space for your results
+- 16 GB of RAM (32 GB recommended for Quality on very large photos)
+- About 40 GB of free disk space for the engines and models, plus space for your results
   (a splat video takes 2-5 GB per minute)
 - Internet access **only** for the one-time download of the engines and models
 
@@ -31,60 +31,66 @@ everything Real 3D uses; you do not need to pick anything.
 | Component | What it does | Size |
 |---|---|---|
 | Real 3D engine | runs the models below on your GPU | ~5.5 GB |
-| Real 3D renderer | draws the splat from moved positions on the GPU (gsplat): the AI fill, the fit to the photo, the views sheet | ~3 GB |
+| Real 3D renderer | draws the splat on the GPU (gsplat): the fit to the photo (Auto, Quality), the views sheet | ~3 GB |
 | Apple SHARP | the 3D Gaussians of every photo and video frame (**research licence**) | ~2.5 GB |
 | MoGe-3 Large | measured depth, lens and real-world scale | 1.5 GB |
-| MoGe-3 Giant | photos: the most accurate depth (used instead of Large when installed) | 5 GB |
-| Apple Depth Pro | photos: a second measured depth, sharp edges, lens check (**research licence**) | 1.9 GB |
+| MoGe-3 Giant | photos in Auto and Quality: the most accurate depth | 5 GB |
+| Apple Depth Pro | photos in Auto and Quality: a second measured depth, sharp edges, lens check (**research licence**) | 1.9 GB |
 | YuNet face finder | the eyes of the people, for the real-world size | 0.2 MB |
 | Sapiens2 body parts + 3D shape of people | real noses and faces instead of flat ones | 1.6 + 6.5 GB |
-| Sapiens2 surface normals of people | photos: folds of clothes, fingers, the relief of a face | 6.2 GB |
-| AI painter engine + Qwen-Image-Edit-2511 | photos: paints what the photo hides when you move your head | ~6 + ~30 GB |
+| Sapiens2 surface normals of people | photos in Auto and Quality: folds of clothes, fingers, the relief of a face | 6.2 GB |
 
 Every model shows its licence before downloading. Downloads resume if interrupted and are verified
 (SHA256) before use.
 
-**Coming from 1.x?** The Components page lists the models and engines 1.x downloaded that 2.0 no longer uses
-(VGGT, MoGe-2, Wan 2.2, LaMa, the multi-view engine…) with a **Delete them** button: up to ~45 GB back.
+**Old downloads.** The Components page lists the models and engines this version no longer uses with a
+**Delete them** button:
+- from 2.0.0-rc8 and before: the AI painter engine and Qwen-Image-Edit, about 36 GB;
+- from 1.x: VGGT, MoGe-2, Wan 2.2, LaMa and the multi-view engine, up to about 45 GB.
 
 ## Make something
 
 1. Open **Create** and drop photos or videos (or click to browse). Each file becomes its own result.
-2. **Quality**: *Auto* (recommended), *Quality* (more detail; for videos more splats per frame, slower) or
-   *Fast*.
+2. **Quality** (the box under it says what each one does):
+
+   | | Photos | Videos |
+   |---|---|---|
+   | **Fast** (~45 s a photo) | MoGe-3 depth once, people's own 3D shape, clean depth edges, every splat at the measured depth | ~330 000 splats per frame |
+   | **Auto** (~2 min, recommended) | + MoGe-3 Giant three times joined to Apple Depth Pro (truer shape and lens), fine relief from surface normals (faces, fingers, folds of clothes), the splat fitted to the photo (sharper texture) | ~470 000 splats per frame |
+   | **Quality** (~5 min) | + maximum detail: the photo worked at 3072 px (4608 px from 24 MP), the depth and SHARP on parts of it, 2.5-6x the splats (heavier in VR); a longer, finer fit to the photo | ~740 000 splats per frame |
+
+   Times are for an RTX 4080 and a 24 MP photo.
 3. **Eye distance (IPD)**: the real-world size of the scene is set from the eyes of the people in it, scaled
    to be this far apart (adults 56-70 mm, 63 on average).
    - If people look too big in VR, lower it; too small, raise it.
    - In VR you can also resize everything with the controller buttons (below).
-4. **Photos: AI paints what the photo hides** (on by default): the photo's splat is looked at from a little to
-   each side, and what the photo never saw (behind edges) is painted by Qwen-Image-Edit and added at a depth
-   tied to the photo's. These parts are labelled *generative*.
-5. **Photos: maximum detail** (always on in *Quality*): more of the photo's small geometry. The photo is
-   worked at up to 3072 px (4608 px for photos of 24 MP and up), the depth model's fine relief is taken from
-   parts of it, and SHARP runs on parts of it (2 x 2, or 3 x 3 for 24 MP and up). About 2-3x the detail up
-   close, a minute more, and about 3 million splats (6-7 million for 24 MP photos; heavier in VR).
-6. **Videos → splat video**:
+4. **Videos → splat video**:
    - *Start at* and *Length* choose the part of the video.
    - *Frames per second*: by default the video's own rate, up to 24.
-7. Press **Generate**. Jobs run one after the other; the log shows every step.
+5. Press **Generate**. Jobs run one after the other; the log shows every step.
 
 ### What Real 3D does with a photo
 
+Every mode:
 - Uses your photo's real lens (EXIF), checked against what the depth models see: a zoomed or cropped photo
   whose EXIF still names the full lens is caught.
-- Measures its metric depth with MoGe-3 several times (the photo, its mirror image, a coarser pass) and with
-  a second model, Apple Depth Pro, and joins them (Depth Pro draws the sharpest edges).
+- Measures its metric depth with MoGe-3.
 - Gives people their real 3D shape (Sapiens2, a model trained only on humans).
-- Adds the fine relief the depth models smooth away, from surface normals (MoGe-3's; Sapiens2's for people).
 - Sends every pixel next to a depth edge to the near or the far surface, so no splats float in between.
 - Sets the real-world size from the people's eyes (or from the human model when there are no faces).
 - Places Apple SHARP's 3D Gaussians of the photo at that depth: SHARP's sharpness with true geometry.
-- Fits the splat to the photo seen from its own camera (colours, opacities, sizes; nothing moves).
-- Paints what the photo hides from moved positions (optional) and adds only those parts.
+
+Auto and Quality also:
+- Measure the depth with MoGe-3 Giant three times (the photo, its mirror image, a coarser pass) and with a
+  second model, Apple Depth Pro, and join them (Depth Pro draws the sharpest edges).
+- Add the fine relief the depth models smooth away, from surface normals (MoGe-3's; Sapiens2's for people).
+- Fit the splat to the photo seen from its own camera (colours, opacities, sizes; nothing moves).
+
+Nothing the photo does not show is invented: what is hidden behind people and objects stays empty.
 
 ### What a splat video is
 
-Every frame of the video made the same way (without the AI painting, which would take minutes per frame),
+Every frame of the video made like a photo in Fast (the slower photo steps would take minutes per frame),
 in one file with the video's sound:
 
 - The lens and the real-world size are measured once for the whole clip, so the scene does not "breathe".
@@ -113,8 +119,8 @@ in one file with the video's sound:
 | `views_sheet.png` | the splat seen from a few moved positions (photos) |
 | `people_shape.png` | the people's relief: the scene's depth, with their own shape, and the splats as made |
 | `relief.png` | the photo's depth at each step, shaded: MoGe-3, + Depth Pro, + people, final (normals, edges) |
-| `added_layer.ply`, `fill_steps.png` | what the AI painted, and how (photos) |
-| `compare_sharp_alone.ply` | SHARP without the measured depth, for comparison (photos) |
+| `compare_normal_detail.ply` | Quality: the same photo without maximum detail, for comparison |
+| `compare_sharp_alone.ply` | Auto and Quality: SHARP without the measured depth, for comparison (photos) |
 | `../run_report.json` | every detail of the run: models, timings, scale, warnings |
 
 ## View in VR

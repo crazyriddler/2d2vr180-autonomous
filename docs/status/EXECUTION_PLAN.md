@@ -24,6 +24,9 @@
 - 🟡 rc8: renderer runtime `render-cu124` (prebuilt gsplat; in photo-cu128 gsplat needed a CUDA toolkit and never ran,
   so the AI fill was always skipped); eye-distance outliers left out; patch fusion without the affine shift
 
+- 🟡 rc9: AI fill removed (owner: not good enough for its ~36 GB), Qwen models and painter engine dropped; photo quality
+  modes as plans (`backends/locked.PHOTO_PLANS`): Fast / Auto / Quality differ in depth models, normals, fit and detail
+
 ## Earlier (1.x)
 
 

@@ -20,9 +20,7 @@ class Settings:
     setup_completed: bool = False
     vr_help_seen: bool = False
     check_updates: bool = False                  # no network access unless the user enables it
-    real3d_fill: bool = True                     # photos: AI-paint what the photo hides
     ipd_mm: float = 63.0                         # adults' eye distance used for the real-world scale
-    photo_detail: bool = False                   # photos: maximum detail (always on in the Quality mode)
     video_seconds: float = 0.0                   # splat video: seconds used (0 = the whole video)
     video_fps: float = 0.0                       # splat video: frames per second (0 = the video's own, up to 24)
     video_start_s: float = 0.0                   # splat video: where to start
@@ -63,8 +61,7 @@ class Settings:
         from .jobs import JobOptions
 
         o = JobOptions(mode=self.mode, license_profile=self.license_profile, output_dir=self.output_dir or None,
-                       allow_cpu=self.allow_cpu, real3d_fill=self.real3d_fill, ipd_mm=self.ipd_mm,
-                       photo_detail=self.photo_detail,
+                       allow_cpu=self.allow_cpu, ipd_mm=self.ipd_mm,
                        video_seconds=self.video_seconds, video_fps=self.video_fps, video_start_s=self.video_start_s)
         for k, v in overrides.items():
             setattr(o, k, v)
